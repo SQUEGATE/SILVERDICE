@@ -22,15 +22,26 @@ import java.util.List;
 import java.util.Map;
 
 public class DatabaseManager {
-    private static final String DB_URL = "jdbc:sqlite:" + determineDatabasePath();
+    private final Path databasePath;
+    private final String dbUrl;
 
     public DatabaseManager() {
+        this(getDefaultDatabasePath());
+    }
+
+    public DatabaseManager(Path databasePath) {
+        this.databasePath = databasePath.toAbsolutePath().normalize();
+        this.dbUrl = "jdbc:sqlite:" + this.databasePath;
         createDatabaseBackup();
         initializeDatabase();
     }
 
-    public static Path getDatabasePath() {
+    public static Path getDefaultDatabasePath() {
         return Paths.get(determineDatabasePath());
+    }
+
+    public Path getDatabasePath() {
+        return databasePath;
     }
 
     private static String determineDatabasePath() {
@@ -57,12 +68,11 @@ public class DatabaseManager {
     }
 
     private void createDatabaseBackup() {
-        Path dbPath = Paths.get(determineDatabasePath());
-        if (Files.exists(dbPath)) {
-            Path backupPath = dbPath.resolveSibling("customer.db.bak");
+        if (Files.exists(databasePath)) {
+            Path backupPath = databasePath.resolveSibling(databasePath.getFileName().toString() + ".bak");
             try {
                 if (!Files.exists(backupPath)) {
-                    Files.copy(dbPath, backupPath);
+                    Files.copy(databasePath, backupPath);
                 }
             } catch (IOException e) {
                 throw new RuntimeException("Unable to create database backup", e);
@@ -120,7 +130,7 @@ public class DatabaseManager {
     }
 
     private Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(DB_URL);
+        return DriverManager.getConnection(dbUrl);
     }
 
     public String getNextCustomerId() {

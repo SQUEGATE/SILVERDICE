@@ -3,6 +3,7 @@ package com.poolapp.ui;
 import com.poolapp.model.PdfSettings;
 import com.poolapp.db.DatabaseManager;
 import com.poolapp.model.Customer;
+import com.poolapp.model.CompanyProfile;
 import com.poolapp.model.StatementRecord;
 import com.poolapp.service.EmailService;
 import com.poolapp.service.SmsService;
@@ -76,6 +77,9 @@ public class PoolAppFrame extends JFrame {
     private final JTextArea revenueArea;
     private final JPanel cardPanel;
     private final JPanel miniTabsPanel;
+    private final CompanyProfile companyProfile;
+    private final Runnable exitCompanyViewAction;
+    private final Runnable logoutAction;
     private final JTextField recordDateField;
     private final JComboBox<String> recordTypeCombo;
     private final JTextField recordAmountField;
@@ -93,10 +97,21 @@ public class PoolAppFrame extends JFrame {
     private List<String> debitTypeKeywords;
 
     public PoolAppFrame() {
-        super("Pool Service Customer Manager");
-        this.dbManager = new DatabaseManager();
+        this(new DatabaseManager(), null, null, null);
+    }
+
+    public PoolAppFrame(DatabaseManager dbManager, CompanyProfile companyProfile, Runnable exitCompanyViewAction) {
+        this(dbManager, companyProfile, exitCompanyViewAction, null);
+    }
+
+    public PoolAppFrame(DatabaseManager dbManager, CompanyProfile companyProfile, Runnable exitCompanyViewAction, Runnable logoutAction) {
+        super(companyProfile == null ? "Pool Service Customer Manager" : companyProfile.getCompanyName() + " - Pool Service Customer Manager");
+        this.dbManager = dbManager;
         this.emailService = new EmailService();
         this.smsService = new SmsService();
+        this.companyProfile = companyProfile;
+        this.exitCompanyViewAction = exitCompanyViewAction;
+        this.logoutAction = logoutAction;
 
         idField = new JTextField(16);
         firstNameField = new JTextField(20);
@@ -590,7 +605,29 @@ public class PoolAppFrame extends JFrame {
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, navigationPanel, contentPanel);
         splitPane.setDividerLocation(220);
-        getContentPane().add(splitPane, BorderLayout.CENTER);
+        JPanel rootPanel = new JPanel(new BorderLayout());
+        if (companyProfile != null || exitCompanyViewAction != null || logoutAction != null) {
+            JPanel topBar = new JPanel(new BorderLayout());
+            topBar.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
+            JLabel companyLabel = new JLabel(companyProfile == null ? "Company View" : "Company: " + companyProfile.getCompanyName());
+            companyLabel.setFont(companyLabel.getFont().deriveFont(Font.BOLD, 14f));
+            topBar.add(companyLabel, BorderLayout.WEST);
+            JPanel topBarButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+            if (exitCompanyViewAction != null) {
+                JButton exitCompanyViewButton = new JButton("Exit Company View");
+                exitCompanyViewButton.addActionListener(e -> exitCompanyViewAction.run());
+                topBarButtons.add(exitCompanyViewButton);
+            }
+            if (logoutAction != null) {
+                JButton logoutButton = new JButton("Logout");
+                logoutButton.addActionListener(e -> logoutAction.run());
+                topBarButtons.add(logoutButton);
+            }
+            topBar.add(topBarButtons, BorderLayout.EAST);
+            rootPanel.add(topBar, BorderLayout.NORTH);
+        }
+        rootPanel.add(splitPane, BorderLayout.CENTER);
+        getContentPane().add(rootPanel, BorderLayout.CENTER);
 
         customerDetailsButton.addActionListener(e -> showScreen("CustomerDetails"));
         customersButton.addActionListener(e -> showScreen("Customers"));
@@ -1980,7 +2017,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void backupDatabase() {
-        Path dbPath = DatabaseManager.getDatabasePath();
+        Path dbPath = dbManager.getDatabasePath();
         File defaultBackup = new File(dbPath.getParent().toFile(), "customer_backup_" + new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date()) + ".db");
         JFileChooser chooser = new JFileChooser(dbPath.getParent().toFile());
         chooser.setDialogTitle("Save Database Backup");
@@ -2002,7 +2039,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void restoreDatabase() {
-        Path dbPath = DatabaseManager.getDatabasePath();
+        Path dbPath = dbManager.getDatabasePath();
         JFileChooser chooser = new JFileChooser(dbPath.getParent().toFile());
         chooser.setDialogTitle("Select Database Backup to Restore");
         chooser.setFileFilter(new FileNameExtensionFilter("SQLite Database", "db"));

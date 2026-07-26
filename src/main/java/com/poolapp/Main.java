@@ -1,14 +1,11 @@
 package com.poolapp;
 
-import com.poolapp.ui.PoolAppFrame;
+import com.poolapp.ui.LoginFrame;
 
 import javax.swing.SwingUtilities;
 
 public class Main {
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            PoolAppFrame frame = new PoolAppFrame();
-            frame.setVisible(true);
-        });
+        SwingUtilities.invokeLater(() -> new LoginFrame().setVisible(true));
     }
 }

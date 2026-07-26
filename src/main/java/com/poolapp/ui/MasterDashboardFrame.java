@@ -15,6 +15,7 @@ public class MasterDashboardFrame extends JFrame {
     private final MasterDatabaseManager masterDatabaseManager;
     private final DefaultTableModel companyTableModel;
     private final JTable companyTable;
+    private final JTextField companySearchField;
     private final CardLayout cardLayout;
     private final JPanel cardPanel;
     private final JLabel companyNameValue;
@@ -50,6 +51,7 @@ public class MasterDashboardFrame extends JFrame {
                 }
             }
         });
+        companySearchField = new JTextField(24);
 
         companyNameValue = new JLabel("-");
         usernameValue = new JLabel("-");
@@ -71,7 +73,27 @@ public class MasterDashboardFrame extends JFrame {
 
         JLabel title = new JLabel("Companies");
         title.setFont(title.getFont().deriveFont(Font.BOLD, 24f));
-        root.add(title, BorderLayout.NORTH);
+
+        JPanel headerPanel = new JPanel(new BorderLayout(8, 8));
+        headerPanel.add(title, BorderLayout.NORTH);
+
+        JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        JButton searchButton = new JButton("Search");
+        JButton clearSearchButton = new JButton("Clear");
+        searchPanel.add(new JLabel("Search:"));
+        searchPanel.add(companySearchField);
+        searchPanel.add(searchButton);
+        searchPanel.add(clearSearchButton);
+
+        searchButton.addActionListener(e -> refreshCompanies());
+        clearSearchButton.addActionListener(e -> {
+            companySearchField.setText("");
+            refreshCompanies();
+        });
+        companySearchField.addActionListener(e -> refreshCompanies());
+
+        headerPanel.add(searchPanel, BorderLayout.SOUTH);
+        root.add(headerPanel, BorderLayout.NORTH);
 
         root.add(new JScrollPane(companyTable), BorderLayout.CENTER);
 
@@ -152,7 +174,10 @@ public class MasterDashboardFrame extends JFrame {
 
     private void refreshCompanies() {
         companyTableModel.setRowCount(0);
-        List<CompanyProfile> companies = masterDatabaseManager.getAllCompanies();
+        String query = companySearchField == null ? "" : companySearchField.getText().trim();
+        List<CompanyProfile> companies = query.isBlank()
+            ? masterDatabaseManager.getAllCompanies()
+            : masterDatabaseManager.searchCompanies(query);
         for (CompanyProfile company : companies) {
             companyTableModel.addRow(new Object[]{
                     company.getId(),

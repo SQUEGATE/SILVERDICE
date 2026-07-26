@@ -146,7 +146,7 @@ public class MasterDatabaseManager {
     }
 
     public List<CompanyProfile> getAllCompanies() {
-        String sql = "SELECT company_id, company_name, phone, address, username, password, database_file FROM companies ORDER BY company_name";
+        String sql = "SELECT company_id, company_name, phone, address, username, password, database_file FROM companies ORDER BY company_id";
         List<CompanyProfile> companies = new ArrayList<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
             while (resultSet.next()) {
@@ -154,6 +154,30 @@ public class MasterDatabaseManager {
             }
         } catch (SQLException e) {
             throw new RuntimeException("Unable to load companies", e);
+        }
+        return companies;
+    }
+
+    public List<CompanyProfile> searchCompanies(String query) {
+        String sql = "SELECT company_id, company_name, phone, address, username, password, database_file "
+                + "FROM companies "
+                + "WHERE lower(company_name) LIKE ? OR lower(username) LIKE ? OR lower(phone) LIKE ? OR lower(address) LIKE ? OR CAST(company_id AS TEXT) LIKE ? "
+                + "ORDER BY company_id";
+        List<CompanyProfile> companies = new ArrayList<>();
+        String pattern = "%" + (query == null ? "" : query.trim().toLowerCase()) + "%";
+        try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, pattern);
+            statement.setString(2, pattern);
+            statement.setString(3, pattern);
+            statement.setString(4, pattern);
+            statement.setString(5, pattern);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    companies.add(readCompany(resultSet));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Unable to search companies", e);
         }
         return companies;
     }

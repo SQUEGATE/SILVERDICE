@@ -1,0 +1,18 @@
+.gradle/
+build/
+bin/
+out/
+
+# Local databases and backups
+*.db
+*.db.bak
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+
+# Archives and downloaded tooling
+*.zip
+
+# Compiled classes
+*.class

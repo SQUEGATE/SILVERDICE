@@ -1,0 +1,109 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build Java Project",
+			"type": "shell",
+			"command": ".\\build.bat",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "Generate Gradle Wrapper Jar",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"Set-Location -LiteralPath 'c:\\Users\\josue\\OneDrive\\Documentos\\SILVER DICE'; & 'c:\\Users\\josue\\.gradle\\wrapper\\dists\\gradle-9.2.0-bin\\11i5gvueggl8a5cioxuftxrik\\gradle-9.2.0\\bin\\gradle.bat' wrapper"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			]
+		},
+		{
+			"label": "Compile with Wrapper",
+			"type": "shell",
+			"command": "build.bat",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			]
+		},
+		{
+			"label": "Compile with Wrapper Now",
+			"type": "shell",
+			"command": ".\\build.bat",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			]
+		},
+		{
+			"label": "Stop Gradle Daemon",
+			"type": "shell",
+			"command": ".\\gradlew.bat --stop",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			]
+		},
+		{
+			"label": "Clean and Rebuild",
+			"type": "shell",
+			"command": ".\\gradlew.bat clean build --no-daemon",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			]
+		},
+		{
+			"label": "Delete Build Folder",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"rd",
+				"/s",
+				"/q",
+				"build"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			]
+		},
+		{
+			"label": "Rebuild After Delete",
+			"type": "shell",
+			"command": ".\\gradlew.bat build --no-daemon",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			]
+		},
+		{
+			"label": "Verify Gradle Wrapper Run",
+			"type": "shell",
+			"command": ".\\gradlew.bat run --no-daemon",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			]
+		}
+	]
+}

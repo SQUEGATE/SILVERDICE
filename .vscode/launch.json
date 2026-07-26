@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+        "type": "java",
+        "name": "Starter",
+        "request": "launch",
+        "mainClass": "com.poolapp.Starter",
+        "projectName": "SILVER DICE"
+    },
+    {
+        "type": "java",
+        "name": "Launch Starter",
+        "request": "launch",
+        "mainClass": "com.poolapp.Starter",
+        "projectName": "pool-company-app",
+        "preLaunchTask": "Build Java Project"
+    }
+]
+}

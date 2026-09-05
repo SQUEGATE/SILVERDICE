@@ -2,8 +2,10 @@ package com.poolapp.ui;
 
 import com.poolapp.model.PdfSettings;
 import com.poolapp.db.DatabaseManager;
+import com.poolapp.db.MasterDatabaseManager;
 import com.poolapp.model.Customer;
 import com.poolapp.model.CompanyProfile;
+import com.poolapp.model.EmployeeProfile;
 import com.poolapp.model.StatementRecord;
 import com.poolapp.service.EmailService;
 import com.poolapp.service.SmsService;
@@ -31,10 +33,12 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -77,7 +81,12 @@ public class PoolAppFrame extends JFrame {
     private final JTextArea revenueArea;
     private final JPanel cardPanel;
     private final JPanel miniTabsPanel;
+    private final DefaultListModel<EmployeeProfile> employeeListModel;
+    private final JList<EmployeeProfile> employeeList;
+    private final JLabel employeeScreenLabel;
+    private final JTextField employeeSearchField;
     private final CompanyProfile companyProfile;
+    private final EmployeeProfile employeeProfile;
     private final Runnable exitCompanyViewAction;
     private final Runnable logoutAction;
     private final JTextField recordDateField;
@@ -88,6 +97,7 @@ public class PoolAppFrame extends JFrame {
     private final JLabel customerBalanceLabel;
     private final DefaultTableModel recordTableModel;
     private final JTable recordTable;
+    private final MasterDatabaseManager masterDatabaseManager;
     private List<StatementRecord> currentStatementRecords;
     private String activeRecordCustomerId;
     private final List<Customer> customersById;
@@ -97,19 +107,25 @@ public class PoolAppFrame extends JFrame {
     private List<String> debitTypeKeywords;
 
     public PoolAppFrame() {
-        this(new DatabaseManager(), null, null, null);
+        this(new DatabaseManager(), null, null, null, null);
     }
 
     public PoolAppFrame(DatabaseManager dbManager, CompanyProfile companyProfile, Runnable exitCompanyViewAction) {
-        this(dbManager, companyProfile, exitCompanyViewAction, null);
+        this(dbManager, companyProfile, null, exitCompanyViewAction, null);
     }
 
     public PoolAppFrame(DatabaseManager dbManager, CompanyProfile companyProfile, Runnable exitCompanyViewAction, Runnable logoutAction) {
-        super(companyProfile == null ? "Pool Service Customer Manager" : companyProfile.getCompanyName() + " - Pool Service Customer Manager");
+        this(dbManager, companyProfile, null, exitCompanyViewAction, logoutAction);
+    }
+
+    public PoolAppFrame(DatabaseManager dbManager, CompanyProfile companyProfile, EmployeeProfile employeeProfile,
+                        Runnable exitCompanyViewAction, Runnable logoutAction) {
+        super(resolveWindowTitle(companyProfile, employeeProfile));
         this.dbManager = dbManager;
         this.emailService = new EmailService();
         this.smsService = new SmsService();
         this.companyProfile = companyProfile;
+        this.employeeProfile = employeeProfile;
         this.exitCompanyViewAction = exitCompanyViewAction;
         this.logoutAction = logoutAction;
 
@@ -145,6 +161,11 @@ public class PoolAppFrame extends JFrame {
             }
         };
         recordTable = new JTable(recordTableModel);
+        employeeListModel = new DefaultListModel<>();
+        employeeList = new JList<>(employeeListModel);
+        employeeScreenLabel = new JLabel("Employees");
+        employeeSearchField = new JTextField(22);
+        masterDatabaseManager = new MasterDatabaseManager();
         currentStatementRecords = new ArrayList<>();
         activeRecordCustomerId = "";
         customersById = new ArrayList<>();
@@ -213,9 +234,18 @@ public class PoolAppFrame extends JFrame {
         miniTabsPanel = new JPanel(new GridLayout(2, 1, 6, 6));
 
         initComponents();
-        loadCustomers(dbManager.getAllCustomers());
+        loadCustomers(filterAccessibleCustomers(dbManager.getAllCustomers()));
         refreshRevenueSummary();
         refreshDetailCustomerList();
+    }
+
+    private static String resolveWindowTitle(CompanyProfile companyProfile, EmployeeProfile employeeProfile) {
+        String companyName = companyProfile != null ? companyProfile.getCompanyName()
+                : employeeProfile != null ? employeeProfile.getCompanyName() : null;
+        if (companyName == null || companyName.isBlank()) {
+            return "Pool Service Customer Manager";
+        }
+        return companyName + " - Pool Service Customer Manager";
     }
 
     private void initComponents() {
@@ -574,6 +604,8 @@ public class PoolAppFrame extends JFrame {
         revenuePanel.setBorder(BorderFactory.createTitledBorder("Revenue Summary"));
         revenuePanel.add(new JScrollPane(revenueArea), BorderLayout.CENTER);
 
+        JPanel employeesPanel = createEmployeesPanel();
+
         JPanel navigationPanel = new JPanel(new GridLayout(0, 1, 12, 12));
         navigationPanel.setBorder(BorderFactory.createTitledBorder("View Options"));
         JButton customerDetailsButton = new JButton("Customer Details");
@@ -581,22 +613,38 @@ public class PoolAppFrame extends JFrame {
         JButton statementsButton = new JButton("Statements");
         JButton revenueSummaryButton = new JButton("Revenue Summary");
         JButton pdfButton = new JButton("PDF");
+        JButton employeesButton = new JButton("Employees");
         customerDetailsButton.setFont(customerDetailsButton.getFont().deriveFont(Font.BOLD, 14f));
         customersButton.setFont(customersButton.getFont().deriveFont(Font.BOLD, 14f));
         statementsButton.setFont(statementsButton.getFont().deriveFont(Font.BOLD, 14f));
         revenueSummaryButton.setFont(revenueSummaryButton.getFont().deriveFont(Font.BOLD, 14f));
         pdfButton.setFont(pdfButton.getFont().deriveFont(Font.BOLD, 14f));
-        navigationPanel.add(customerDetailsButton);
-        navigationPanel.add(customersButton);
-        navigationPanel.add(statementsButton);
-        navigationPanel.add(revenueSummaryButton);
-        navigationPanel.add(pdfButton);
+        employeesButton.setFont(employeesButton.getFont().deriveFont(Font.BOLD, 14f));
+        if (canAccessScreen("CustomerDetails")) {
+            navigationPanel.add(customerDetailsButton);
+        }
+        if (canAccessScreen("Customers")) {
+            navigationPanel.add(customersButton);
+        }
+        if (canAccessScreen("Statements")) {
+            navigationPanel.add(statementsButton);
+        }
+        if (canAccessScreen("RevenueSummary")) {
+            navigationPanel.add(revenueSummaryButton);
+        }
+        if (canAccessScreen("PDF")) {
+            navigationPanel.add(pdfButton);
+        }
+        if (canAccessScreen("Employees")) {
+            navigationPanel.add(employeesButton);
+        }
 
         cardPanel.add(formPanel, "CustomerDetails");
         cardPanel.add(tablePanel, "Customers");
         cardPanel.add(recordPanel, "Statements");
         cardPanel.add(revenuePanel, "RevenueSummary");
         cardPanel.add(createPdfPanel(), "PDF");
+        cardPanel.add(employeesPanel, "Employees");
 
         JPanel contentPanel = new JPanel(new BorderLayout(8, 8));
         contentPanel.add(cardPanel, BorderLayout.CENTER);
@@ -606,15 +654,18 @@ public class PoolAppFrame extends JFrame {
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, navigationPanel, contentPanel);
         splitPane.setDividerLocation(220);
         JPanel rootPanel = new JPanel(new BorderLayout());
-        if (companyProfile != null || exitCompanyViewAction != null || logoutAction != null) {
+        if (companyProfile != null || employeeProfile != null || exitCompanyViewAction != null || logoutAction != null) {
             JPanel topBar = new JPanel(new BorderLayout());
             topBar.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
-            JLabel companyLabel = new JLabel(companyProfile == null ? "Company View" : "Company: " + companyProfile.getCompanyName());
+            String contextLabel = companyProfile != null ? "Company: " + companyProfile.getCompanyName()
+                    : employeeProfile != null ? "Employee: " + employeeProfile.getFullName() + " - " + employeeProfile.getCompanyName()
+                    : "Company View";
+            JLabel companyLabel = new JLabel(contextLabel);
             companyLabel.setFont(companyLabel.getFont().deriveFont(Font.BOLD, 14f));
             topBar.add(companyLabel, BorderLayout.WEST);
             JPanel topBarButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
             if (exitCompanyViewAction != null) {
-                JButton exitCompanyViewButton = new JButton("Exit Company View");
+                JButton exitCompanyViewButton = new JButton(employeeProfile != null ? "Exit Employee View" : "Exit Company View");
                 exitCompanyViewButton.addActionListener(e -> exitCompanyViewAction.run());
                 topBarButtons.add(exitCompanyViewButton);
             }
@@ -634,6 +685,7 @@ public class PoolAppFrame extends JFrame {
         statementsButton.addActionListener(e -> showScreen("Statements"));
         revenueSummaryButton.addActionListener(e -> showScreen("RevenueSummary"));
         pdfButton.addActionListener(e -> showScreen("PDF"));
+        employeesButton.addActionListener(e -> showScreen("Employees"));
 
         detailSearchButton.addActionListener(e -> searchCustomerInDetails());
         prevCustomerButton.addActionListener(e -> showPreviousCustomer());
@@ -641,7 +693,7 @@ public class PoolAppFrame extends JFrame {
 
         // Load record types from database
         loadRecordTypesFromDatabase();
-        showScreen("CustomerDetails");
+        showScreen(getDefaultAccessibleScreen());
 
         saveButton.addActionListener(e -> saveCustomer());
         clearButton.addActionListener(e -> clearForm());
@@ -668,9 +720,18 @@ public class PoolAppFrame extends JFrame {
                 }
             }
         });
+
+        applyCustomerEditPermissions(saveButton, clearButton);
+        applyStatementEditPermissions(recordDateField, recordTypeCombo, recordAmountField, addRecordButton, deleteRecordButton, addTypeButton, keywordButton);
     }
 
     private void showScreen(String screenName) {
+        if (!canAccessScreen(screenName)) {
+            screenName = getDefaultAccessibleScreen();
+        }
+        if ("Employees".equals(screenName)) {
+            refreshEmployeesScreen();
+        }
         CardLayout layout = (CardLayout) cardPanel.getLayout();
         layout.show(cardPanel, screenName);
         
@@ -691,29 +752,34 @@ public class PoolAppFrame extends JFrame {
         miniTabsPanel.removeAll();
         miniTabsPanel.setLayout(new GridLayout(0, 1, 6, 6));
 
-        if (!"CustomerDetails".equals(currentScreen)) {
+        if (canAccessScreen("CustomerDetails") && !"CustomerDetails".equals(currentScreen)) {
             JButton tab = new JButton("Customer Details");
             tab.addActionListener(e -> showScreen("CustomerDetails"));
             miniTabsPanel.add(tab);
         }
-        if (!"Customers".equals(currentScreen)) {
+        if (canAccessScreen("Customers") && !"Customers".equals(currentScreen)) {
             JButton tab = new JButton("Customers");
             tab.addActionListener(e -> showScreen("Customers"));
             miniTabsPanel.add(tab);
         }
-        if (!"RevenueSummary".equals(currentScreen)) {
+        if (canAccessScreen("RevenueSummary") && !"RevenueSummary".equals(currentScreen)) {
             JButton tab = new JButton("Revenue Summary");
             tab.addActionListener(e -> showScreen("RevenueSummary"));
             miniTabsPanel.add(tab);
         }
-        if (!"Statements".equals(currentScreen)) {
+        if (canAccessScreen("Statements") && !"Statements".equals(currentScreen)) {
             JButton tab = new JButton("Statements");
             tab.addActionListener(e -> showScreen("Statements"));
             miniTabsPanel.add(tab);
         }
-        if (!"PDF".equals(currentScreen)) {
+        if (canAccessScreen("PDF") && !"PDF".equals(currentScreen)) {
             JButton tab = new JButton("PDF");
             tab.addActionListener(e -> showScreen("PDF"));
+            miniTabsPanel.add(tab);
+        }
+        if (canAccessScreen("Employees") && !"Employees".equals(currentScreen)) {
+            JButton tab = new JButton("Employees");
+            tab.addActionListener(e -> showScreen("Employees"));
             miniTabsPanel.add(tab);
         }
 
@@ -723,7 +789,7 @@ public class PoolAppFrame extends JFrame {
 
     private void refreshDetailCustomerList() {
         customersById.clear();
-        customersById.addAll(dbManager.getAllCustomersOrderedById());
+        customersById.addAll(filterAccessibleCustomers(dbManager.getAllCustomersOrderedById()));
         if (customersById.isEmpty()) {
             currentCustomerIndex = -1;
         } else if (currentCustomerIndex < 0 || currentCustomerIndex >= customersById.size()) {
@@ -795,6 +861,7 @@ public class PoolAppFrame extends JFrame {
             return;
         }
         List<Customer> matches = dbManager.searchCustomersByName(query);
+        matches = filterAccessibleCustomers(matches);
         if (matches.isEmpty()) {
             JOptionPane.showMessageDialog(this, "No customer found for that search.", "Not Found", JOptionPane.INFORMATION_MESSAGE);
             return;
@@ -805,7 +872,7 @@ public class PoolAppFrame extends JFrame {
 
     private void loadCustomers(List<Customer> customers) {
         tableModel.setRowCount(0);
-        for (Customer customer : customers) {
+        for (Customer customer : filterAccessibleCustomers(customers)) {
             String amountDisplay = "$" + customer.getAmountCharged().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
             tableModel.addRow(new Object[]{
                     customer.getId(),
@@ -830,6 +897,8 @@ public class PoolAppFrame extends JFrame {
             customers = dbManager.searchCustomers(search);
         }
 
+        customers = filterAccessibleCustomers(customers);
+
         if (!"All".equals(selectedDay)) {
             customers.removeIf(customer -> !selectedDay.equals(customer.getServiceDay()));
         }
@@ -840,7 +909,7 @@ public class PoolAppFrame extends JFrame {
     private void resetFilters() {
         searchField.setText("");
         dayFilterCombo.setSelectedIndex(0);
-        loadCustomers(dbManager.getAllCustomers());
+        loadCustomers(filterAccessibleCustomers(dbManager.getAllCustomers()));
     }
 
     private void populateFormFromSelection() {
@@ -851,7 +920,7 @@ public class PoolAppFrame extends JFrame {
         String customerId = Objects.toString(tableModel.getValueAt(selectedRow, 0), "");
         if (!customerId.isBlank()) {
             Customer customer = dbManager.getCustomerById(customerId);
-            if (customer != null) {
+            if (customer != null && canAccessCustomer(customer)) {
                 populateFieldsWithCustomer(customer);
                 selectCustomerById(customerId);
                 updateCustomerBalanceLabel(customerId);
@@ -861,7 +930,269 @@ public class PoolAppFrame extends JFrame {
         }
     }
 
+    private boolean canAccessScreen(String screenName) {
+        if (employeeProfile == null) {
+            return true;
+        }
+        switch (screenName) {
+            case "CustomerDetails":
+                return employeeProfile.isCanViewCustomerDetails();
+            case "Customers":
+                return employeeProfile.isCanViewCustomers();
+            case "Statements":
+                return employeeProfile.isCanViewStatements();
+            case "RevenueSummary":
+                return employeeProfile.isCanViewRevenueSummary();
+            case "PDF":
+                return employeeProfile.isCanViewPdf();
+            case "Employees":
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    private String getDefaultAccessibleScreen() {
+        String[] screens = {"CustomerDetails", "Customers", "Statements", "RevenueSummary", "PDF", "Employees"};
+        for (String screen : screens) {
+            if (canAccessScreen(screen)) {
+                return screen;
+            }
+        }
+        return "CustomerDetails";
+    }
+
+    private boolean canEditCustomerData() {
+        return employeeProfile == null || employeeProfile.isCanEditCustomers();
+    }
+
+    private boolean canEditStatementData() {
+        return employeeProfile == null || employeeProfile.isCanEditStatements();
+    }
+
+    private boolean canEditPdfData() {
+        return employeeProfile == null || employeeProfile.isCanEditPdf();
+    }
+
+    private void applyCustomerEditPermissions(JButton saveButton, JButton clearButton) {
+        if (canEditCustomerData()) {
+            return;
+        }
+        saveButton.setEnabled(false);
+        clearButton.setEnabled(false);
+        firstNameField.setEditable(false);
+        lastNameField.setEditable(false);
+        addressField.setEditable(false);
+        cityField.setEditable(false);
+        stateField.setEditable(false);
+        zipField.setEditable(false);
+        phoneField.setEditable(false);
+        emailField.setEditable(false);
+        dayCombo.setEnabled(false);
+        amountField.setEditable(false);
+        notesArea.setEditable(false);
+    }
+
+    private void applyStatementEditPermissions(JTextField dateField, JComboBox<String> typeCombo, JTextField amountField,
+                                               JButton addRecordButton, JButton deleteRecordButton, JButton addTypeButton, JButton keywordButton) {
+        if (canEditStatementData()) {
+            return;
+        }
+        dateField.setEditable(false);
+        typeCombo.setEnabled(false);
+        amountField.setEditable(false);
+        addRecordButton.setEnabled(false);
+        deleteRecordButton.setEnabled(false);
+        addTypeButton.setEnabled(false);
+        keywordButton.setEnabled(false);
+    }
+
+    private JPanel createEmployeesPanel() {
+        JPanel employeesPanel = new JPanel(new BorderLayout(8, 8));
+        employeesPanel.setBorder(BorderFactory.createTitledBorder("Employees"));
+
+        employeeScreenLabel.setFont(employeeScreenLabel.getFont().deriveFont(Font.BOLD, 16f));
+        JPanel headerPanel = new JPanel(new BorderLayout(8, 8));
+        headerPanel.add(employeeScreenLabel, BorderLayout.NORTH);
+
+        JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        JButton searchButton = new JButton("Search");
+        JButton clearButton = new JButton("Clear");
+        searchPanel.add(new JLabel("Search:"));
+        searchPanel.add(employeeSearchField);
+        searchPanel.add(searchButton);
+        searchPanel.add(clearButton);
+        searchButton.addActionListener(e -> refreshEmployeesScreen());
+        clearButton.addActionListener(e -> {
+            employeeSearchField.setText("");
+            refreshEmployeesScreen();
+        });
+        employeeSearchField.addActionListener(e -> refreshEmployeesScreen());
+        headerPanel.add(searchPanel, BorderLayout.SOUTH);
+        employeesPanel.add(headerPanel, BorderLayout.NORTH);
+
+        employeeList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        employeesPanel.add(new JScrollPane(employeeList), BorderLayout.CENTER);
+
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton addButton = new JButton("Add Employee");
+        JButton editButton = new JButton("Edit Employee");
+        JButton deleteButton = new JButton("Delete Employee");
+        JButton customerViewButton = new JButton("Customer View");
+        JButton refreshButton = new JButton("Refresh");
+
+        addButton.addActionListener(e -> openEmployeeEditor(null));
+        editButton.addActionListener(e -> openEmployeeEditor(employeeList.getSelectedValue()));
+        deleteButton.addActionListener(e -> deleteSelectedEmployee());
+        customerViewButton.addActionListener(e -> openEmployeeCustomerView());
+        refreshButton.addActionListener(e -> refreshEmployeesScreen());
+
+        buttonPanel.add(addButton);
+        buttonPanel.add(editButton);
+        buttonPanel.add(deleteButton);
+        buttonPanel.add(customerViewButton);
+        buttonPanel.add(refreshButton);
+        employeesPanel.add(buttonPanel, BorderLayout.SOUTH);
+
+        return employeesPanel;
+    }
+
+    private void refreshEmployeesScreen() {
+        employeeListModel.clear();
+        if (companyProfile == null || companyProfile.getId() == null) {
+            employeeScreenLabel.setText("Employees are only available for company accounts.");
+            return;
+        }
+        employeeScreenLabel.setText("Employees for " + companyProfile.getCompanyName());
+        String query = employeeSearchField.getText().trim().toLowerCase(Locale.ROOT);
+        for (EmployeeProfile employee : masterDatabaseManager.getEmployeesForCompany(companyProfile.getId())) {
+            if (query.isBlank() || matchesEmployeeSearch(employee, query)) {
+                employeeListModel.addElement(employee);
+            }
+        }
+    }
+
+    private boolean matchesEmployeeSearch(EmployeeProfile employee, String query) {
+        return String.valueOf(employee.getEmployeeId()).contains(query)
+                || valueOrEmpty(employee.getFirstName()).toLowerCase(Locale.ROOT).contains(query)
+                || valueOrEmpty(employee.getLastName()).toLowerCase(Locale.ROOT).contains(query)
+                || valueOrEmpty(employee.getPhone()).toLowerCase(Locale.ROOT).contains(query)
+                || valueOrEmpty(employee.getEmail()).toLowerCase(Locale.ROOT).contains(query)
+                || valueOrEmpty(employee.getUsername()).toLowerCase(Locale.ROOT).contains(query);
+    }
+
+    private String valueOrEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    private void openEmployeeEditor(EmployeeProfile selectedEmployee) {
+        if (companyProfile == null || companyProfile.getId() == null) {
+            JOptionPane.showMessageDialog(this, "Employee management is only available for company accounts.", "Employees", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        EmployeeProfile employee = selectedEmployee == null ? new EmployeeProfile() : cloneEmployee(selectedEmployee);
+        if (selectedEmployee == null) {
+            employee.setCompanyId(companyProfile.getId());
+            employee.setCompanyName(companyProfile.getCompanyName());
+            employee.setCompanyDatabasePath(dbManager.getDatabasePath());
+            employee.setCanViewCustomerDetails(true);
+            employee.setCanViewCustomers(true);
+            employee.setCanViewStatements(true);
+            employee.setCanViewRevenueSummary(false);
+            employee.setCanViewPdf(false);
+            employee.setCanEditPdf(false);
+            employee.setCanEditCustomers(false);
+            employee.setCanEditStatements(false);
+        }
+        EmployeeEditorDialog editor = new EmployeeEditorDialog(this, companyProfile, employee, dbManager.getAllCustomersOrderedById());
+        editor.setVisible(true);
+        if (editor.isSaved()) {
+            masterDatabaseManager.saveEmployee(editor.getEmployeeProfile());
+            refreshEmployeesScreen();
+        }
+    }
+
+    private void deleteSelectedEmployee() {
+        EmployeeProfile selected = employeeList.getSelectedValue();
+        if (selected == null) {
+            JOptionPane.showMessageDialog(this, "Select an employee first.", "Employees", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Delete employee '" + selected.getFullName() + "'?",
+                "Delete Employee", JOptionPane.YES_NO_OPTION);
+        if (confirm == JOptionPane.YES_OPTION) {
+            masterDatabaseManager.deleteEmployee(selected.getEmployeeId(), companyProfile.getId());
+            refreshEmployeesScreen();
+        }
+    }
+
+    private void openEmployeeCustomerView() {
+        EmployeeProfile selected = employeeList.getSelectedValue();
+        if (selected == null) {
+            JOptionPane.showMessageDialog(this, "Select an employee first.", "Customer View", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        DatabaseManager employeeDatabase = new DatabaseManager(selected.getCompanyDatabasePath());
+        final PoolAppFrame[] previewFrameHolder = new PoolAppFrame[1];
+        Runnable returnToCompanyView = () -> {
+            if (previewFrameHolder[0] != null) {
+                previewFrameHolder[0].dispose();
+            }
+            setVisible(true);
+            showScreen("Employees");
+            refreshEmployeesScreen();
+        };
+
+        previewFrameHolder[0] = new PoolAppFrame(employeeDatabase, null, selected, returnToCompanyView, returnToCompanyView);
+        previewFrameHolder[0].setBounds(getBounds());
+        previewFrameHolder[0].setExtendedState(getExtendedState());
+        setVisible(false);
+        previewFrameHolder[0].setVisible(true);
+    }
+
+    private void reconcileStatementRecordAmountsForCurrentTypeRules() {
+        for (String type : dbManager.getDistinctStatementRecordTypes()) {
+            dbManager.normalizeStatementRecordAmountsForType(type, classifyRecordType(type) == RecordTypeCategory.DEBIT);
+        }
+        if (activeRecordCustomerId != null && !activeRecordCustomerId.isBlank()) {
+            loadStatementRecordsForCustomer(activeRecordCustomerId);
+        }
+        refreshRevenueSummary();
+        updateCustomerBalanceLabel(idField.getText().trim());
+    }
+
+    private List<Customer> filterAccessibleCustomers(List<Customer> customers) {
+        if (employeeProfile == null) {
+            return new ArrayList<>(customers);
+        }
+        List<Customer> filtered = new ArrayList<>();
+        for (Customer customer : customers) {
+            if (canAccessCustomer(customer)) {
+                filtered.add(customer);
+            }
+        }
+        return filtered;
+    }
+
+    private boolean canAccessCustomer(Customer customer) {
+        if (employeeProfile == null || customer == null) {
+            return true;
+        }
+        Set<String> allowedCustomerIds = new LinkedHashSet<>(employeeProfile.getAllowedCustomerIds());
+        Set<String> allowedDays = new LinkedHashSet<>(employeeProfile.getAllowedDays());
+        if (allowedCustomerIds.isEmpty() && allowedDays.isEmpty()) {
+            return true;
+        }
+        return allowedCustomerIds.contains(customer.getId()) || allowedDays.contains(customer.getServiceDay());
+    }
+
     private void saveCustomer() {
+        if (!canEditCustomerData()) {
+            JOptionPane.showMessageDialog(this, "You have view-only access for customer data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         try {
             Customer customer = buildCustomerFromForm();
             if (customer.getId() == null || customer.getId().isBlank()) {
@@ -928,6 +1259,10 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void clearForm() {
+        if (!canEditCustomerData() && employeeProfile != null) {
+            JOptionPane.showMessageDialog(this, "You have view-only access for customer data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         firstNameField.setText("");
         lastNameField.setText("");
         addressField.setText("");
@@ -1131,7 +1466,7 @@ public class PoolAppFrame extends JFrame {
         };
         previewContentPanel.setBackground(Color.WHITE);
         previewContentPanel.setBorder(BorderFactory.createTitledBorder("Live Preview - Click element to select"));
-        previewContentPanel.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        previewContentPanel.setCursor(new Cursor(canEditPdfData() ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
         
         // Track selected element and element bounds
         previewContentPanel.putClientProperty("selectedElement", -1);
@@ -1139,49 +1474,50 @@ public class PoolAppFrame extends JFrame {
         previewContentPanel.putClientProperty("elementNames", new java.util.ArrayList<String>());
         
         // Add mouse listener for element selection and dragging
-        previewContentPanel.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent e) {
-                @SuppressWarnings("unchecked")
-                java.util.ArrayList<java.awt.Rectangle> bounds = (java.util.ArrayList<java.awt.Rectangle>) previewContentPanel.getClientProperty("elementBounds");
-                @SuppressWarnings("unchecked")
-                java.util.ArrayList<String> elementNames = (java.util.ArrayList<String>) previewContentPanel.getClientProperty("elementNames");
-                String selectedName = null;
-                
-                // Hit detection - check which element was clicked
-                if (bounds != null && elementNames != null) {
-                    for (int i = 0; i < bounds.size(); i++) {
-                        if (bounds.get(i).contains(e.getPoint())) {
-                            selectedName = elementNames.get(i);
-                            break;
+        if (canEditPdfData()) {
+            previewContentPanel.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    @SuppressWarnings("unchecked")
+                    java.util.ArrayList<java.awt.Rectangle> bounds = (java.util.ArrayList<java.awt.Rectangle>) previewContentPanel.getClientProperty("elementBounds");
+                    @SuppressWarnings("unchecked")
+                    java.util.ArrayList<String> elementNames = (java.util.ArrayList<String>) previewContentPanel.getClientProperty("elementNames");
+                    String selectedName = null;
+
+                    if (bounds != null && elementNames != null) {
+                        for (int i = 0; i < bounds.size(); i++) {
+                            if (bounds.get(i).contains(e.getPoint())) {
+                                selectedName = elementNames.get(i);
+                                break;
+                            }
                         }
                     }
-                }
-                
-                previewContentPanel.putClientProperty("selectedElementName", selectedName);
-                previewContentPanel.putClientProperty("dragStartX", e.getX());
-                previewContentPanel.putClientProperty("dragStartY", e.getY());
-                previewContentPanel.repaint();
-            }
-        });
-        
-        previewContentPanel.addMouseMotionListener(new MouseAdapter() {
-            @Override
-            public void mouseDragged(MouseEvent e) {
-                String selectedName = (String) previewContentPanel.getClientProperty("selectedElementName");
-                Integer startX = (Integer) previewContentPanel.getClientProperty("dragStartX");
-                Integer startY = (Integer) previewContentPanel.getClientProperty("dragStartY");
-                
-                if (selectedName != null && startX != null && startY != null) {
-                    int deltaX = (e.getX() - startX) / 5;
-                    int deltaY = (e.getY() - startY) / 5;
-                    updateElementOffset(selectedName, deltaX, deltaY);
+
+                    previewContentPanel.putClientProperty("selectedElementName", selectedName);
                     previewContentPanel.putClientProperty("dragStartX", e.getX());
                     previewContentPanel.putClientProperty("dragStartY", e.getY());
                     previewContentPanel.repaint();
                 }
-            }
-        });
+            });
+
+            previewContentPanel.addMouseMotionListener(new MouseAdapter() {
+                @Override
+                public void mouseDragged(MouseEvent e) {
+                    String selectedName = (String) previewContentPanel.getClientProperty("selectedElementName");
+                    Integer startX = (Integer) previewContentPanel.getClientProperty("dragStartX");
+                    Integer startY = (Integer) previewContentPanel.getClientProperty("dragStartY");
+
+                    if (selectedName != null && startX != null && startY != null) {
+                        int deltaX = (e.getX() - startX) / 5;
+                        int deltaY = (e.getY() - startY) / 5;
+                        updateElementOffset(selectedName, deltaX, deltaY);
+                        previewContentPanel.putClientProperty("dragStartX", e.getX());
+                        previewContentPanel.putClientProperty("dragStartY", e.getY());
+                        previewContentPanel.repaint();
+                    }
+                }
+            });
+        }
 
         JPanel panel = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
@@ -1476,6 +1812,14 @@ public class PoolAppFrame extends JFrame {
             }
         });
 
+        if (!canEditPdfData()) {
+            setContainerEnabled(panel, false);
+        }
+
+        if (!canEditPdfData()) {
+            setContainerEnabled(panel, false);
+        }
+
         JScrollPane scrollPane = new JScrollPane(panel);
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
         scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
@@ -1488,6 +1832,15 @@ public class PoolAppFrame extends JFrame {
         mainPanel.add(splitPane, BorderLayout.CENTER);
 
         return mainPanel;
+    }
+
+    private void setContainerEnabled(Component component, boolean enabled) {
+        component.setEnabled(enabled);
+        if (component instanceof Container) {
+            for (Component child : ((Container) component).getComponents()) {
+                setContainerEnabled(child, enabled);
+            }
+        }
     }
 
     private void updateElementOffset(String elementName, int deltaX, int deltaY) {
@@ -2056,7 +2409,7 @@ public class PoolAppFrame extends JFrame {
             Files.copy(dbPath, currentBackup, StandardCopyOption.REPLACE_EXISTING);
             Files.copy(selected.toPath(), dbPath, StandardCopyOption.REPLACE_EXISTING);
             JOptionPane.showMessageDialog(this, "Database restored successfully. Previous database backed up as:\n" + currentBackup.toAbsolutePath(), "Restore Complete", JOptionPane.INFORMATION_MESSAGE);
-            loadCustomers(dbManager.getAllCustomers());
+            loadCustomers(filterAccessibleCustomers(dbManager.getAllCustomers()));
             refreshRevenueSummary();
             refreshDetailCustomerList();
             clearForm();
@@ -2066,16 +2419,30 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void sendEmailToCustomer() {
+        File statementPdf = null;
         try {
             Customer customer = getCustomerFromFormOrSelection();
             if (customer.getEmail().isBlank()) {
                 throw new IllegalArgumentException("Customer does not have an email address.");
             }
-            String statement = buildStatement(customer);
-            emailService.sendEmail(customer.getEmail(), "Pool Service Statement for " + customer.getFullName(), statement);
+            String senderEmail = getStatementSenderEmail();
+            if (senderEmail.isBlank()) {
+                throw new IllegalStateException("Sender email is not configured.");
+            }
+            statementPdf = createTemporaryStatementPdf(customer);
+            String statement = buildStatement(customer, getStatementSenderName(), senderEmail, getStatementSenderPhone());
+            emailService.sendEmail(customer.getEmail(), "Pool Service Statement for " + customer.getFullName(), statement,
+                    senderEmail, getStatementSenderName(), statementPdf);
             JOptionPane.showMessageDialog(this, "Email sent successfully.", "Email", JOptionPane.INFORMATION_MESSAGE);
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Unable to send email: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        } catch (Throwable error) {
+            String message = error.getMessage();
+            JOptionPane.showMessageDialog(this, "Unable to send email: "
+                    + (message == null || message.isBlank() ? error.getClass().getSimpleName() : message),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+        } finally {
+            if (statementPdf != null && statementPdf.exists()) {
+                statementPdf.delete();
+            }
         }
     }
 
@@ -2085,7 +2452,11 @@ public class PoolAppFrame extends JFrame {
             if (customer.getPhone().isBlank()) {
                 throw new IllegalArgumentException("Customer does not have a phone number.");
             }
-            String statement = buildStatement(customer);
+            String senderPhone = getStatementSenderPhone();
+            if (senderPhone.isBlank()) {
+                throw new IllegalStateException("Sender phone is not configured.");
+            }
+            String statement = buildStatement(customer, getStatementSenderName(), getStatementSenderEmail(), senderPhone);
             smsService.sendSms(customer.getPhone(), statement);
             JOptionPane.showMessageDialog(this, "SMS sent successfully.", "SMS", JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception e) {
@@ -2100,9 +2471,22 @@ public class PoolAppFrame extends JFrame {
         return getSelectedCustomerFromTable();
     }
 
-    private String buildStatement(Customer customer) {
+    private File createTemporaryStatementPdf(Customer customer) throws IOException {
+        String prefix = buildStatementFileName(customer);
+        if (prefix.length() < 3) {
+            prefix = "STATEMENT";
+        }
+        File pdfFile = Files.createTempFile(prefix + "_", ".pdf").toFile();
+        createStatementPDF(customer, dbManager.getStatementRecords(customer.getId()), pdfFile);
+        return pdfFile;
+    }
+
+    private String buildStatement(Customer customer, String senderName, String senderEmail, String senderPhone) {
         return "Pool Service Statement\n"
                 + "==========================\n"
+                + "Sent By: " + senderName + "\n"
+                + "Sender Phone: " + senderPhone + "\n"
+                + "Sender Email: " + senderEmail + "\n"
                 + "Customer ID: " + customer.getId() + "\n"
                 + "Name: " + customer.getFullName() + "\n"
                 + "Address: " + customer.getAddress() + "\n"
@@ -2115,6 +2499,36 @@ public class PoolAppFrame extends JFrame {
                 + "Amount Charged: $" + customer.getAmountCharged().setScale(2, java.math.RoundingMode.HALF_UP) + "\n"
                 + "Notes: " + customer.getNotes() + "\n"
                 + "\nThank you for choosing our pool service!";
+    }
+
+    private String getStatementSenderName() {
+        if (employeeProfile != null) {
+            return employeeProfile.getFullName();
+        }
+        if (companyProfile != null) {
+            return companyProfile.getCompanyName();
+        }
+        return "Pool Service";
+    }
+
+    private String getStatementSenderEmail() {
+        if (employeeProfile != null) {
+            return valueOrEmpty(employeeProfile.getEmail());
+        }
+        if (companyProfile != null && companyProfile.getEmail() != null && !companyProfile.getEmail().isBlank()) {
+            return companyProfile.getEmail().trim();
+        }
+        return pdfSettings == null ? "" : valueOrEmpty(pdfSettings.getCompanyEmail());
+    }
+
+    private String getStatementSenderPhone() {
+        if (employeeProfile != null) {
+            return valueOrEmpty(employeeProfile.getPhone());
+        }
+        if (pdfSettings != null && pdfSettings.getCompanyPhone() != null && !pdfSettings.getCompanyPhone().isBlank()) {
+            return pdfSettings.getCompanyPhone().trim();
+        }
+        return companyProfile == null ? "" : valueOrEmpty(companyProfile.getPhone());
     }
 
     private void setNewCustomerId() {
@@ -2152,6 +2566,10 @@ public class PoolAppFrame extends JFrame {
             JOptionPane.showMessageDialog(this, "Customer record not found.", "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
+        if (!canAccessCustomer(customer)) {
+            JOptionPane.showMessageDialog(this, "You do not have access to that customer.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         activeRecordCustomerId = customer.getId();
         recordCustomerLabel.setText("Customer: " + customer.getFullName());
         recordDateField.setText(LocalDate.now().format(DateTimeFormatter.ofPattern("MM/dd/yyyy")));
@@ -2162,6 +2580,10 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void addStatementRecord() {
+        if (!canEditStatementData()) {
+            JOptionPane.showMessageDialog(this, "You have view-only access for statement data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         if (activeRecordCustomerId == null || activeRecordCustomerId.isBlank()) {
             JOptionPane.showMessageDialog(this, "Select a customer first by double-clicking a row.", "No Customer", JOptionPane.INFORMATION_MESSAGE);
             return;
@@ -2329,6 +2751,7 @@ public class PoolAppFrame extends JFrame {
                 
                 // Update combo box model with new list
                 populateRecordTypeCombo(model, newTypes);
+                reconcileStatementRecordAmountsForCurrentTypeRules();
                 
                 JOptionPane.showMessageDialog(dialog, "Record types saved successfully.", "Saved", JOptionPane.INFORMATION_MESSAGE);
                 dialog.dispose();
@@ -2453,7 +2876,36 @@ public class PoolAppFrame extends JFrame {
         dbManager.savePdfSetting("recordTypeDebitKeywords", joinKeywordList(debitTypeKeywords));
     }
 
+    private EmployeeProfile cloneEmployee(EmployeeProfile source) {
+        EmployeeProfile employee = new EmployeeProfile();
+        employee.setEmployeeId(source.getEmployeeId());
+        employee.setCompanyId(source.getCompanyId());
+        employee.setCompanyName(source.getCompanyName());
+        employee.setCompanyDatabasePath(source.getCompanyDatabasePath());
+        employee.setFirstName(source.getFirstName());
+        employee.setLastName(source.getLastName());
+        employee.setPhone(source.getPhone());
+        employee.setEmail(source.getEmail());
+        employee.setUsername(source.getUsername());
+        employee.setPassword(source.getPassword());
+        employee.setCanViewCustomerDetails(source.isCanViewCustomerDetails());
+        employee.setCanViewCustomers(source.isCanViewCustomers());
+        employee.setCanViewStatements(source.isCanViewStatements());
+        employee.setCanViewRevenueSummary(source.isCanViewRevenueSummary());
+        employee.setCanViewPdf(source.isCanViewPdf());
+        employee.setCanEditPdf(source.isCanEditPdf());
+        employee.setCanEditCustomers(source.isCanEditCustomers());
+        employee.setCanEditStatements(source.isCanEditStatements());
+        employee.setAllowedCustomerIds(new ArrayList<>(source.getAllowedCustomerIds()));
+        employee.setAllowedDays(new ArrayList<>(source.getAllowedDays()));
+        return employee;
+    }
+
     private void manageRecordTypeKeywords() {
+        if (!canEditStatementData()) {
+            JOptionPane.showMessageDialog(this, "You have view-only access for statement data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         JDialog dialog = new JDialog(this, "Manage Type Keywords", true);
         dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
         dialog.setSize(520, 360);
@@ -2502,6 +2954,7 @@ public class PoolAppFrame extends JFrame {
             debitTypeKeywords = newDebitKeywords;
             saveRecordTypeKeywords();
             loadRecordTypesFromDatabase();
+            reconcileStatementRecordAmountsForCurrentTypeRules();
             dialog.dispose();
         });
 
@@ -2559,6 +3012,10 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void deleteSelectedRecord() {
+        if (!canEditStatementData()) {
+            JOptionPane.showMessageDialog(this, "You have view-only access for statement data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         if (activeRecordCustomerId == null || activeRecordCustomerId.isBlank()) {
             JOptionPane.showMessageDialog(this, "Select a customer first by double-clicking a row.", "No Customer", JOptionPane.INFORMATION_MESSAGE);
             return;
@@ -2588,6 +3045,12 @@ public class PoolAppFrame extends JFrame {
             return;
         }
         Customer customer = dbManager.getCustomerById(customerId);
+        if (customer != null && !canAccessCustomer(customer)) {
+            recordCustomerLabel.setText("Customer: (access restricted)");
+            recordBalanceLabel.setText("Current Balance: $0.00");
+            currentStatementRecords = new ArrayList<>();
+            return;
+        }
         if (customer != null) {
             recordCustomerLabel.setText("Customer: " + customer.getFullName());
         }
@@ -2605,6 +3068,11 @@ public class PoolAppFrame extends JFrame {
 
     private void updateCustomerBalanceLabel(String customerId) {
         if (customerId == null || customerId.isBlank()) {
+            customerBalanceLabel.setText("Current Balance: $0.00");
+            return;
+        }
+        Customer customer = dbManager.getCustomerById(customerId);
+        if (customer != null && !canAccessCustomer(customer)) {
             customerBalanceLabel.setText("Current Balance: $0.00");
             return;
         }
@@ -2627,8 +3095,18 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void refreshRevenueSummary() {
-        Map<String, BigDecimal> revenueByDay = dbManager.getRevenueByDay();
-        BigDecimal totalRevenue = dbManager.getTotalRevenue();
+        List<Customer> accessibleCustomers = filterAccessibleCustomers(dbManager.getAllCustomers());
+        Map<String, BigDecimal> revenueByDay = new java.util.LinkedHashMap<>();
+        for (String day : DAYS) {
+            revenueByDay.put(day, BigDecimal.ZERO.setScale(2, java.math.RoundingMode.HALF_UP));
+        }
+        BigDecimal totalRevenue = BigDecimal.ZERO.setScale(2, java.math.RoundingMode.HALF_UP);
+        for (Customer customer : accessibleCustomers) {
+            BigDecimal amount = customer.getAmountCharged().setScale(2, java.math.RoundingMode.HALF_UP);
+            String day = customer.getServiceDay() == null ? "Unknown" : customer.getServiceDay();
+            revenueByDay.put(day, revenueByDay.getOrDefault(day, BigDecimal.ZERO.setScale(2, java.math.RoundingMode.HALF_UP)).add(amount));
+            totalRevenue = totalRevenue.add(amount);
+        }
         StringBuilder builder = new StringBuilder();
         builder.append("Daily Revenue by Group:\n");
         builder.append("----------------------\n");
@@ -2638,6 +3116,255 @@ public class PoolAppFrame extends JFrame {
         }
         builder.append("\nTotal Revenue: $").append(totalRevenue.setScale(2, java.math.RoundingMode.HALF_UP)).append("\n");
         revenueArea.setText(builder.toString());
+    }
+
+    private static class EmployeeEditorDialog extends JDialog {
+        private final EmployeeProfile employeeProfile;
+        private final JTextField firstNameField;
+        private final JTextField lastNameField;
+        private final JTextField phoneField;
+        private final JTextField emailField;
+        private final JTextField usernameField;
+        private final JTextField currentPasswordField;
+        private final JPasswordField passwordField;
+        private final JPasswordField confirmPasswordField;
+        private final JCheckBox customerDetailsCheck;
+        private final JCheckBox customersCheck;
+        private final JCheckBox statementsCheck;
+        private final JCheckBox revenueCheck;
+        private final JCheckBox pdfCheck;
+        private final JCheckBox editPdfCheck;
+        private final JCheckBox editCustomersCheck;
+        private final JCheckBox editStatementsCheck;
+        private final JList<String> customerList;
+        private final List<Customer> availableCustomers;
+        private final JList<String> dayList;
+        private boolean saved;
+
+        EmployeeEditorDialog(JFrame parent, CompanyProfile companyProfile, EmployeeProfile employeeProfile, List<Customer> availableCustomers) {
+            super(parent, employeeProfile.getEmployeeId() == null ? "Add Employee" : "Edit Employee", true);
+            this.employeeProfile = employeeProfile;
+            this.availableCustomers = new ArrayList<>(availableCustomers);
+            this.saved = false;
+
+            setSize(760, 560);
+            setLocationRelativeTo(parent);
+            setLayout(new BorderLayout(10, 10));
+
+            firstNameField = new JTextField(valueOrEmpty(employeeProfile.getFirstName()), 20);
+            lastNameField = new JTextField(valueOrEmpty(employeeProfile.getLastName()), 20);
+            phoneField = new JTextField(valueOrEmpty(employeeProfile.getPhone()), 20);
+            emailField = new JTextField(valueOrEmpty(employeeProfile.getEmail()), 20);
+            usernameField = new JTextField(valueOrEmpty(employeeProfile.getUsername()), 20);
+            currentPasswordField = new JTextField(valueOrEmpty(employeeProfile.getPassword()), 20);
+            currentPasswordField.setEditable(false);
+            passwordField = new JPasswordField(20);
+            confirmPasswordField = new JPasswordField(20);
+
+            customerDetailsCheck = new JCheckBox("Customer Details", employeeProfile.isCanViewCustomerDetails());
+            customersCheck = new JCheckBox("Customers", employeeProfile.isCanViewCustomers());
+            statementsCheck = new JCheckBox("Statements", employeeProfile.isCanViewStatements());
+            revenueCheck = new JCheckBox("Revenue Summary", employeeProfile.isCanViewRevenueSummary());
+            pdfCheck = new JCheckBox("PDF", employeeProfile.isCanViewPdf());
+            editPdfCheck = new JCheckBox("Can Edit PDF Settings", employeeProfile.isCanEditPdf());
+            editCustomersCheck = new JCheckBox("Can Edit Customer Data", employeeProfile.isCanEditCustomers());
+            editStatementsCheck = new JCheckBox("Can Edit Statement Data", employeeProfile.isCanEditStatements());
+
+            DefaultListModel<String> customerModel = new DefaultListModel<>();
+            for (Customer customer : this.availableCustomers) {
+                customerModel.addElement(customer.getId() + " - " + customer.getFullName() + " (" + customer.getServiceDay() + ")");
+            }
+            customerList = new JList<>(customerModel);
+            customerList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+
+            DefaultListModel<String> dayModel = new DefaultListModel<>();
+            for (String day : DAYS) {
+                dayModel.addElement(day);
+            }
+            dayList = new JList<>(dayModel);
+            dayList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+
+            preselectCustomers();
+            preselectDays();
+
+            JPanel formPanel = new JPanel(new GridBagLayout());
+            formPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.insets = new Insets(6, 6, 6, 6);
+            gbc.anchor = GridBagConstraints.WEST;
+            gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.weightx = 1.0;
+
+            addField(formPanel, gbc, 0, "Employee ID:", new JLabel(employeeProfile.getEmployeeId() == null ? "Auto-generated" : String.valueOf(employeeProfile.getEmployeeId())));
+            addField(formPanel, gbc, 1, "Company:", new JLabel(companyProfile.getCompanyName()));
+            addField(formPanel, gbc, 2, "First Name:", firstNameField);
+            addField(formPanel, gbc, 3, "Last Name:", lastNameField);
+            addField(formPanel, gbc, 4, "Phone:", phoneField);
+            addField(formPanel, gbc, 5, "Email:", emailField);
+            addField(formPanel, gbc, 6, "Username:", usernameField);
+            addField(formPanel, gbc, 7, "Current Password:", currentPasswordField);
+            addField(formPanel, gbc, 8, employeeProfile.getEmployeeId() == null ? "Password:" : "New Password:", passwordField);
+            addField(formPanel, gbc, 9, employeeProfile.getEmployeeId() == null ? "Confirm Password:" : "Confirm New Password:", confirmPasswordField);
+
+            JPanel permissionsPanel = new JPanel(new GridLayout(0, 1, 4, 4));
+            permissionsPanel.setBorder(BorderFactory.createTitledBorder("Views they can see"));
+            permissionsPanel.add(customerDetailsCheck);
+            permissionsPanel.add(customersCheck);
+            permissionsPanel.add(statementsCheck);
+            permissionsPanel.add(revenueCheck);
+            permissionsPanel.add(pdfCheck);
+            permissionsPanel.add(editPdfCheck);
+            permissionsPanel.add(editCustomersCheck);
+            permissionsPanel.add(editStatementsCheck);
+
+            JPanel assignmentPanel = new JPanel(new GridLayout(1, 2, 10, 10));
+            assignmentPanel.setBorder(BorderFactory.createTitledBorder("Assignments"));
+            assignmentPanel.add(wrapWithTitle("Specific Customers", new JScrollPane(customerList)));
+            assignmentPanel.add(wrapWithTitle("Allowed Days", new JScrollPane(dayList)));
+
+            JPanel centerPanel = new JPanel(new BorderLayout(10, 10));
+            centerPanel.add(permissionsPanel, BorderLayout.NORTH);
+            centerPanel.add(assignmentPanel, BorderLayout.CENTER);
+
+            JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            JButton saveButton = new JButton("Save Employee");
+            JButton cancelButton = new JButton("Cancel");
+            buttonPanel.add(saveButton);
+            buttonPanel.add(cancelButton);
+
+            saveButton.addActionListener(e -> saveEmployee());
+            cancelButton.addActionListener(e -> dispose());
+
+            JPanel contentPanel = new JPanel(new BorderLayout(10, 10));
+            contentPanel.add(formPanel, BorderLayout.NORTH);
+            contentPanel.add(centerPanel, BorderLayout.CENTER);
+
+            JScrollPane contentScrollPane = new JScrollPane(contentPanel);
+            contentScrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+            contentScrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+
+            add(contentScrollPane, BorderLayout.CENTER);
+            add(buttonPanel, BorderLayout.SOUTH);
+        }
+
+        private void addField(JPanel panel, GridBagConstraints gbc, int row, String label, JComponent component) {
+            gbc.gridx = 0;
+            gbc.gridy = row;
+            gbc.weightx = 0;
+            panel.add(new JLabel(label), gbc);
+            gbc.gridx = 1;
+            gbc.weightx = 1.0;
+            panel.add(component, gbc);
+        }
+
+        private JPanel wrapWithTitle(String title, JComponent component) {
+            JPanel panel = new JPanel(new BorderLayout());
+            panel.setBorder(BorderFactory.createTitledBorder(title));
+            panel.add(component, BorderLayout.CENTER);
+            return panel;
+        }
+
+        private void preselectCustomers() {
+            List<Integer> indexes = new ArrayList<>();
+            for (int i = 0; i < availableCustomers.size(); i++) {
+                if (employeeProfile.getAllowedCustomerIds().contains(availableCustomers.get(i).getId())) {
+                    indexes.add(i);
+                }
+            }
+            customerList.setSelectedIndices(indexes.stream().mapToInt(Integer::intValue).toArray());
+        }
+
+        private void preselectDays() {
+            List<Integer> indexes = new ArrayList<>();
+            for (int i = 0; i < DAYS.length; i++) {
+                if (employeeProfile.getAllowedDays().contains(DAYS[i])) {
+                    indexes.add(i);
+                }
+            }
+            dayList.setSelectedIndices(indexes.stream().mapToInt(Integer::intValue).toArray());
+        }
+
+        private void saveEmployee() {
+            String firstName = firstNameField.getText().trim();
+            String lastName = lastNameField.getText().trim();
+            String phone = phoneField.getText().trim();
+            String email = emailField.getText().trim();
+            String username = usernameField.getText().trim();
+            String password = new String(passwordField.getPassword());
+            String confirmPassword = new String(confirmPasswordField.getPassword());
+
+            if (firstName.isBlank() || lastName.isBlank() || username.isBlank()) {
+                JOptionPane.showMessageDialog(this, "First name, last name, and username are required.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            if (!customerDetailsCheck.isSelected() && !customersCheck.isSelected() && !statementsCheck.isSelected()
+                    && !revenueCheck.isSelected() && !pdfCheck.isSelected()) {
+                JOptionPane.showMessageDialog(this, "Choose at least one view permission.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            if (editCustomersCheck.isSelected() && !customerDetailsCheck.isSelected() && !customersCheck.isSelected()) {
+                JOptionPane.showMessageDialog(this, "Customer edit permission requires Customer Details or Customers view access.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (editStatementsCheck.isSelected() && !statementsCheck.isSelected()) {
+                JOptionPane.showMessageDialog(this, "Statement edit permission requires Statements view access.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (editPdfCheck.isSelected() && !pdfCheck.isSelected()) {
+                JOptionPane.showMessageDialog(this, "PDF edit permission requires PDF view access.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            if (employeeProfile.getEmployeeId() == null || !password.isBlank() || !confirmPassword.isBlank()) {
+                if (password.isBlank() || confirmPassword.isBlank()) {
+                    JOptionPane.showMessageDialog(this, "Enter and confirm the employee password.", "Validation", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                if (!password.equals(confirmPassword)) {
+                    JOptionPane.showMessageDialog(this, "Employee passwords do not match.", "Validation", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                employeeProfile.setPassword(password);
+            }
+
+            employeeProfile.setFirstName(firstName);
+            employeeProfile.setLastName(lastName);
+            employeeProfile.setPhone(phone);
+            employeeProfile.setEmail(email);
+            employeeProfile.setUsername(username);
+            employeeProfile.setCanViewCustomerDetails(customerDetailsCheck.isSelected());
+            employeeProfile.setCanViewCustomers(customersCheck.isSelected());
+            employeeProfile.setCanViewStatements(statementsCheck.isSelected());
+            employeeProfile.setCanViewRevenueSummary(revenueCheck.isSelected());
+            employeeProfile.setCanViewPdf(pdfCheck.isSelected());
+            employeeProfile.setCanEditPdf(editPdfCheck.isSelected());
+            employeeProfile.setCanEditCustomers(editCustomersCheck.isSelected());
+            employeeProfile.setCanEditStatements(editStatementsCheck.isSelected());
+
+            List<String> customerIds = new ArrayList<>();
+            for (int index : customerList.getSelectedIndices()) {
+                customerIds.add(availableCustomers.get(index).getId());
+            }
+            employeeProfile.setAllowedCustomerIds(customerIds);
+            employeeProfile.setAllowedDays(new ArrayList<>(dayList.getSelectedValuesList()));
+
+            saved = true;
+            dispose();
+        }
+
+        private String valueOrEmpty(String value) {
+            return value == null ? "" : value;
+        }
+
+        boolean isSaved() {
+            return saved;
+        }
+
+        EmployeeProfile getEmployeeProfile() {
+            return employeeProfile;
+        }
     }
 
     private static class DigitFilter extends DocumentFilter {

@@ -6,15 +6,14 @@
         "name": "Starter",
         "request": "launch",
         "mainClass": "com.poolapp.Starter",
-        "projectName": "SILVER DICE"
+        "projectName": "pool-company-app"
     },
     {
         "type": "java",
         "name": "Launch Starter",
         "request": "launch",
         "mainClass": "com.poolapp.Starter",
-        "projectName": "pool-company-app",
-        "preLaunchTask": "Build Java Project"
+        "projectName": "pool-company-app"
     }
 ]
 }

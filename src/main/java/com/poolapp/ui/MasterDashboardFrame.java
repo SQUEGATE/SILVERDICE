@@ -288,6 +288,7 @@ public class MasterDashboardFrame extends JFrame {
     private static class CompanyEditorDialog extends JDialog {
         private final JTextField companyNameField;
         private final JTextField phoneField;
+        private final JTextField emailField;
         private final JTextField addressField;
         private final JTextField usernameField;
         private final JPasswordField passwordField;
@@ -314,6 +315,7 @@ public class MasterDashboardFrame extends JFrame {
 
             companyNameField = new JTextField(companyProfile.getCompanyName() == null ? "" : companyProfile.getCompanyName(), 24);
             phoneField = new JTextField(companyProfile.getPhone() == null ? "" : companyProfile.getPhone(), 24);
+            emailField = new JTextField(companyProfile.getEmail() == null ? "" : companyProfile.getEmail(), 24);
             addressField = new JTextField(companyProfile.getAddress() == null ? "" : companyProfile.getAddress(), 24);
             usernameField = new JTextField(companyProfile.getUsername() == null ? "" : companyProfile.getUsername(), 24);
             passwordField = new JPasswordField(24);
@@ -321,10 +323,11 @@ public class MasterDashboardFrame extends JFrame {
 
             addRow(formPanel, gbc, 0, "Company Name:", companyNameField);
             addRow(formPanel, gbc, 1, "Phone:", phoneField);
-            addRow(formPanel, gbc, 2, "Address:", addressField);
-            addRow(formPanel, gbc, 3, "Username:", usernameField);
-            addRow(formPanel, gbc, 4, "Password:", passwordField);
-            addRow(formPanel, gbc, 5, "Confirm Password:", confirmPasswordField);
+            addRow(formPanel, gbc, 2, "Email:", emailField);
+            addRow(formPanel, gbc, 3, "Address:", addressField);
+            addRow(formPanel, gbc, 4, "Username:", usernameField);
+            addRow(formPanel, gbc, 5, "Password:", passwordField);
+            addRow(formPanel, gbc, 6, "Confirm Password:", confirmPasswordField);
 
             JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
             JButton saveButton = new JButton("Save");
@@ -350,6 +353,7 @@ public class MasterDashboardFrame extends JFrame {
         private void saveCompany() {
             String companyName = companyNameField.getText().trim();
             String phone = phoneField.getText().trim();
+            String email = emailField.getText().trim();
             String address = addressField.getText().trim();
             String username = usernameField.getText().trim();
             String password = new String(passwordField.getPassword());
@@ -374,6 +378,7 @@ public class MasterDashboardFrame extends JFrame {
 
             companyProfile.setCompanyName(companyName);
             companyProfile.setPhone(phone);
+            companyProfile.setEmail(email);
             companyProfile.setAddress(address);
             companyProfile.setUsername(username);
             if (companyProfile.getPassword() == null || companyProfile.getPassword().isBlank()) {
@@ -384,8 +389,10 @@ public class MasterDashboardFrame extends JFrame {
         }
 
         private CompanyProfile cloneCompany(CompanyProfile source) {
-            return new CompanyProfile(source.getId(), source.getCompanyName(), source.getPhone(), source.getAddress(),
-                    source.getUsername(), source.getPassword(), source.getDatabasePath());
+            CompanyProfile company = new CompanyProfile(source.getId(), source.getCompanyName(), source.getPhone(), source.getAddress(),
+                source.getUsername(), source.getPassword(), source.getDatabasePath());
+            company.setEmail(source.getEmail());
+            return company;
         }
 
         boolean isSaved() {

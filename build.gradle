@@ -6,6 +6,8 @@ plugins {
 group 'com.poolapp'
 version '1.0-SNAPSHOT'
 
+layout.buildDirectory.set(layout.projectDirectory.dir("gradle-build"))
+
 repositories {
     mavenCentral()
 }
@@ -13,6 +15,7 @@ repositories {
 dependencies {
     implementation 'org.xerial:sqlite-jdbc:3.40.1.0'
     implementation 'org.apache.pdfbox:pdfbox:3.0.1'
+    implementation 'com.sun.mail:jakarta.mail:2.0.1'
 }
 
 application {

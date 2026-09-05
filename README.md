@@ -30,10 +30,18 @@ gradle run
 ## Configuration
 Edit `src/main/resources/config.properties` or create a local `config.properties` in the project root.
 
-To enable email support:
+To send a customer statement by email with its PDF attached, configure an SMTP mailbox that is authorized to send from the company or employee email saved in the app:
 ```properties
 email.enabled=true
+mail.smtp.host=auto
+mail.smtp.port=587
+mail.smtp.username=your-email@example.com
+mail.smtp.password=your-app-password
 ```
+
+For Gmail, Outlook, Yahoo, iCloud, or Proton Mail, set `mail.smtp.host=auto` and the app detects the host from the sender email. Other domains use the configured fallback host automatically. You still need to replace the username and password with the mailbox email and an app password.
+
+`Send SMS` prepares the statement in the computer's SMS handler. SMS cannot include a PDF attachment unless an MMS/SMS provider and a public PDF link are configured.
 
 To enable SMS support:
 ```properties

@@ -3,6 +3,7 @@ package com.poolapp.ui;
 import com.poolapp.db.DatabaseManager;
 import com.poolapp.db.MasterDatabaseManager;
 import com.poolapp.model.CompanyProfile;
+import com.poolapp.model.EmployeeProfile;
 
 import javax.swing.*;
 import java.awt.*;
@@ -86,6 +87,23 @@ public class LoginFrame extends JFrame {
             SwingUtilities.invokeLater(() -> {
                 final PoolAppFrame[] frameHolder = new PoolAppFrame[1];
                 frameHolder[0] = new PoolAppFrame(companyDatabase, company, null, () -> {
+                    if (frameHolder[0] != null) {
+                        frameHolder[0].dispose();
+                    }
+                    new LoginFrame().setVisible(true);
+                });
+                frameHolder[0].setVisible(true);
+            });
+            dispose();
+            return;
+        }
+
+        EmployeeProfile employee = masterDatabaseManager.authenticateEmployee(username, password);
+        if (employee != null) {
+            DatabaseManager companyDatabase = new DatabaseManager(employee.getCompanyDatabasePath());
+            SwingUtilities.invokeLater(() -> {
+                final PoolAppFrame[] frameHolder = new PoolAppFrame[1];
+                frameHolder[0] = new PoolAppFrame(companyDatabase, null, employee, null, () -> {
                     if (frameHolder[0] != null) {
                         frameHolder[0].dispose();
                     }

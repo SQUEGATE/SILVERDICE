@@ -318,6 +318,45 @@ public class DatabaseManager {
         }
     }
 
+    public List<String> getDistinctStatementRecordTypes() {
+        String sql = "SELECT DISTINCT type FROM statement_records ORDER BY type";
+        List<String> types = new ArrayList<>();
+        try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                String type = resultSet.getString("type");
+                if (type != null && !type.isBlank()) {
+                    types.add(type);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Unable to load statement record types", e);
+        }
+        return types;
+    }
+
+    public void normalizeStatementRecordAmountsForType(String type, boolean debitType) {
+        String sql = "UPDATE statement_records SET amount = ? WHERE record_id = ?";
+        String selectSql = "SELECT record_id, amount FROM statement_records WHERE type = ?";
+        try (Connection connection = getConnection();
+             PreparedStatement selectStatement = connection.prepareStatement(selectSql);
+             PreparedStatement updateStatement = connection.prepareStatement(sql)) {
+            selectStatement.setString(1, type);
+            try (ResultSet resultSet = selectStatement.executeQuery()) {
+                while (resultSet.next()) {
+                    long recordId = resultSet.getLong("record_id");
+                    BigDecimal amount = BigDecimal.valueOf(resultSet.getDouble("amount")).setScale(2, RoundingMode.HALF_UP);
+                    BigDecimal normalizedAmount = debitType ? amount.abs().negate() : amount.abs();
+                    updateStatement.setBigDecimal(1, normalizedAmount);
+                    updateStatement.setLong(2, recordId);
+                    updateStatement.addBatch();
+                }
+            }
+            updateStatement.executeBatch();
+        } catch (SQLException e) {
+            throw new RuntimeException("Unable to normalize statement amounts for type", e);
+        }
+    }
+
     public BigDecimal getStatementBalance(String customerId) {
         String sql = "SELECT SUM(amount) AS total FROM statement_records WHERE customer_id = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {

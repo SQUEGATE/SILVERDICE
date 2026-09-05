@@ -1,9 +1,3 @@
 {
-  "java.project.sourcePaths": [
-    "src/main/java"
-  ],
-  "java.project.outputPath": "out",
-  "java.project.referencedLibraries": [
-    "lib/**/*.jar"
-  ]
+  "java.import.gradle.enabled": true
 }

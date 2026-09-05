@@ -1,8 +1,6 @@
 package com.poolapp.service;
 
 import java.awt.Desktop;
-import java.awt.Toolkit;
-import java.awt.datatransfer.StringSelection;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -13,7 +11,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
 public class SmsService {
-    private static final String GOOGLE_MESSAGES_APP_ID = "hpfldicfbfomlpcikngkocigghgafkph";
     private final Properties config;
 
     public SmsService() {
@@ -42,30 +39,62 @@ public class SmsService {
     }
 
     public void sendSms(String to, String messageText) {
-        String cleanPhone = to == null ? "" : to.replaceAll("[^0-9+]", "");
-        if (cleanPhone.isBlank()) {
+        String phoneNumber = normalizePhoneNumber(to);
+        if (phoneNumber.isBlank()) {
             throw new IllegalArgumentException("Customer phone number is invalid or empty.");
+        }
+        // Windows shows its own "no app found" dialog instead of throwing when no sms: handler is registered.
+        if (isWindows() && !isSmsProtocolRegistered()) {
+            openGoogleMessages(phoneNumber, messageText, null);
+            return;
         }
         if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
             throw new IllegalStateException("Messaging app integration is not supported on this machine.");
         }
         try {
-            String smsUri = String.format("sms:%s?body=%s", encode(cleanPhone), encode(messageText));
+            String smsUri = String.format("sms:%s?body=%s", encode(phoneNumber), encode(messageText));
             Desktop.getDesktop().browse(new URI(smsUri));
         } catch (Exception e) {
-            openGoogleMessages(cleanPhone, messageText, e);
+            openGoogleMessages(phoneNumber, messageText, e);
+        }
+    }
+
+    private String normalizePhoneNumber(String phoneNumber) {
+        String digits = phoneNumber == null ? "" : phoneNumber.replaceAll("\\D", "");
+        if (digits.length() == 10) {
+            return "+1" + digits;
+        }
+        if (digits.length() == 11 && digits.startsWith("1")) {
+            return "+" + digits;
+        }
+        if (phoneNumber != null && phoneNumber.trim().startsWith("+") && digits.length() >= 8) {
+            return "+" + digits;
+        }
+        return "";
+    }
+
+    private boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private boolean isSmsProtocolRegistered() {
+        try {
+            Process process = new ProcessBuilder("reg", "query", "HKCR\\sms").redirectErrorStream(true).start();
+            return process.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
         }
     }
 
     private void openGoogleMessages(String phoneNumber, String messageText, Exception originalError) {
-        File chromeProxy = new File(System.getenv("ProgramFiles"), "Google\\Chrome\\Application\\chrome_proxy.exe");
-        if (!chromeProxy.isFile()) {
+        File messagesShortcut = new File(System.getenv("APPDATA"),
+                "Microsoft\\Windows\\Start Menu\\Programs\\Chrome Apps\\Messages.lnk");
+        if (!messagesShortcut.isFile()) {
             throw new RuntimeException("Windows has no SMS handler, and Google Messages could not be found. "
                     + "Open Google Messages manually at messages.google.com/web.", originalError);
         }
         try {
-            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(messageText), null);
-            new ProcessBuilder(chromeProxy.getAbsolutePath(), "--profile-directory=Default", "--app-id=" + GOOGLE_MESSAGES_APP_ID).start();
+            new ProcessBuilder("explorer.exe", messagesShortcut.getAbsolutePath()).start();
         } catch (IOException e) {
             throw new RuntimeException("Unable to open Google Messages: " + e.getMessage(), e);
         }

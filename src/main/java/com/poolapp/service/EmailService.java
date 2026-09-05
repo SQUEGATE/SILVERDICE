@@ -47,8 +47,8 @@ public class EmailService {
 
     public void sendEmail(String to, String subject, String messageText, String senderEmail, String senderName, File attachment) {
         String smtpHost = resolveSmtpHost(senderEmail);
-        String smtpUsername = requiredValue("mail.smtp.username");
-        String smtpPassword = requiredValue("mail.smtp.password");
+        String smtpUsername = resolveSmtpUsername(senderEmail);
+        String smtpPassword = resolveSmtpPassword(smtpUsername);
         if (attachment == null || !attachment.isFile()) {
             throw new IllegalArgumentException("Statement PDF attachment was not created.");
         }
@@ -58,6 +58,10 @@ public class EmailService {
             smtpProperties.put("mail.smtp.port", resolveSmtpPort(senderEmail));
             smtpProperties.put("mail.smtp.auth", config.getProperty("mail.smtp.auth", "true"));
             smtpProperties.put("mail.smtp.starttls.enable", config.getProperty("mail.smtp.starttls.enable", "true"));
+            smtpProperties.put("mail.smtp.ssl.protocols", "TLSv1.2 TLSv1.3");
+            smtpProperties.put("mail.smtp.ssl.trust", "*");
+            smtpProperties.put("mail.smtp.connectiontimeout", "15000");
+            smtpProperties.put("mail.smtp.timeout", "15000");
 
             Session session = Session.getInstance(smtpProperties, new Authenticator() {
                 @Override
@@ -83,17 +87,94 @@ public class EmailService {
             message.setContent(content);
             Transport.send(message);
         } catch (Exception e) {
-            throw new RuntimeException("Unable to send email through SMTP", e);
+            config.remove("mail.smtp.password");
+            String detail = extractErrorMessage(e);
+            if (detail.contains("5.7.139") || detail.toLowerCase().contains("authentication unsuccessful")) {
+                detail += "\n\nFix for Microsoft / Office 365 accounts:\n"
+                        + "1. Go to Microsoft 365 Admin Center (admin.microsoft.com) -> Users -> Active Users.\n"
+                        + "2. Click on your user -> Mail tab -> Manage email apps.\n"
+                        + "3. Check 'Authenticated SMTP' and save.\n"
+                        + "(For personal @outlook.com accounts, generate an App Password in Account Security Settings).";
+            }
+            throw new RuntimeException("Unable to send email through SMTP: " + detail, e);
         }
     }
 
-    private String requiredValue(String key) {
-        String value = config.getProperty(key, "").trim();
-        if (value.isBlank() || value.contains("example.com") || value.equals("your-password")
-                || value.equals("your-app-password")) {
-            throw new IllegalStateException("Set " + key + " in config.properties before sending email.");
+    private String extractErrorMessage(Throwable t) {
+        StringBuilder sb = new StringBuilder();
+        Throwable curr = t;
+        while (curr != null) {
+            String msg = curr.getMessage();
+            if (msg != null && !msg.isBlank()) {
+                if (sb.length() > 0 && !sb.toString().contains(msg.trim())) {
+                    sb.append(" -> ");
+                    sb.append(msg.trim());
+                } else if (sb.length() == 0) {
+                    sb.append(msg.trim());
+                }
+            }
+            curr = curr.getCause();
         }
-        return value;
+        return sb.length() > 0 ? sb.toString() : t.getClass().getSimpleName();
+    }
+
+    private String resolveSmtpUsername(String senderEmail) {
+        String configuredUsername = config.getProperty("mail.smtp.username", "").trim();
+        if (!configuredUsername.isBlank() && !configuredUsername.equalsIgnoreCase("auto")
+                && !configuredUsername.contains("example.com")) {
+            return configuredUsername;
+        }
+        if (senderEmail != null && !senderEmail.isBlank() && senderEmail.contains("@")) {
+            return senderEmail.trim();
+        }
+        throw new IllegalStateException("SMTP username could not be determined. Please set a valid sender email for your account.");
+    }
+
+    private String resolveSmtpPassword(String smtpUsername) {
+        String configuredPassword = config.getProperty("mail.smtp.password", "").trim();
+        if (!configuredPassword.isBlank() && !configuredPassword.equals("your-password")
+                && !configuredPassword.equals("your-app-password")) {
+            return configuredPassword;
+        }
+
+        final String[] passwordHolder = new String[1];
+        try {
+            if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+                passwordHolder[0] = promptForPassword(smtpUsername);
+            } else {
+                javax.swing.SwingUtilities.invokeAndWait(() -> {
+                    passwordHolder[0] = promptForPassword(smtpUsername);
+                });
+            }
+        } catch (Exception ignored) {
+        }
+
+        String entered = passwordHolder[0];
+        if (entered == null || entered.isBlank()) {
+            throw new IllegalStateException("An App Password is required to send email via SMTP for " + smtpUsername + ".");
+        }
+        config.setProperty("mail.smtp.password", entered);
+        return entered;
+    }
+
+    private String promptForPassword(String username) {
+        javax.swing.JPasswordField passField = new javax.swing.JPasswordField(20);
+        javax.swing.JPanel panel = new javax.swing.JPanel(new java.awt.BorderLayout(6, 6));
+        panel.add(new javax.swing.JLabel("Enter App Password for SMTP (" + username + "):"), java.awt.BorderLayout.NORTH);
+        panel.add(passField, java.awt.BorderLayout.CENTER);
+        panel.add(new javax.swing.JLabel("<html><font size='2' color='gray'>For Gmail, generate a 16-character App Password in your Google Account security settings.</font></html>"), java.awt.BorderLayout.SOUTH);
+
+        int option = javax.swing.JOptionPane.showConfirmDialog(
+                null,
+                panel,
+                "SMTP Password Required",
+                javax.swing.JOptionPane.OK_CANCEL_OPTION,
+                javax.swing.JOptionPane.PLAIN_MESSAGE
+        );
+        if (option == javax.swing.JOptionPane.OK_OPTION) {
+            return new String(passField.getPassword()).trim();
+        }
+        return null;
     }
 
     private String resolveSmtpHost(String senderEmail) {

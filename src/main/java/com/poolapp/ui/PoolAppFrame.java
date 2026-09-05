@@ -2339,6 +2339,9 @@ public class PoolAppFrame extends JFrame {
                 }
             }
             
+            if (pdfFile.exists()) {
+                pdfFile.delete();
+            }
             document.save(pdfFile);
         }
     }

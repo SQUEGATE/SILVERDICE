@@ -9,6 +9,7 @@ public class EmployeeProfile {
     private long companyId;
     private String companyName;
     private Path companyDatabasePath;
+    private String apiSessionToken;
     private String firstName;
     private String lastName;
     private String phone;
@@ -56,6 +57,14 @@ public class EmployeeProfile {
 
     public void setCompanyDatabasePath(Path companyDatabasePath) {
         this.companyDatabasePath = companyDatabasePath;
+    }
+
+    public String getApiSessionToken() {
+        return apiSessionToken;
+    }
+
+    public void setApiSessionToken(String apiSessionToken) {
+        this.apiSessionToken = apiSessionToken;
     }
 
     public String getFirstName() {

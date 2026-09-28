@@ -52,3 +52,28 @@ sms.enabled=true
 - The app uses `com.poolapp.Main` as the entry point.
 - Customer data is persisted in `customer.db` using SQLite.
 - Gradle automatically downloads the SQLite JDBC dependency defined in `build.gradle`.
+
+## Shared Cloud Database Setup
+The Cloudflare Worker API and tenant-scoped Turso schema are in `cloudflare/worker`. The desktop app can use the API when `api.base.url` is configured; leaving it empty preserves local SQLite mode. Keep all local `.db` files as backups.
+
+1. Install Node.js LTS, open a terminal in `cloudflare/worker`, run `npm install`, then `npx wrangler login`.
+2. Create a short-lived, database-scoped read/write token with `turso db tokens create silverdice-database --expiration 1h`. From the `DATABASE` folder, run `migrate-turso.bat` and paste only the JWT at its masked prompt. The importer validates Turso access before writing, safely upserts master users, companies, employees, customers, statements, record types, and PDF settings, and leaves SQLite files unchanged. Rerunning it is safe.
+3. Deploy from `cloudflare/worker` with `npx wrangler deploy`. Copy the deployed Worker URL.
+4. Add **Worker secrets** (not only Cloudflare account-level secrets) using `npx wrangler secret put TURSO_AUTH_TOKEN` and `npx wrangler secret put SESSION_SIGNING_SECRET`. Wrangler prompts for each value. Use a random session-signing value with at least 32 random bytes. Never commit either secret.
+5. Check `https://<worker-host>/v1/health`; it should return `{"ready":true}`. If it fails, check the Worker secret names and Turso URL/token.
+6. On each desktop, create `%USERPROFILE%\.compmanager\config.properties` containing `api.base.url=https://<worker-host>`, then restart Comp Manager. The app will use cloud mode on the next login. Do not switch users until the migration and login checks are successful.
+
+If running the Gradle task manually, enter the token through a masked prompt rather than writing it in a command or config file:
+```powershell
+$env:TURSO_DATABASE_URL = 'libsql://silverdice-database-squegate.aws-us-east-1.turso.io'
+$secureToken = Read-Host 'Turso database token' -AsSecureString
+$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
+try {
+	$env:TURSO_AUTH_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+	.\gradlew.bat migrateTurso
+} finally {
+	[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+	Remove-Item Env:TURSO_AUTH_TOKEN -ErrorAction SilentlyContinue
+	Remove-Item Env:TURSO_DATABASE_URL -ErrorAction SilentlyContinue
+}
+```

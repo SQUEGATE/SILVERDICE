@@ -11,6 +11,7 @@ public class CompanyProfile {
     private String username;
     private String password;
     private Path databasePath;
+    private String apiSessionToken;
 
     public CompanyProfile() {
     }
@@ -88,5 +89,13 @@ public class CompanyProfile {
 
     public void setDatabasePath(Path databasePath) {
         this.databasePath = databasePath;
+    }
+
+    public String getApiSessionToken() {
+        return apiSessionToken;
+    }
+
+    public void setApiSessionToken(String apiSessionToken) {
+        this.apiSessionToken = apiSessionToken;
     }
 }

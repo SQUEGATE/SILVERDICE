@@ -79,7 +79,7 @@ public class TursoHttpClient {
             arg.put("value", String.valueOf(value));
         } else if (value instanceof BigDecimal || value instanceof Double || value instanceof Float) {
             arg.put("type", "float");
-            arg.put("value", String.valueOf(value));
+            arg.put("value", ((Number) value).doubleValue());
         } else {
             arg.put("type", "text");
             arg.put("value", String.valueOf(value));
@@ -87,21 +87,20 @@ public class TursoHttpClient {
         return arg;
     }
 
-    private List<Map<String, String>> parseRows(JSONObject responseBody) {
+    private List<Map<String, String>> parseRows(JSONObject responseBody) throws IOException {
         List<Map<String, String>> rows = new ArrayList<>();
         JSONArray results = responseBody.optJSONArray("results");
-        if (results == null || results.isEmpty()) {
-            return rows;
-        }
+        if (results == null || results.isEmpty()) throw new IOException("Turso returned no SQL result");
 
         JSONObject firstResult = results.getJSONObject(0);
         if (!"ok".equals(firstResult.optString("type"))) {
-            return rows;
+            Object error = firstResult.opt("error");
+            throw new IOException("Turso rejected SQL: " + (error == null ? firstResult : error));
         }
 
         JSONObject result = firstResult.getJSONObject("response").optJSONObject("result");
         if (result == null) {
-            return rows;
+            throw new IOException("Turso response did not contain a query result");
         }
 
         JSONArray cols = result.optJSONArray("cols");

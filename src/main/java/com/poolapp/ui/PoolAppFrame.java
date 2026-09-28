@@ -3,6 +3,7 @@ package com.poolapp.ui;
 import com.poolapp.model.PdfSettings;
 import com.poolapp.db.DatabaseManager;
 import com.poolapp.db.MasterDatabaseManager;
+import com.poolapp.db.AppApiConfiguration;
 import com.poolapp.model.Customer;
 import com.poolapp.model.CompanyProfile;
 import com.poolapp.model.EmployeeProfile;
@@ -166,7 +167,9 @@ public class PoolAppFrame extends JFrame {
         employeeList = new JList<>(employeeListModel);
         employeeScreenLabel = new JLabel("Employees");
         employeeSearchField = new JTextField(22);
-        masterDatabaseManager = new MasterDatabaseManager();
+        masterDatabaseManager = dbManager.isRemote()
+            ? new MasterDatabaseManager(AppApiConfiguration.getBaseUrl(), dbManager.getApiSessionToken())
+            : new MasterDatabaseManager();
         currentStatementRecords = new ArrayList<>();
         activeRecordCustomerId = "";
         customersById = new ArrayList<>();
@@ -1135,7 +1138,9 @@ public class PoolAppFrame extends JFrame {
             return;
         }
 
-        DatabaseManager employeeDatabase = new DatabaseManager(selected.getCompanyDatabasePath());
+        DatabaseManager employeeDatabase = dbManager.isRemote()
+            ? masterDatabaseManager.createEmployeePreviewDatabaseManager(selected.getEmployeeId(), selected.getCompanyId())
+            : new DatabaseManager(selected.getCompanyDatabasePath());
         final PoolAppFrame[] previewFrameHolder = new PoolAppFrame[1];
         Runnable returnToCompanyView = () -> {
             if (previewFrameHolder[0] != null) {

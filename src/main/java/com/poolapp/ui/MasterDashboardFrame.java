@@ -3,13 +3,16 @@ package com.poolapp.ui;
 import com.poolapp.db.MasterDatabaseManager;
 import com.poolapp.db.DatabaseManager;
 import com.poolapp.model.CompanyProfile;
+import com.poolapp.service.AppPackageGenerator;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 
 public class MasterDashboardFrame extends JFrame {
     private final MasterDatabaseManager masterDatabaseManager;
@@ -23,11 +26,13 @@ public class MasterDashboardFrame extends JFrame {
     private final JLabel passwordValue;
     private final JLabel phoneValue;
     private final JLabel addressValue;
+    private final AppPackageGenerator appPackageGenerator;
     private CompanyProfile selectedCompany;
 
     public MasterDashboardFrame(MasterDatabaseManager masterDatabaseManager) {
         super("Comp Manager");
         this.masterDatabaseManager = masterDatabaseManager;
+        this.appPackageGenerator = new AppPackageGenerator();
         AppWindowStyle.apply(this);
         this.cardLayout = new CardLayout();
         this.cardPanel = new JPanel(cardLayout);
@@ -103,6 +108,7 @@ public class MasterDashboardFrame extends JFrame {
         JButton editButton = new JButton("Edit Company");
         JButton deleteButton = new JButton("Delete Company");
         JButton companyViewButton = new JButton("Company View");
+        JButton packageButton = createPackageButton();
         JButton logoutButton = new JButton("Logout");
 
         addButton.addActionListener(e -> openCompanyEditor(null));
@@ -115,10 +121,53 @@ public class MasterDashboardFrame extends JFrame {
         buttonPanel.add(editButton);
         buttonPanel.add(deleteButton);
         buttonPanel.add(companyViewButton);
+        buttonPanel.add(packageButton);
         buttonPanel.add(logoutButton);
         root.add(buttonPanel, BorderLayout.SOUTH);
 
         return root;
+    }
+
+    private JButton createPackageButton() {
+        JButton button = new JButton("Generate App ZIP");
+        button.setEnabled(appPackageGenerator.canGenerate());
+        if (!button.isEnabled()) {
+            button.setToolTipText("Run Comp Manager from its source checkout to generate a new app bundle.");
+        }
+        button.addActionListener(event -> generateAppPackage(button));
+        return button;
+    }
+
+    private void generateAppPackage(JButton button) {
+        button.setEnabled(false);
+        button.setText("Building App...");
+        new SwingWorker<Path, Void>() {
+            @Override
+            protected Path doInBackground() throws Exception {
+                return appPackageGenerator.generate();
+            }
+
+            @Override
+            protected void done() {
+                button.setText("Generate App ZIP");
+                button.setEnabled(appPackageGenerator.canGenerate());
+                try {
+                    Path zipFile = get();
+                    JOptionPane.showMessageDialog(MasterDashboardFrame.this,
+                            "App bundle created in Downloads:\n" + zipFile,
+                            "Comp Manager Package Ready", JOptionPane.INFORMATION_MESSAGE);
+                    if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(zipFile.getParent().toFile());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    JOptionPane.showMessageDialog(MasterDashboardFrame.this, "App packaging was interrupted.", "Packaging", JOptionPane.WARNING_MESSAGE);
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause() == null ? e : e.getCause();
+                    JOptionPane.showMessageDialog(MasterDashboardFrame.this,
+                            "Unable to generate app bundle: " + cause.getMessage(),
+                            "Packaging Failed", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
     }
 
     private JPanel buildCompanyDetailsPanel() {
@@ -223,7 +272,9 @@ public class MasterDashboardFrame extends JFrame {
             return;
         }
 
-        DatabaseManager companyDatabase = new DatabaseManager(company.getDatabasePath());
+        DatabaseManager companyDatabase = masterDatabaseManager.getApiBaseUrl() != null
+            ? masterDatabaseManager.createDatabaseManager(company.getId())
+            : new DatabaseManager(company.getDatabasePath());
         final PoolAppFrame[] companyFrameHolder = new PoolAppFrame[1];
         companyFrameHolder[0] = new PoolAppFrame(companyDatabase, company, () -> {
             if (companyFrameHolder[0] != null) {
@@ -382,9 +433,6 @@ public class MasterDashboardFrame extends JFrame {
             companyProfile.setEmail(email);
             companyProfile.setAddress(address);
             companyProfile.setUsername(username);
-            if (companyProfile.getPassword() == null || companyProfile.getPassword().isBlank()) {
-                companyProfile.setPassword("company123");
-            }
             saved = true;
             dispose();
         }

@@ -2,6 +2,8 @@ package com.poolapp.db;
 
 import com.poolapp.model.CompanyProfile;
 import com.poolapp.model.EmployeeProfile;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,22 +21,147 @@ import java.util.List;
 public class MasterDatabaseManager {
     private final Path databasePath;
     private final String dbUrl;
+    private final CompManagerApiClient apiClient;
+    private String sessionToken;
 
     public MasterDatabaseManager() {
-        this(getDefaultMasterDatabasePath());
-    }
-
-    public MasterDatabaseManager(Path databasePath) {
-        this.databasePath = databasePath.toAbsolutePath().normalize();
+        String apiBaseUrl = AppApiConfiguration.getBaseUrl();
+        if (!apiBaseUrl.isBlank()) {
+            this.databasePath = null;
+            this.dbUrl = null;
+            this.apiClient = new CompManagerApiClient(apiBaseUrl);
+            return;
+        }
+        this.databasePath = getDefaultMasterDatabasePath().toAbsolutePath().normalize();
         this.dbUrl = "jdbc:sqlite:" + this.databasePath;
+        this.apiClient = null;
         createDatabaseBackup();
         initializeDatabase();
         ensureDefaultMasterUser();
         ensureDefaultCompany();
     }
 
+    public MasterDatabaseManager(Path databasePath) {
+        this.databasePath = databasePath.toAbsolutePath().normalize();
+        this.dbUrl = "jdbc:sqlite:" + this.databasePath;
+        this.apiClient = null;
+        createDatabaseBackup();
+        initializeDatabase();
+        ensureDefaultMasterUser();
+        ensureDefaultCompany();
+    }
+
+    public MasterDatabaseManager(String apiBaseUrl, String apiSessionToken) {
+        if (apiBaseUrl == null || apiBaseUrl.isBlank() || apiSessionToken == null || apiSessionToken.isBlank()) {
+            throw new IllegalArgumentException("Remote API URL and session token are required");
+        }
+        this.databasePath = null;
+        this.dbUrl = null;
+        this.apiClient = new CompManagerApiClient(apiBaseUrl, apiSessionToken);
+        this.sessionToken = apiSessionToken;
+    }
+
     public Path getDatabasePath() {
         return databasePath;
+    }
+
+    public String getSessionToken() {
+        return sessionToken;
+    }
+
+    public String getApiBaseUrl() {
+        return apiClient == null ? null : AppApiConfiguration.getBaseUrl();
+    }
+
+    public DatabaseManager createDatabaseManager(long companyId) {
+        if (apiClient == null) throw new IllegalStateException("Remote API mode is not enabled");
+        JSONObject result = CompManagerApiClient.object(apiRequest("POST", "/v1/admin/companies/" + companyId + "/session", new JSONObject()));
+        return new DatabaseManager(AppApiConfiguration.getBaseUrl(), result.getString("token"), companyId);
+    }
+
+    public DatabaseManager createDatabaseManager(long companyId, String token) {
+        if (apiClient == null) throw new IllegalStateException("Remote API mode is not enabled");
+        return new DatabaseManager(AppApiConfiguration.getBaseUrl(), token, companyId);
+    }
+
+    public DatabaseManager createEmployeePreviewDatabaseManager(long employeeId, long companyId) {
+        if (apiClient == null) throw new IllegalStateException("Remote API mode is not enabled");
+        JSONObject result = CompManagerApiClient.object(apiRequest("POST", "/v1/companies/employees/" + employeeId + "/session", new JSONObject()));
+        return new DatabaseManager(AppApiConfiguration.getBaseUrl(), result.getString("token"), companyId);
+    }
+
+    private JSONObject remoteLogin(String username, String password) {
+        try {
+            JSONObject response = CompManagerApiClient.object(apiClient.post("/v1/auth/login",
+                    new JSONObject().put("username", username).put("password", password)));
+            JSONObject account = new JSONObject(response.getJSONObject("account").toString());
+            account.put("token", response.getString("token"));
+            return account;
+        } catch (IllegalStateException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("API 401:")) return null;
+            throw e;
+        }
+    }
+
+    private Object apiRequest(String method, String path, JSONObject body) {
+        if (sessionToken == null || sessionToken.isBlank()) throw new IllegalStateException("Log in before using cloud data");
+        CompManagerApiClient authenticated = new CompManagerApiClient(AppApiConfiguration.getBaseUrl(), sessionToken);
+        switch (method) {
+            case "GET": return authenticated.get(path);
+            case "POST": return authenticated.post(path, body == null ? new JSONObject() : body);
+            case "PUT": return authenticated.put(path, body == null ? new JSONObject() : body);
+            case "DELETE": return authenticated.delete(path);
+            default: throw new IllegalArgumentException("Unsupported API method: " + method);
+        }
+    }
+
+    private List<CompanyProfile> remoteCompanies(String path) {
+        JSONArray rows = CompManagerApiClient.array(apiRequest("GET", path, null));
+        List<CompanyProfile> companies = new ArrayList<>();
+        for (int i = 0; i < rows.length(); i++) companies.add(remoteCompany(rows.getJSONObject(i)));
+        return companies;
+    }
+
+    private CompanyProfile remoteCompany(JSONObject row) {
+        CompanyProfile company = new CompanyProfile();
+        company.setId(row.getLong("company_id"));
+        company.setCompanyName(row.optString("company_name"));
+        company.setPhone(row.optString("phone"));
+        company.setEmail(row.optString("email"));
+        company.setAddress(row.optString("address"));
+        company.setUsername(row.optString("username"));
+        return company;
+    }
+
+    private EmployeeProfile remoteEmployee(JSONObject row) {
+        EmployeeProfile employee = new EmployeeProfile();
+        employee.setEmployeeId(row.getLong("employee_id"));
+        employee.setCompanyId(row.getLong("company_id"));
+        employee.setFirstName(row.optString("first_name"));
+        employee.setLastName(row.optString("last_name"));
+        employee.setPhone(row.optString("phone"));
+        employee.setEmail(row.optString("email"));
+        employee.setUsername(row.optString("username"));
+        employee.setAllowedCustomerIds(jsonStringList(row.optJSONArray("allowed_customer_ids")));
+        employee.setAllowedDays(jsonStringList(row.optJSONArray("allowed_days")));
+        JSONObject permissions = row.optJSONObject("permissions");
+        if (permissions != null) {
+            employee.setCanViewCustomerDetails(permissions.optBoolean("canViewCustomerDetails"));
+            employee.setCanViewCustomers(permissions.optBoolean("canViewCustomers"));
+            employee.setCanViewStatements(permissions.optBoolean("canViewStatements"));
+            employee.setCanViewRevenueSummary(permissions.optBoolean("canViewRevenueSummary"));
+            employee.setCanViewPdf(permissions.optBoolean("canViewPdf"));
+            employee.setCanEditPdf(permissions.optBoolean("canEditPdf"));
+            employee.setCanEditCustomers(permissions.optBoolean("canEditCustomers"));
+            employee.setCanEditStatements(permissions.optBoolean("canEditStatements"));
+        }
+        return employee;
+    }
+
+    private List<String> jsonStringList(JSONArray array) {
+        List<String> values = new ArrayList<>();
+        if (array != null) for (int i = 0; i < array.length(); i++) values.add(array.optString(i));
+        return values;
     }
 
     private static Path getDefaultMasterDatabasePath() {
@@ -153,6 +280,12 @@ public class MasterDatabaseManager {
     }
 
     public boolean authenticateMaster(String username, String password) {
+        if (apiClient != null) {
+            JSONObject account = remoteLogin(username, password);
+            if (account == null || !"MASTER".equals(account.optString("role"))) return false;
+            sessionToken = account.optString("token", null);
+            return sessionToken != null && !sessionToken.isBlank();
+        }
         String sql = "SELECT 1 FROM master_users WHERE username = ? AND password = ? AND role = 'MASTER'";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, username);
@@ -166,6 +299,19 @@ public class MasterDatabaseManager {
     }
 
     public CompanyProfile authenticateCompany(String username, String password) {
+        if (apiClient != null) {
+            JSONObject account = remoteLogin(username, password);
+            if (account == null || !"COMPANY".equals(account.optString("role"))) return null;
+            sessionToken = account.optString("token", null);
+            CompanyProfile company = new CompanyProfile();
+            company.setId(account.optLong("companyId"));
+            company.setCompanyName(account.optString("companyName"));
+            company.setPhone(account.optString("phone"));
+            company.setEmail(account.optString("email"));
+            company.setUsername(account.optString("username"));
+            company.setApiSessionToken(sessionToken);
+            return company;
+        }
         String sql = "SELECT company_id, company_name, phone, email, address, username, password, database_file FROM companies WHERE username = ? AND password = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, username);
@@ -182,6 +328,35 @@ public class MasterDatabaseManager {
     }
 
     public EmployeeProfile authenticateEmployee(String username, String password) {
+        if (apiClient != null) {
+            JSONObject account = remoteLogin(username, password);
+            if (account == null || !"EMPLOYEE".equals(account.optString("role"))) return null;
+            sessionToken = account.optString("token", null);
+            EmployeeProfile employee = new EmployeeProfile();
+            employee.setEmployeeId(account.optLong("employeeId"));
+            employee.setCompanyId(account.optLong("companyId"));
+            employee.setCompanyName(account.optString("companyName"));
+            employee.setFirstName(account.optString("firstName"));
+            employee.setLastName(account.optString("lastName"));
+            employee.setPhone(account.optString("phone"));
+            employee.setEmail(account.optString("email"));
+            employee.setUsername(account.optString("username"));
+            employee.setApiSessionToken(sessionToken);
+            JSONObject permissions = account.optJSONObject("permissions");
+            if (permissions != null) {
+                employee.setCanViewCustomerDetails(permissions.optBoolean("canViewCustomerDetails"));
+                employee.setCanViewCustomers(permissions.optBoolean("canViewCustomers"));
+                employee.setCanViewStatements(permissions.optBoolean("canViewStatements"));
+                employee.setCanViewRevenueSummary(permissions.optBoolean("canViewRevenueSummary"));
+                employee.setCanViewPdf(permissions.optBoolean("canViewPdf"));
+                employee.setCanEditPdf(permissions.optBoolean("canEditPdf"));
+                employee.setCanEditCustomers(permissions.optBoolean("canEditCustomers"));
+                employee.setCanEditStatements(permissions.optBoolean("canEditStatements"));
+            }
+            employee.setAllowedCustomerIds(jsonStringList(account.optJSONArray("allowedCustomerIds")));
+            employee.setAllowedDays(jsonStringList(account.optJSONArray("allowedDays")));
+            return employee;
+        }
         String sql = "SELECT e.employee_id, e.company_id, c.company_name, c.database_file, e.first_name, e.last_name, e.phone, e.email, e.username, e.password, "
             + "e.can_view_customer_details, e.can_view_customers, e.can_view_statements, e.can_view_revenue_summary, e.can_view_pdf, e.can_edit_pdf, e.can_edit_customers, e.can_edit_statements, "
                 + "e.allowed_customer_ids, e.allowed_days "
@@ -203,6 +378,7 @@ public class MasterDatabaseManager {
     }
 
     public List<CompanyProfile> getAllCompanies() {
+        if (apiClient != null) return remoteCompanies("/v1/admin/companies");
         String sql = "SELECT company_id, company_name, phone, email, address, username, password, database_file FROM companies ORDER BY company_id";
         List<CompanyProfile> companies = new ArrayList<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
@@ -216,6 +392,7 @@ public class MasterDatabaseManager {
     }
 
     public List<CompanyProfile> searchCompanies(String query) {
+        if (apiClient != null) return remoteCompanies("/v1/admin/companies?q=" + java.net.URLEncoder.encode(query == null ? "" : query, java.nio.charset.StandardCharsets.UTF_8));
         String sql = "SELECT company_id, company_name, phone, email, address, username, password, database_file "
                 + "FROM companies "
             + "WHERE lower(company_name) LIKE ? OR lower(username) LIKE ? OR lower(phone) LIKE ? OR lower(email) LIKE ? OR lower(address) LIKE ? OR CAST(company_id AS TEXT) LIKE ? "
@@ -241,6 +418,7 @@ public class MasterDatabaseManager {
     }
 
     public CompanyProfile getCompanyById(long companyId) {
+        if (apiClient != null) return remoteCompany(CompManagerApiClient.object(apiRequest("GET", "/v1/admin/companies/" + companyId, null)));
         String sql = "SELECT company_id, company_name, phone, email, address, username, password, database_file FROM companies WHERE company_id = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setLong(1, companyId);
@@ -256,6 +434,19 @@ public class MasterDatabaseManager {
     }
 
     public void saveCompany(CompanyProfile company) {
+        if (apiClient != null) {
+            JSONObject body = new JSONObject()
+                    .put("company_name", company.getCompanyName())
+                    .put("phone", company.getPhone() == null ? "" : company.getPhone())
+                    .put("email", company.getEmail() == null ? "" : company.getEmail())
+                    .put("address", company.getAddress() == null ? "" : company.getAddress())
+                    .put("username", company.getUsername());
+            if (company.getId() != null) body.put("company_id", company.getId());
+            if (company.getPassword() != null && !company.getPassword().isBlank()) body.put("password", company.getPassword());
+            JSONObject result = CompManagerApiClient.object(apiRequest("POST", "/v1/admin/companies", body));
+            if (company.getId() == null) company.setId(result.getLong("company_id"));
+            return;
+        }
         if (company.getDatabasePath() == null) {
             company.setDatabasePath(createCompanyDatabasePath(company));
         }
@@ -299,6 +490,10 @@ public class MasterDatabaseManager {
     }
 
     public void deleteCompany(long companyId) {
+        if (apiClient != null) {
+            apiRequest("DELETE", "/v1/admin/companies/" + companyId, null);
+            return;
+        }
         CompanyProfile company = getCompanyById(companyId);
         if (company == null) {
             return;
@@ -330,6 +525,12 @@ public class MasterDatabaseManager {
     }
 
     public List<EmployeeProfile> getEmployeesForCompany(long companyId) {
+        if (apiClient != null) {
+            JSONArray rows = CompManagerApiClient.array(apiRequest("GET", "/v1/admin/companies/" + companyId + "/employees", null));
+            List<EmployeeProfile> employees = new ArrayList<>();
+            for (int i = 0; i < rows.length(); i++) employees.add(remoteEmployee(rows.getJSONObject(i)));
+            return employees;
+        }
         String sql = "SELECT e.employee_id, e.company_id, c.company_name, c.database_file, e.first_name, e.last_name, e.phone, e.email, e.username, e.password, "
             + "e.can_view_customer_details, e.can_view_customers, e.can_view_statements, e.can_view_revenue_summary, e.can_view_pdf, e.can_edit_pdf, e.can_edit_customers, e.can_edit_statements, "
                 + "e.allowed_customer_ids, e.allowed_days "
@@ -349,6 +550,31 @@ public class MasterDatabaseManager {
     }
 
     public void saveEmployee(EmployeeProfile employee) {
+        if (apiClient != null) {
+            JSONObject permissions = new JSONObject()
+                .put("canViewCustomerDetails", employee.isCanViewCustomerDetails())
+                .put("canViewCustomers", employee.isCanViewCustomers())
+                .put("canViewStatements", employee.isCanViewStatements())
+                .put("canViewRevenueSummary", employee.isCanViewRevenueSummary())
+                .put("canViewPdf", employee.isCanViewPdf())
+                .put("canEditPdf", employee.isCanEditPdf())
+                .put("canEditCustomers", employee.isCanEditCustomers())
+                .put("canEditStatements", employee.isCanEditStatements());
+            JSONObject body = new JSONObject()
+                .put("username", employee.getUsername())
+                .put("first_name", employee.getFirstName())
+                .put("last_name", employee.getLastName())
+                .put("phone", employee.getPhone() == null ? "" : employee.getPhone())
+                .put("email", employee.getEmail() == null ? "" : employee.getEmail())
+                .put("permissions", permissions)
+                .put("allowed_customer_ids", new JSONArray(employee.getAllowedCustomerIds()))
+                .put("allowed_days", new JSONArray(employee.getAllowedDays()));
+            if (employee.getEmployeeId() != null) body.put("employee_id", employee.getEmployeeId());
+            if (employee.getPassword() != null && !employee.getPassword().isBlank()) body.put("password", employee.getPassword());
+            JSONObject result = CompManagerApiClient.object(apiRequest("POST", "/v1/admin/companies/" + employee.getCompanyId() + "/employees", body));
+            if (employee.getEmployeeId() == null) employee.setEmployeeId(result.getLong("employee_id"));
+            return;
+        }
         if (employee.getEmployeeId() == null) {
             String sql = "INSERT INTO employees (company_id, first_name, last_name, phone, email, username, password, can_view_customer_details, can_view_customers, can_view_statements, can_view_revenue_summary, can_view_pdf, can_edit_pdf, can_edit_customers, can_edit_statements, allowed_customer_ids, allowed_days) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -392,6 +618,10 @@ public class MasterDatabaseManager {
     }
 
     public void deleteEmployee(long employeeId, long companyId) {
+        if (apiClient != null) {
+            apiRequest("DELETE", "/v1/admin/employees/" + employeeId, null);
+            return;
+        }
         String sql = "DELETE FROM employees WHERE employee_id = ? AND company_id = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setLong(1, employeeId);

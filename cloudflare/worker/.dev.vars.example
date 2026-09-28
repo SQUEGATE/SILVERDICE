@@ -1,0 +1,2 @@
+TURSO_AUTH_TOKEN=replace-with-a-database-scoped-token
+SESSION_SIGNING_SECRET=replace-with-a-random-secret-at-least-32-bytes

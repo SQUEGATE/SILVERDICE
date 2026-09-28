@@ -2,10 +2,13 @@ package com.poolapp.db;
 
 import com.poolapp.model.Customer;
 import com.poolapp.model.StatementRecord;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URLEncoder;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,6 +27,9 @@ import java.util.Map;
 public class DatabaseManager {
     private final Path databasePath;
     private final String dbUrl;
+    private final CompManagerApiClient apiClient;
+    private final long companyId;
+    private final String apiSessionToken;
 
     public DatabaseManager() {
         this(getDefaultDatabasePath());
@@ -32,8 +38,22 @@ public class DatabaseManager {
     public DatabaseManager(Path databasePath) {
         this.databasePath = databasePath.toAbsolutePath().normalize();
         this.dbUrl = "jdbc:sqlite:" + this.databasePath;
+        this.apiClient = null;
+        this.companyId = 0;
+        this.apiSessionToken = null;
         createDatabaseBackup();
         initializeDatabase();
+    }
+
+    public DatabaseManager(String apiBaseUrl, String apiSessionToken, long companyId) {
+        if (apiBaseUrl == null || apiBaseUrl.isBlank() || apiSessionToken == null || apiSessionToken.isBlank() || companyId < 1) {
+            throw new IllegalArgumentException("Remote API URL, session token, and company ID are required");
+        }
+        this.databasePath = null;
+        this.dbUrl = null;
+        this.apiClient = new CompManagerApiClient(apiBaseUrl, apiSessionToken);
+        this.companyId = companyId;
+        this.apiSessionToken = apiSessionToken;
     }
 
     public static Path getDefaultDatabasePath() {
@@ -42,6 +62,30 @@ public class DatabaseManager {
 
     public Path getDatabasePath() {
         return databasePath;
+    }
+
+    public boolean isRemote() {
+        return apiClient != null;
+    }
+
+    public String getApiSessionToken() {
+        return apiSessionToken;
+    }
+
+    private Object apiGet(String path) {
+        return apiClient.get(path);
+    }
+
+    private Object apiPost(String path, JSONObject body) {
+        return apiClient.post(path, body);
+    }
+
+    private Object apiPut(String path, JSONObject body) {
+        return apiClient.put(path, body);
+    }
+
+    private Object apiDelete(String path) {
+        return apiClient.delete(path);
     }
 
     private static String determineDatabasePath() {
@@ -134,6 +178,7 @@ public class DatabaseManager {
     }
 
     public String getNextCustomerId() {
+        if (isRemote()) return CompManagerApiClient.object(apiGet("/v1/customers/next-id")).getString("customer_id");
         String sql = "SELECT MAX(CAST(customer_id AS INTEGER)) AS max_id FROM customers WHERE customer_id GLOB '[0-9]*'";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
             if (resultSet.next()) {
@@ -151,6 +196,10 @@ public class DatabaseManager {
     public void addCustomer(Customer customer) {
         if (customer.getId() == null || customer.getId().isBlank()) {
             customer.setId(Customer.generateId());
+        }
+        if (isRemote()) {
+            apiPost("/v1/customers", customerJson(customer));
+            return;
         }
         String sql = "INSERT INTO customers (customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -173,6 +222,10 @@ public class DatabaseManager {
     }
 
     public void updateCustomer(Customer customer) {
+        if (isRemote()) {
+            apiPut("/v1/customers/" + encodePath(customer.getId()), customerJson(customer));
+            return;
+        }
         String sql = "UPDATE customers SET first_name = ?, last_name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, email = ?, service_day = ?, amount_charged = ?, notes = ? WHERE customer_id = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, customer.getFirstName());
@@ -194,6 +247,7 @@ public class DatabaseManager {
     }
 
     public List<Customer> getAllCustomers() {
+        if (isRemote()) return remoteCustomers(CompManagerApiClient.array(apiGet("/v1/customers")));
         String sql = "SELECT * FROM customers ORDER BY service_day, last_name, first_name";
         List<Customer> customers = new ArrayList<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
@@ -207,6 +261,7 @@ public class DatabaseManager {
     }
 
     public List<Customer> searchCustomers(String query) {
+        if (isRemote()) return remoteCustomers(CompManagerApiClient.array(apiGet("/v1/customers?q=" + encodeQuery(query))));
         String sql = "SELECT * FROM customers WHERE lower(first_name) LIKE ? OR lower(last_name) LIKE ? OR lower(address) LIKE ? OR lower(city) LIKE ? OR lower(state) LIKE ? OR lower(zip) LIKE ? OR lower(email) LIKE ? ORDER BY service_day, last_name, first_name";
         List<Customer> customers = new ArrayList<>();
         String pattern = "%" + query.toLowerCase() + "%";
@@ -230,6 +285,7 @@ public class DatabaseManager {
     }
 
     public List<Customer> searchCustomersByName(String query) {
+        if (isRemote()) return remoteCustomers(CompManagerApiClient.array(apiGet("/v1/customers?q=" + encodeQuery(query))));
         String sql = "SELECT * FROM customers WHERE lower(first_name) LIKE ? OR lower(last_name) LIKE ? ORDER BY CASE WHEN customer_id GLOB '[0-9]*' THEN CAST(customer_id AS INTEGER) ELSE 999999999 END, customer_id";
         List<Customer> customers = new ArrayList<>();
         String pattern = "%" + query.toLowerCase() + "%";
@@ -248,6 +304,7 @@ public class DatabaseManager {
     }
 
     public List<Customer> getAllCustomersOrderedById() {
+        if (isRemote()) return remoteCustomers(CompManagerApiClient.array(apiGet("/v1/customers?order=id")));
         String sql = "SELECT * FROM customers ORDER BY CASE WHEN customer_id GLOB '[0-9]*' THEN CAST(customer_id AS INTEGER) ELSE 999999999 END, customer_id";
         List<Customer> customers = new ArrayList<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
@@ -261,6 +318,14 @@ public class DatabaseManager {
     }
 
     public Customer getCustomerById(String customerId) {
+        if (isRemote()) {
+            try {
+                return remoteCustomer(CompManagerApiClient.object(apiGet("/v1/customers/" + encodePath(customerId))));
+            } catch (IllegalStateException e) {
+                if (e.getMessage() != null && e.getMessage().startsWith("API 404:")) return null;
+                throw e;
+            }
+        }
         String sql = "SELECT * FROM customers WHERE customer_id = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, customerId);
@@ -276,6 +341,7 @@ public class DatabaseManager {
     }
 
     public List<StatementRecord> getStatementRecords(String customerId) {
+        if (isRemote()) return remoteStatements(CompManagerApiClient.array(apiGet("/v1/customers/" + encodePath(customerId) + "/statements")));
         String sql = "SELECT record_id, record_date, type, amount FROM statement_records WHERE customer_id = ? ORDER BY record_id";
         List<StatementRecord> records = new ArrayList<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -296,6 +362,11 @@ public class DatabaseManager {
     }
 
     public void addStatementRecord(String customerId, String date, String type, BigDecimal amount) {
+        if (isRemote()) {
+            apiPost("/v1/customers/" + encodePath(customerId) + "/statements",
+                    new JSONObject().put("record_date", date).put("type", type).put("amount", amount));
+            return;
+        }
         String sql = "INSERT INTO statement_records (customer_id, record_date, type, amount) VALUES (?, ?, ?, ?)";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, customerId);
@@ -309,6 +380,10 @@ public class DatabaseManager {
     }
 
     public void deleteStatementRecord(long recordId) {
+        if (isRemote()) {
+            apiDelete("/v1/statements/" + recordId);
+            return;
+        }
         String sql = "DELETE FROM statement_records WHERE record_id = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setLong(1, recordId);
@@ -319,6 +394,7 @@ public class DatabaseManager {
     }
 
     public List<String> getDistinctStatementRecordTypes() {
+        if (isRemote()) return remoteStringArray(CompManagerApiClient.array(apiGet("/v1/statement-types")));
         String sql = "SELECT DISTINCT type FROM statement_records ORDER BY type";
         List<String> types = new ArrayList<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
@@ -335,6 +411,10 @@ public class DatabaseManager {
     }
 
     public void normalizeStatementRecordAmountsForType(String type, boolean debitType) {
+        if (isRemote()) {
+            apiPost("/v1/statement-types/normalize", new JSONObject().put("type", type).put("debit", debitType));
+            return;
+        }
         String sql = "UPDATE statement_records SET amount = ? WHERE record_id = ?";
         String selectSql = "SELECT record_id, amount FROM statement_records WHERE type = ?";
         try (Connection connection = getConnection();
@@ -358,6 +438,10 @@ public class DatabaseManager {
     }
 
     public BigDecimal getStatementBalance(String customerId) {
+        if (isRemote()) {
+            JSONObject result = CompManagerApiClient.object(apiGet("/v1/customers/" + encodePath(customerId) + "/balance"));
+            return BigDecimal.valueOf(result.optDouble("balance", 0)).setScale(2, RoundingMode.HALF_UP);
+        }
         String sql = "SELECT SUM(amount) AS total FROM statement_records WHERE customer_id = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, customerId);
@@ -374,6 +458,16 @@ public class DatabaseManager {
     }
 
     public Map<String, BigDecimal> getRevenueByDay() {
+        if (isRemote()) {
+            JSONObject response = CompManagerApiClient.object(apiGet("/v1/revenue"));
+            Map<String, BigDecimal> result = new HashMap<>();
+            JSONArray rows = response.optJSONArray("by_day");
+            if (rows != null) for (int i = 0; i < rows.length(); i++) {
+                JSONObject row = rows.getJSONObject(i);
+                result.put(row.optString("service_day", "Unknown"), BigDecimal.valueOf(row.optDouble("total", 0)).setScale(2, RoundingMode.HALF_UP));
+            }
+            return result;
+        }
         String sql = "SELECT service_day, SUM(amount_charged) AS total FROM customers GROUP BY service_day";
         Map<String, BigDecimal> revenue = new HashMap<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
@@ -389,6 +483,7 @@ public class DatabaseManager {
     }
 
     public BigDecimal getTotalRevenue() {
+        if (isRemote()) return BigDecimal.valueOf(CompManagerApiClient.object(apiGet("/v1/revenue")).optDouble("total", 0)).setScale(2, RoundingMode.HALF_UP);
         String sql = "SELECT SUM(amount_charged) AS total FROM customers";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
             if (resultSet.next()) {
@@ -399,6 +494,62 @@ public class DatabaseManager {
         } catch (SQLException e) {
             throw new RuntimeException("Unable to calculate total revenue", e);
         }
+    }
+
+    private JSONObject customerJson(Customer customer) {
+        return new JSONObject()
+                .put("customer_id", customer.getId())
+                .put("first_name", customer.getFirstName())
+                .put("last_name", customer.getLastName())
+                .put("address", customer.getAddress())
+                .put("city", customer.getCity())
+                .put("state", customer.getState())
+                .put("zip", customer.getZip())
+                .put("phone", customer.getPhone())
+                .put("email", customer.getEmail())
+                .put("service_day", customer.getServiceDay())
+                .put("amount_charged", customer.getAmountCharged())
+                .put("notes", customer.getNotes());
+    }
+
+    private List<Customer> remoteCustomers(JSONArray rows) {
+        List<Customer> customers = new ArrayList<>();
+        for (int i = 0; i < rows.length(); i++) customers.add(remoteCustomer(rows.getJSONObject(i)));
+        return customers;
+    }
+
+    private Customer remoteCustomer(JSONObject row) {
+        return new Customer(row.optString("customer_id"), row.optString("first_name"), row.optString("last_name"),
+                row.optString("address"), row.optString("city"), row.optString("state"), row.optString("zip"),
+                row.optString("phone"), row.optString("email"), row.optString("service_day"),
+                BigDecimal.valueOf(row.optDouble("amount_charged", 0)).setScale(2, RoundingMode.HALF_UP), row.optString("notes"));
+    }
+
+    private List<StatementRecord> remoteStatements(JSONArray rows) {
+        List<StatementRecord> records = new ArrayList<>();
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.getJSONObject(i);
+            records.add(new StatementRecord(row.optLong("record_id"), row.optString("record_date"), row.optString("type"),
+                    BigDecimal.valueOf(row.optDouble("amount", 0)).setScale(2, RoundingMode.HALF_UP)));
+        }
+        return records;
+    }
+
+    private List<String> remoteStringArray(JSONArray array) {
+        List<String> values = new ArrayList<>();
+        for (int i = 0; i < array.length(); i++) {
+            String value = array.optString(i);
+            if (value != null && !value.isBlank()) values.add(value);
+        }
+        return values;
+    }
+
+    private String encodeQuery(String value) {
+        return URLEncoder.encode(value == null ? "" : value, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private String encodePath(String value) {
+        return encodeQuery(value).replace("+", "%20");
     }
 
     private Customer readCustomer(ResultSet resultSet) throws SQLException {
@@ -418,6 +569,7 @@ public class DatabaseManager {
     }
 
     public List<String> getRecordTypes() {
+        if (isRemote()) return remoteStringArray(CompManagerApiClient.array(apiGet("/v1/record-types")));
         String sql = "SELECT type_name FROM record_types ORDER BY type_name";
         List<String> types = new ArrayList<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
@@ -431,6 +583,10 @@ public class DatabaseManager {
     }
 
     public void addRecordType(String typeName) {
+        if (isRemote()) {
+            apiPost("/v1/record-types", new JSONObject().put("type_name", typeName));
+            return;
+        }
         String sql = "INSERT INTO record_types (type_name) VALUES (?)";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, typeName);
@@ -441,6 +597,10 @@ public class DatabaseManager {
     }
 
     public void updateRecordType(String oldName, String newName) {
+        if (isRemote()) {
+            apiPut("/v1/record-types", new JSONObject().put("old_name", oldName).put("new_name", newName));
+            return;
+        }
         String sql = "UPDATE record_types SET type_name = ? WHERE type_name = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, newName);
@@ -452,6 +612,10 @@ public class DatabaseManager {
     }
 
     public void deleteRecordType(String typeName) {
+        if (isRemote()) {
+            apiDelete("/v1/record-types/" + encodePath(typeName));
+            return;
+        }
         String sql = "DELETE FROM record_types WHERE type_name = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, typeName);
@@ -476,6 +640,10 @@ public class DatabaseManager {
 
     // PDF Settings Methods
     public void savePdfSetting(String key, String value) {
+        if (isRemote()) {
+            apiPut("/v1/settings", new JSONObject().put("key", key).put("value", value));
+            return;
+        }
         String sql = "INSERT OR REPLACE INTO pdf_settings (setting_key, setting_value) VALUES (?, ?)";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, key);
@@ -487,6 +655,7 @@ public class DatabaseManager {
     }
 
     public String getPdfSetting(String key, String defaultValue) {
+        if (isRemote()) return CompManagerApiClient.object(apiGet("/v1/settings")).optString(key, defaultValue);
         String sql = "SELECT setting_value FROM pdf_settings WHERE setting_key = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, key);
@@ -502,6 +671,12 @@ public class DatabaseManager {
     }
 
     public Map<String, String> getAllPdfSettings() {
+        if (isRemote()) {
+            JSONObject response = CompManagerApiClient.object(apiGet("/v1/settings"));
+            Map<String, String> values = new HashMap<>();
+            for (String key : response.keySet()) values.put(key, response.optString(key, ""));
+            return values;
+        }
         String sql = "SELECT setting_key, setting_value FROM pdf_settings";
         Map<String, String> settings = new HashMap<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {

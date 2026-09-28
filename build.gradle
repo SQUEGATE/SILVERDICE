@@ -6,7 +6,7 @@ plugins {
 group 'com.poolapp'
 version '1.0.0'
 
-layout.buildDirectory.set(layout.projectDirectory.dir("gradle-build"))
+layout.buildDirectory.set(layout.projectDirectory.dir(providers.gradleProperty("verificationBuildDir").getOrElse("gradle-build")))
 
 repositories {
     mavenCentral()
@@ -134,4 +134,13 @@ tasks.register('packageAppImage', Exec) {
             '--main-jar', mainJarName,
             '--main-class', 'com.poolapp.Starter',
             '--icon', iconOutputFile.absolutePath
+}
+
+tasks.register('migrateTurso', JavaExec) {
+    group = 'database'
+    description = 'Copy local master/company SQLite data into Turso without deleting local files.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.poolapp.db.TursoDataMigrator'
+    args projectDir.parentFile.absolutePath
 }

@@ -84,7 +84,9 @@ public class LoginFrame extends JFrame {
 
         CompanyProfile company = masterDatabaseManager.authenticateCompany(username, password);
         if (company != null) {
-            DatabaseManager companyDatabase = new DatabaseManager(company.getDatabasePath());
+            DatabaseManager companyDatabase = masterDatabaseManager.getApiBaseUrl() != null
+                    ? masterDatabaseManager.createDatabaseManager(company.getId(), masterDatabaseManager.getSessionToken())
+                    : new DatabaseManager(company.getDatabasePath());
             SwingUtilities.invokeLater(() -> {
                 final PoolAppFrame[] frameHolder = new PoolAppFrame[1];
                 frameHolder[0] = new PoolAppFrame(companyDatabase, company, null, () -> {
@@ -101,7 +103,9 @@ public class LoginFrame extends JFrame {
 
         EmployeeProfile employee = masterDatabaseManager.authenticateEmployee(username, password);
         if (employee != null) {
-            DatabaseManager companyDatabase = new DatabaseManager(employee.getCompanyDatabasePath());
+            DatabaseManager companyDatabase = masterDatabaseManager.getApiBaseUrl() != null
+                    ? masterDatabaseManager.createDatabaseManager(employee.getCompanyId(), masterDatabaseManager.getSessionToken())
+                    : new DatabaseManager(employee.getCompanyDatabasePath());
             SwingUtilities.invokeLater(() -> {
                 final PoolAppFrame[] frameHolder = new PoolAppFrame[1];
                 frameHolder[0] = new PoolAppFrame(companyDatabase, null, employee, null, () -> {

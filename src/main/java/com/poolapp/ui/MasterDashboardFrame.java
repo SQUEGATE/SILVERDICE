@@ -26,8 +26,9 @@ public class MasterDashboardFrame extends JFrame {
     private CompanyProfile selectedCompany;
 
     public MasterDashboardFrame(MasterDatabaseManager masterDatabaseManager) {
-        super("Master Company Dashboard");
+        super("Comp Manager");
         this.masterDatabaseManager = masterDatabaseManager;
+        AppWindowStyle.apply(this);
         this.cardLayout = new CardLayout();
         this.cardPanel = new JPanel(cardLayout);
 

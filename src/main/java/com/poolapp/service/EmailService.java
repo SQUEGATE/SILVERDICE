@@ -6,17 +6,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
-import jakarta.mail.Authenticator;
-import jakarta.mail.Message;
-import jakarta.mail.Multipart;
-import jakarta.mail.PasswordAuthentication;
-import jakarta.mail.Session;
-import jakarta.mail.Transport;
-import jakarta.mail.internet.InternetAddress;
-import jakarta.mail.internet.MimeBodyPart;
-import jakarta.mail.internet.MimeMessage;
-import jakarta.mail.internet.MimeMultipart;
-
 public class EmailService {
     private final Properties config;
 
@@ -46,58 +35,33 @@ public class EmailService {
     }
 
     public void sendEmail(String to, String subject, String messageText, String senderEmail, String senderName, File attachment) {
-        String smtpHost = resolveSmtpHost(senderEmail);
-        String smtpUsername = resolveSmtpUsername(senderEmail);
-        String smtpPassword = resolveSmtpPassword(smtpUsername);
         if (attachment == null || !attachment.isFile()) {
             throw new IllegalArgumentException("Statement PDF attachment was not created.");
         }
         try {
-            Properties smtpProperties = new Properties();
-            smtpProperties.put("mail.smtp.host", smtpHost);
-            smtpProperties.put("mail.smtp.port", resolveSmtpPort(senderEmail));
-            smtpProperties.put("mail.smtp.auth", config.getProperty("mail.smtp.auth", "true"));
-            smtpProperties.put("mail.smtp.starttls.enable", config.getProperty("mail.smtp.starttls.enable", "true"));
-            smtpProperties.put("mail.smtp.ssl.protocols", "TLSv1.2 TLSv1.3");
-            smtpProperties.put("mail.smtp.ssl.trust", "*");
-            smtpProperties.put("mail.smtp.connectiontimeout", "15000");
-            smtpProperties.put("mail.smtp.timeout", "15000");
-
-            Session session = Session.getInstance(smtpProperties, new Authenticator() {
-                @Override
-                protected PasswordAuthentication getPasswordAuthentication() {
-                    return new PasswordAuthentication(smtpUsername, smtpPassword);
-                }
-            });
-            MimeMessage message = new MimeMessage(session);
-            InternetAddress sender = new InternetAddress(senderEmail, senderName);
-            message.setFrom(sender);
-            message.setReplyTo(new InternetAddress[]{sender});
-            message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(to));
-            message.setSubject(subject);
-
-            MimeBodyPart textPart = new MimeBodyPart();
-            textPart.setText(messageText, "UTF-8");
-            MimeBodyPart pdfPart = new MimeBodyPart();
-            pdfPart.attachFile(attachment);
-
-            Multipart content = new MimeMultipart();
-            content.addBodyPart(textPart);
-            content.addBodyPart(pdfPart);
-            message.setContent(content);
-            Transport.send(message);
-        } catch (Exception e) {
-            config.remove("mail.smtp.password");
-            String detail = extractErrorMessage(e);
-            if (detail.contains("5.7.139") || detail.toLowerCase().contains("authentication unsuccessful")) {
-                detail += "\n\nFix for Microsoft / Office 365 accounts:\n"
-                        + "1. Go to Microsoft 365 Admin Center (admin.microsoft.com) -> Users -> Active Users.\n"
-                        + "2. Click on your user -> Mail tab -> Manage email apps.\n"
-                        + "3. Check 'Authenticated SMTP' and save.\n"
-                        + "(For personal @outlook.com accounts, generate an App Password in Account Security Settings).";
-            }
-            throw new RuntimeException("Unable to send email through SMTP: " + detail, e);
+            startOutlookCompose(to, subject, messageText, attachment);
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to open Outlook: " + e.getMessage(), e);
         }
+    }
+
+    private void startOutlookCompose(String to, String subject, String messageText, File attachment) throws IOException {
+        String outlookSubject = subject == null ? "" : subject.replace("\"", "'");
+        String recipient = to == null ? "" : to.trim();
+        IOException lastError = null;
+        String[][] commands = {
+                {"outlook.exe", "/c", "ipm.note", "/m", recipient + "?subject=" + outlookSubject, "/a", attachment.getAbsolutePath()},
+                {"olk.exe", "/c", "ipm.note", "/m", recipient + "?subject=" + outlookSubject, "/a", attachment.getAbsolutePath()}
+        };
+        for (String[] command : commands) {
+            try {
+                new ProcessBuilder(command).start();
+                return;
+            } catch (IOException e) {
+                lastError = e;
+            }
+        }
+        throw lastError == null ? new IOException("Outlook was not found on this device.") : lastError;
     }
 
     private String extractErrorMessage(Throwable t) {

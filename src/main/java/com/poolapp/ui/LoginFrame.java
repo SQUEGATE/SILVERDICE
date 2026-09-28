@@ -14,8 +14,9 @@ public class LoginFrame extends JFrame {
     private final JPasswordField passwordField;
 
     public LoginFrame() {
-        super("Welcome");
+        super("Comp Manager");
         this.masterDatabaseManager = new MasterDatabaseManager();
+        AppWindowStyle.apply(this);
 
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(460, 280);

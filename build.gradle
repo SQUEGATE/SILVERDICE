@@ -4,7 +4,7 @@ plugins {
 }
 
 group 'com.poolapp'
-version '1.0-SNAPSHOT'
+version '1.0.0'
 
 layout.buildDirectory.set(layout.projectDirectory.dir("gradle-build"))
 
@@ -16,14 +16,122 @@ dependencies {
     implementation 'org.xerial:sqlite-jdbc:3.40.1.0'
     implementation 'org.apache.pdfbox:pdfbox:3.0.1'
     implementation 'com.sun.mail:jakarta.mail:2.0.1'
+    implementation 'org.json:json:20240303'
+}
+
+// Version is read at runtime via getPackage().getImplementationVersion() for the update checker.
+tasks.named('jar') {
+    manifest {
+        attributes('Implementation-Version': project.version)
+    }
 }
 
 application {
     mainClass.set('com.poolapp.Main')
+    applicationName = 'Comp Manager'
 }
 
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)
     }
+}
+
+import javax.imageio.ImageIO
+import java.awt.image.BufferedImage
+
+def iconOutputFile = layout.buildDirectory.file('icon/app.ico').get().asFile
+
+tasks.register('generateAppIcon') {
+    def logoFile = file('src/main/resources/logo.jpg')
+    inputs.file(logoFile)
+    outputs.file(iconOutputFile)
+    doLast {
+        iconOutputFile.parentFile.mkdirs()
+        BufferedImage original = ImageIO.read(logoFile)
+        BufferedImage resized = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB)
+        def g = resized.createGraphics()
+        g.drawImage(original, 0, 0, 256, 256, null)
+        g.dispose()
+
+        def pngBytes = new ByteArrayOutputStream()
+        ImageIO.write(resized, 'png', pngBytes)
+        byte[] png = pngBytes.toByteArray()
+        int size = png.length
+        int offset = 22 // 6-byte ICO header + 16-byte directory entry
+
+        new FileOutputStream(iconOutputFile).withStream { out ->
+            out.write([0, 0, 1, 0, 1, 0] as byte[])
+            out.write([0, 0, 0, 0] as byte[]) // width/height 0 = 256px, no palette
+            out.write([1, 0, 32, 0] as byte[]) // 1 color plane, 32 bits per pixel
+            out.write([(byte) (size & 0xFF), (byte) ((size >> 8) & 0xFF), (byte) ((size >> 16) & 0xFF), (byte) ((size >> 24) & 0xFF)] as byte[])
+            out.write([(byte) (offset & 0xFF), (byte) ((offset >> 8) & 0xFF), (byte) ((offset >> 16) & 0xFF), (byte) ((offset >> 24) & 0xFF)] as byte[])
+            out.write(png)
+        }
+    }
+}
+
+tasks.register('copyAppLibs', Copy) {
+    from configurations.runtimeClasspath
+    into layout.buildDirectory.dir('jpackage-input')
+}
+
+tasks.register('copyAppJar', Copy) {
+    dependsOn tasks.named('jar')
+    from tasks.named('jar').flatMap { it.archiveFile }
+    into layout.buildDirectory.dir('jpackage-input')
+}
+
+// Produces a Windows installer (.exe) so the app can be shared and installed on other devices.
+// Requires WiX Toolset v3+ (wixtoolset.org) installed and on PATH.
+tasks.register('packageExe', Exec) {
+    dependsOn copyAppLibs, copyAppJar, generateAppIcon
+    def jpackageHome = javaToolchains.launcherFor(java.toolchain).get().metadata.installationPath
+    def jpackageExecutable = jpackageHome.file('bin/jpackage.exe').asFile
+    def inputDir = layout.buildDirectory.dir('jpackage-input').get().asFile
+    def destDir = layout.buildDirectory.dir('dist').get().asFile
+    def mainJarName = tasks.named('jar').flatMap { it.archiveFileName }.get()
+
+    doFirst {
+        destDir.mkdirs()
+    }
+
+    commandLine jpackageExecutable.absolutePath,
+            '--type', 'exe',
+            '--input', inputDir.absolutePath,
+            '--dest', destDir.absolutePath,
+            '--name', 'Comp Manager',
+            '--app-version', project.version.toString(),
+            '--vendor', 'Comp Manager',
+            '--main-jar', mainJarName,
+            '--main-class', 'com.poolapp.Starter',
+            '--icon', iconOutputFile.absolutePath,
+            '--win-dir-chooser',
+            '--win-shortcut',
+            '--win-menu'
+}
+
+// No-WiX fallback: produces a runnable "Comp Manager" folder with Comp Manager.exe, no installer wizard.
+tasks.register('packageAppImage', Exec) {
+    dependsOn copyAppLibs, copyAppJar, generateAppIcon
+    def jpackageHome = javaToolchains.launcherFor(java.toolchain).get().metadata.installationPath
+    def jpackageExecutable = jpackageHome.file('bin/jpackage.exe').asFile
+    def inputDir = layout.buildDirectory.dir('jpackage-input').get().asFile
+    def destDir = layout.buildDirectory.dir('dist').get().asFile
+    def mainJarName = tasks.named('jar').flatMap { it.archiveFileName }.get()
+
+    doFirst {
+        destDir.mkdirs()
+    }
+
+    commandLine jpackageExecutable.absolutePath,
+            '--type', 'app-image',
+            '--input', inputDir.absolutePath,
+            '--dest', destDir.absolutePath,
+            '--name', 'Comp Manager',
+            '--app-version', project.version.toString(),
+            '--vendor', 'Comp Manager',
+            '--main-jar', mainJarName,
+            '--main-class', 'com.poolapp.Starter',
+            '--icon', iconOutputFile.absolutePath
 }

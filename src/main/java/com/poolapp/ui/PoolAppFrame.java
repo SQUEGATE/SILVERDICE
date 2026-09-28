@@ -120,7 +120,8 @@ public class PoolAppFrame extends JFrame {
 
     public PoolAppFrame(DatabaseManager dbManager, CompanyProfile companyProfile, EmployeeProfile employeeProfile,
                         Runnable exitCompanyViewAction, Runnable logoutAction) {
-        super(resolveWindowTitle(companyProfile, employeeProfile));
+        super("Comp Manager");
+        AppWindowStyle.apply(this);
         this.dbManager = dbManager;
         this.emailService = new EmailService();
         this.smsService = new SmsService();

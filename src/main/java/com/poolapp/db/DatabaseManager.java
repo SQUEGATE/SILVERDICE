@@ -64,6 +64,16 @@ public class DatabaseManager {
         return databasePath;
     }
 
+    public JSONObject exportBackup() {
+        if (apiClient == null) throw new IllegalStateException("Cloud backup requires a cloud connection");
+        return CompManagerApiClient.object(apiGet("/v1/backup"));
+    }
+
+    public void restoreBackup(JSONObject backup) {
+        if (apiClient == null) throw new IllegalStateException("Cloud restore requires a cloud connection");
+        apiPost("/v1/backup/restore", backup);
+    }
+
     public boolean isRemote() {
         return apiClient != null;
     }

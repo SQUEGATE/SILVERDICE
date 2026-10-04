@@ -21,7 +21,7 @@ import java.util.Base64;
 import java.util.List;
 
 public final class TursoDataMigrator {
-    private static final int PASSWORD_HASH_ITERATIONS = 310_000;
+    private static final int PASSWORD_HASH_ITERATIONS = 100_000;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private TursoDataMigrator() {

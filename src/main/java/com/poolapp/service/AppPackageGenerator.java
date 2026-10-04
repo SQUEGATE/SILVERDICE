@@ -11,6 +11,8 @@ import java.nio.file.attribute.FileTime;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -31,23 +33,33 @@ public final class AppPackageGenerator {
     }
 
     public Path generate() throws IOException, InterruptedException {
+        return generate(message -> { });
+    }
+
+    public Path generate(Consumer<String> progress) throws IOException, InterruptedException {
         if (projectRoot == null) {
             throw new IllegalStateException("The source project was not found. Run Comp Manager from the DATABASE project checkout to generate an app bundle.");
         }
 
         String buildDirectoryName = "gradle-build-download-" + FILE_STAMP.format(LocalDateTime.now());
-        Path buildDirectory = projectRoot.resolve(buildDirectoryName);
+        Path buildDirectory = Paths.get(System.getProperty("java.io.tmpdir"), buildDirectoryName);
         Path gradleWrapper = projectRoot.resolve("gradlew.bat");
         Path buildLog = Files.createTempFile("comp-manager-package-", ".log");
-        String command = "\"" + gradleWrapper + "\" -PverificationBuildDir=" + buildDirectoryName
-                + " packageAppImage --no-daemon --console=plain";
+        String command = "\"" + gradleWrapper + "\" -PverificationBuildDir=\"" + buildDirectory
+                        + "\" packageAppImage --no-daemon --console=plain";
 
+        progress.accept("Building app...");
         Process process = new ProcessBuilder("cmd.exe", "/d", "/s", "/c", "\"" + command + "\"")
                 .directory(projectRoot.toFile())
                 .redirectErrorStream(true)
                 .redirectOutput(buildLog.toFile())
                 .start();
-        int exitCode = process.waitFor();
+        if (!process.waitFor(15, TimeUnit.MINUTES)) {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+            throw new IOException("App packaging timed out after 15 minutes. Gradle log: " + buildLog);
+        }
+        int exitCode = process.exitValue();
         if (exitCode != 0) {
             throw new IOException("Gradle app packaging failed (exit " + exitCode + "). Log: " + buildLog + "\n" + readLastLines(buildLog, 35));
         }
@@ -61,7 +73,26 @@ public final class AppPackageGenerator {
         Path downloads = Paths.get(System.getProperty("user.home"), "Downloads");
         Files.createDirectories(downloads);
         Path zipFile = downloads.resolve("Comp-Manager-cloud-test-" + FILE_STAMP.format(LocalDateTime.now()) + ".zip");
-        zipAppImage(appImage, zipFile);
+        progress.accept("Zipping app...");
+        for (int attempt = 1; ; attempt++) {
+            try {
+                zipAppImage(appImage, zipFile, progress);
+                break;
+            } catch (IOException e) {
+                // Antivirus/indexers can briefly lock freshly built files.
+                if (attempt >= 5) {
+                    throw new IOException(e.getClass().getSimpleName() + ": " + e.getMessage(), e);
+                }
+                Thread.sleep(2000);
+            }
+        }
+        try {
+            deleteBuildDirectory(buildDirectory);
+            Files.deleteIfExists(buildLog);
+        } catch (IOException ignored) {
+            // The ZIP is already created; leftover temp files are harmless.
+        }
+        progress.accept("Complete");
         return zipFile;
     }
 
@@ -85,9 +116,10 @@ public final class AppPackageGenerator {
         return null;
     }
 
-    private static void zipAppImage(Path appImage, Path zipFile) throws IOException {
+    private static void zipAppImage(Path appImage, Path zipFile, Consumer<String> progress) throws IOException {
         try (ZipOutputStream zip = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(zipFile)))) {
             try (var paths = Files.walk(appImage)) {
+                int[] fileCount = {0};
                 paths.filter(Files::isRegularFile)
                         .sorted(Comparator.naturalOrder())
                         .forEach(path -> {
@@ -101,6 +133,8 @@ public final class AppPackageGenerator {
                                     input.transferTo(zip);
                                 }
                                 zip.closeEntry();
+                                fileCount[0]++;
+                                if (fileCount[0] % 250 == 0) progress.accept("Compressing app files... " + fileCount[0] + " files added");
                             } catch (IOException e) {
                                 throw new ZipCreationException(e);
                             }
@@ -108,6 +142,15 @@ public final class AppPackageGenerator {
             } catch (ZipCreationException e) {
                 Files.deleteIfExists(zipFile);
                 throw e.ioException;
+            }
+        }
+    }
+
+    private static void deleteBuildDirectory(Path buildDirectory) throws IOException {
+        try (var paths = Files.walk(buildDirectory)) {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                path.toFile().setWritable(true);
+                Files.deleteIfExists(path);
             }
         }
     }

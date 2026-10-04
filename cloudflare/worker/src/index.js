@@ -171,6 +171,14 @@ export default {
         const rows = await turso(env, "SELECT service_day, SUM(amount_charged) AS total FROM customers WHERE company_id = ? GROUP BY service_day", requiredCompanyId(session));
         return json({ by_day: rows, total: rows.reduce((sum, row) => sum + Number(row.total || 0), 0) }, 200, request);
       }
+      if (url.pathname === "/v1/backup" && request.method === "GET") {
+        requireCompanyManager(session, requiredCompanyId(session));
+        return json(await exportCompanyBackup(env, requiredCompanyId(session)), 200, request);
+      }
+      if (url.pathname === "/v1/backup/restore" && request.method === "POST") {
+        requireCompanyManager(session, requiredCompanyId(session));
+        return json(await restoreCompanyBackup(request, env, requiredCompanyId(session)), 200, request);
+      }
       const customerMatch = url.pathname.match(/^\/v1\/customers\/([^/]+)$/);
       if (customerMatch && request.method === "GET") {
         return await getCustomer(request, env, session, decodeURIComponent(customerMatch[1]));
@@ -556,13 +564,85 @@ async function verifyPassword(password, stored) {
 
 async function hashPassword(password) {
   if (typeof password !== "string" || password.length < 1 || password.length > 1024) throw httpError(400, "Invalid password");
-  const iterations = 310000;
+  const iterations = 100000;
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const keyMaterial = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, keyMaterial, 256);
   return `pbkdf2-sha256$${iterations}$${base64UrlEncodeBytes(salt)}$${base64UrlEncodeBytes(new Uint8Array(bits))}`;
 }
 
+const BACKUP_TABLES = {
+  customers: ["customer_id", "first_name", "last_name", "address", "city", "state", "zip", "phone", "email", "service_day", "amount_charged", "notes"],
+  statement_records: ["record_id", "customer_id", "record_date", "type", "amount"],
+  record_types: ["type_name"],
+  pdf_settings: ["setting_key", "setting_value"]
+};
+
+async function exportCompanyBackup(env, companyId) {
+  const backup = { format: "comp-manager-backup", version: 1, company_id: companyId, created_at: new Date().toISOString() };
+  for (const [table, columns] of Object.entries(BACKUP_TABLES)) {
+    backup[table] = await turso(env, `SELECT ${columns.join(", ")} FROM ${table} WHERE company_id = ?`, companyId);
+  }
+  return backup;
+}
+
+async function restoreCompanyBackup(request, env, companyId) {
+  const contentLength = Number(request.headers.get("Content-Length") || 0);
+  if (contentLength > 50 * 1024 * 1024) throw httpError(413, "Backup is too large");
+  let backup;
+  try { backup = await request.json(); } catch { throw httpError(400, "Backup file is not valid JSON"); }
+  if (!backup || backup.format !== "comp-manager-backup" || backup.version !== 1) throw httpError(400, "This is not a Comp Manager cloud backup");
+  if (Number(backup.company_id) !== companyId) throw httpError(400, "This backup belongs to a different company");
+  for (const table of Object.keys(BACKUP_TABLES)) {
+    if (!Array.isArray(backup[table])) throw httpError(400, `Backup is missing ${table}`);
+  }
+  const customerIds = new Set(backup.customers.map(row => String(row.customer_id)));
+  for (const row of backup.statement_records) {
+    if (!customerIds.has(String(row.customer_id))) throw httpError(400, "Backup has statements for unknown customers");
+  }
+  const statements = [];
+  for (const table of ["statement_records", "customers", "record_types", "pdf_settings"]) {
+    statements.push({ sql: `DELETE FROM ${table} WHERE company_id = ?`, args: [companyId] });
+  }
+  for (const table of ["customers", "statement_records", "record_types", "pdf_settings"]) {
+    const columns = BACKUP_TABLES[table];
+    const sql = `INSERT INTO ${table} (company_id, ${columns.join(", ")}) VALUES (${["?", ...columns.map(() => "?")].join(", ")})`;
+    for (const row of backup[table]) {
+      statements.push({ sql, args: [companyId, ...columns.map(column => row[column] ?? (column.endsWith("amount") || column === "amount_charged" ? 0 : ""))] });
+    }
+  }
+  await tursoTransaction(env, statements);
+  return { restored: true, customers: backup.customers.length, statements: backup.statement_records.length };
+}
+
+async function tursoTransaction(env, statements) {
+  const configuredUrl = env.SILVERDICE_URL || env.TURSO_HTTP_URL;
+  const httpUrl = requiredSecret(configuredUrl, "SILVERDICE_URL")
+    .replace(/^(libsql|turso):\/\//, "https://")
+    .replace(/\/$/, "");
+  const token = requiredSecret(env.SILVERDICE_AUTH_TOKEN || env.TURSO_AUTH_TOKEN, "SILVERDICE_AUTH_TOKEN");
+  const steps = [{ stmt: { sql: "BEGIN" } }];
+  for (const statement of statements) {
+    steps.push({
+      stmt: { sql: statement.sql, args: statement.args.map(toTursoArg) },
+      condition: { type: "ok", step: steps.length - 1 }
+    });
+  }
+  const commitIndex = steps.length;
+  steps.push({ stmt: { sql: "COMMIT" }, condition: { type: "ok", step: commitIndex - 1 } });
+  steps.push({ stmt: { sql: "ROLLBACK" }, condition: { type: "not", cond: { type: "ok", step: commitIndex } } });
+  const response = await fetch(`${httpUrl}/v2/pipeline`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ requests: [{ type: "batch", batch: { steps } }, { type: "close" }] })
+  });
+  if (!response.ok) throw new Error(`Turso request failed (${response.status})`);
+  const payload = await response.json();
+  const result = payload.results?.[0]?.response?.result;
+  if (!result || result.step_errors?.[commitIndex] || !result.step_results?.[commitIndex]) {
+    throw new Error("Restore failed and was rolled back");
+  }
+}
 async function turso(env, sql, ...args) {
   const configuredUrl = env.SILVERDICE_URL || env.TURSO_HTTP_URL;
   const httpUrl = requiredSecret(configuredUrl, "SILVERDICE_URL")

@@ -10,6 +10,7 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -140,11 +141,17 @@ public class MasterDashboardFrame extends JFrame {
 
     private void generateAppPackage(JButton button) {
         button.setEnabled(false);
-        button.setText("Building App...");
-        new SwingWorker<Path, Void>() {
+        button.setText("Building...");
+        button.setPreferredSize(new Dimension(155, 28));
+        new SwingWorker<Path, String>() {
             @Override
             protected Path doInBackground() throws Exception {
-                return appPackageGenerator.generate();
+                return appPackageGenerator.generate(this::publish);
+            }
+
+            @Override
+            protected void process(List<String> updates) {
+                if (!updates.isEmpty()) button.setText(updates.get(updates.size() - 1));
             }
 
             @Override
@@ -160,6 +167,9 @@ public class MasterDashboardFrame extends JFrame {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     JOptionPane.showMessageDialog(MasterDashboardFrame.this, "App packaging was interrupted.", "Packaging", JOptionPane.WARNING_MESSAGE);
+                } catch (IOException e) {
+                    JOptionPane.showMessageDialog(MasterDashboardFrame.this, "The ZIP was created, but Downloads could not be opened: " + e.getMessage(),
+                            "Comp Manager Package Ready", JOptionPane.WARNING_MESSAGE);
                 } catch (ExecutionException e) {
                     Throwable cause = e.getCause() == null ? e : e.getCause();
                     JOptionPane.showMessageDialog(MasterDashboardFrame.this,

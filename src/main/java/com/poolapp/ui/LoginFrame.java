@@ -120,6 +120,8 @@ public class LoginFrame extends JFrame {
             return;
         }
 
-        JOptionPane.showMessageDialog(this, "Invalid username or password.", "Login Failed", JOptionPane.ERROR_MESSAGE);
+        JOptionPane.showMessageDialog(this, "Invalid username or password.\nServer: "
+                + (masterDatabaseManager.getApiBaseUrl() != null ? masterDatabaseManager.getApiBaseUrl() : "local database (not shared)"),
+                "Login Failed", JOptionPane.ERROR_MESSAGE);
     }
 }

@@ -47,7 +47,7 @@ public final class CompManagerApiClient {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + path))
-                    .timeout(Duration.ofSeconds(20))
+                    .timeout(Duration.ofSeconds(120))
                     .header("Accept", "application/json");
             if (token != null && !token.isBlank()) builder.header("Authorization", "Bearer " + token);
             if (body == null) {

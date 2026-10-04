@@ -2427,6 +2427,54 @@ public class PoolAppFrame extends JFrame {
         }
     }
 
+    private void backupCloudDatabase() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Save Company Backup");
+        chooser.setSelectedFile(new File("company_backup_" + new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date()) + ".json"));
+        chooser.setFileFilter(new FileNameExtensionFilter("Company Backup (JSON)", "json"));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        File target = chooser.getSelectedFile();
+        if (!target.getName().toLowerCase().endsWith(".json")) {
+            target = new File(target.getAbsolutePath() + ".json");
+        }
+        try {
+            Files.writeString(target.toPath(), dbManager.exportBackup().toString(2));
+            JOptionPane.showMessageDialog(this, "Company backup saved to:\n" + target.getAbsolutePath(), "Backup Complete", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Unable to save backup: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void restoreCloudDatabase() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Select Company Backup to Restore");
+        chooser.setFileFilter(new FileNameExtensionFilter("Company Backup (JSON)", "json"));
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "This replaces ALL customers, statements and settings of this company with the backup.\nOther companies are not affected. A safety backup of the current data will be saved first.\n\nContinue?",
+                "Confirm Restore", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (confirm != JOptionPane.YES_OPTION) {
+            return;
+        }
+        try {
+            org.json.JSONObject backup = new org.json.JSONObject(Files.readString(chooser.getSelectedFile().toPath()));
+            File safety = new File(chooser.getSelectedFile().getParentFile(), "company_restore_safety_" + new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date()) + ".json");
+            Files.writeString(safety.toPath(), dbManager.exportBackup().toString(2));
+            dbManager.restoreBackup(backup);
+            JOptionPane.showMessageDialog(this, "Company data restored. Previous data saved as:\n" + safety.getAbsolutePath(), "Restore Complete", JOptionPane.INFORMATION_MESSAGE);
+            loadCustomers(filterAccessibleCustomers(dbManager.getAllCustomers()));
+            refreshRevenueSummary();
+            refreshDetailCustomerList();
+            clearForm();
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Unable to restore backup: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private void sendEmailToCustomer() {
         File statementPdf = null;
         try {

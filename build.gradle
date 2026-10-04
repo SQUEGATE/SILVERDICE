@@ -6,7 +6,7 @@ plugins {
 group 'com.poolapp'
 version '1.0.0'
 
-layout.buildDirectory.set(layout.projectDirectory.dir(providers.gradleProperty("verificationBuildDir").getOrElse("gradle-build")))
+layout.buildDirectory.set(file(providers.gradleProperty("verificationBuildDir").getOrElse("gradle-build")))
 
 repositories {
     mavenCentral()

@@ -636,7 +636,7 @@ async function tursoTransaction(env, statements) {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ requests: [{ type: "batch", batch: { steps } }, { type: "close" }] })
   });
-  if (!response.ok) throw new Error(`Turso request failed (${response.status})`);
+  if (!response.ok) throw new Error(`Turso request failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
   const payload = await response.json();
   const result = payload.results?.[0]?.response?.result;
   if (!result || result.step_errors?.[commitIndex] || !result.step_results?.[commitIndex]) {
@@ -656,7 +656,7 @@ async function turso(env, sql, ...args) {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ requests: [{ type: "execute", stmt }, { type: "close" }] })
   });
-  if (!response.ok) throw new Error(`Turso request failed (${response.status})`);
+  if (!response.ok) throw new Error(`Turso request failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
   const payload = await response.json();
   const result = payload.results?.[0];
   if (result?.type !== "ok") throw new Error("Turso rejected the database operation");
@@ -669,7 +669,7 @@ async function turso(env, sql, ...args) {
 function toTursoArg(value) {
   if (value === null || value === undefined) return { type: "null" };
   if (typeof value === "number" && Number.isInteger(value)) return { type: "integer", value: String(value) };
-  if (typeof value === "number") return { type: "float", value: String(value) };
+  if (typeof value === "number") return { type: "float", value };
   return { type: "text", value: String(value) };
 }
 

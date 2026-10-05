@@ -168,7 +168,7 @@ export default {
       }
       if (url.pathname === "/v1/revenue" && request.method === "GET") {
         requirePermission(session, "canViewRevenueSummary");
-        const rows = await turso(env, "SELECT service_day, SUM(amount_charged) AS total FROM customers WHERE company_id = ? GROUP BY service_day", requiredCompanyId(session));
+        const rows = await turso(env, "SELECT service_day, SUM(amount_charged) AS total FROM customers WHERE company_id = ? AND status <> 'Inactive' GROUP BY service_day", requiredCompanyId(session));
         return json({ by_day: rows, total: rows.reduce((sum, row) => sum + Number(row.total || 0), 0) }, 200, request);
       }
       if (url.pathname === "/v1/backup" && request.method === "GET") {
@@ -355,7 +355,7 @@ async function listCustomers(request, env, session) {
   const query = (url.searchParams.get("q") || "").trim().toLowerCase();
   const orderById = url.searchParams.get("order") === "id";
   const filters = customerAccessSql(session);
-  let sql = "SELECT customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes FROM customers WHERE company_id = ?";
+  let sql = "SELECT customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status FROM customers WHERE company_id = ?";
   const args = [requiredCompanyId(session)];
   sql += filters.sql;
   args.push(...filters.args);
@@ -389,10 +389,10 @@ async function createCustomer(request, env, session) {
   }
   const companyId = requiredCompanyId(session);
   await turso(env,
-    "INSERT INTO customers (company_id, customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO customers (company_id, customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     companyId, customer.customer_id, customer.first_name, customer.last_name, customer.address || "", customer.city || "",
     customer.state || "", customer.zip || "", customer.phone || "", customer.email || "", customer.service_day || "",
-    Number(customer.amount_charged || 0), customer.notes || "");
+    Number(customer.amount_charged || 0), customer.notes || "", customer.starting_date || "", customer.status === "Inactive" ? "Inactive" : "Active");
   return json({ saved: true, customer_id: customer.customer_id }, 201, request);
 }
 
@@ -402,10 +402,10 @@ async function updateCustomer(request, env, session, customerId) {
   const customer = await readJson(request);
   validateCustomer({ ...existing, ...customer, customer_id: customerId });
   await turso(env,
-    "UPDATE customers SET first_name = ?, last_name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, email = ?, service_day = ?, amount_charged = ?, notes = ? WHERE company_id = ? AND customer_id = ?",
+    "UPDATE customers SET first_name = ?, last_name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, email = ?, service_day = ?, amount_charged = ?, notes = ?, starting_date = ?, status = ? WHERE company_id = ? AND customer_id = ?",
     customer.first_name, customer.last_name, customer.address || "", customer.city || "", customer.state || "",
     customer.zip || "", customer.phone || "", customer.email || "", customer.service_day || "",
-    Number(customer.amount_charged || 0), customer.notes || "", requiredCompanyId(session), customerId);
+    Number(customer.amount_charged || 0), customer.notes || "", customer.starting_date || "", customer.status === "Inactive" ? "Inactive" : "Active", requiredCompanyId(session), customerId);
   return json({ saved: true }, 200, request);
 }
 
@@ -453,7 +453,7 @@ async function deleteStatement(request, env, session, recordId) {
 async function findAccessibleCustomer(env, session, customerId) {
   const filters = customerAccessSql(session);
   const rows = await turso(env,
-    "SELECT customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes FROM customers WHERE company_id = ? AND customer_id = ?" + filters.sql + " LIMIT 1",
+    "SELECT customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status FROM customers WHERE company_id = ? AND customer_id = ?" + filters.sql + " LIMIT 1",
     requiredCompanyId(session), customerId, ...filters.args);
   if (!rows.length) throw httpError(404, "Customer not found or not assigned to this employee");
   return rows[0];
@@ -572,7 +572,7 @@ async function hashPassword(password) {
 }
 
 const BACKUP_TABLES = {
-  customers: ["customer_id", "first_name", "last_name", "address", "city", "state", "zip", "phone", "email", "service_day", "amount_charged", "notes"],
+  customers: ["customer_id", "first_name", "last_name", "address", "city", "state", "zip", "phone", "email", "service_day", "amount_charged", "notes", "starting_date", "status"],
   statement_records: ["record_id", "customer_id", "record_date", "type", "amount"],
   record_types: ["type_name"],
   pdf_settings: ["setting_key", "setting_value"]
@@ -608,7 +608,7 @@ async function restoreCompanyBackup(request, env, companyId) {
     const columns = BACKUP_TABLES[table];
     const sql = `INSERT INTO ${table} (company_id, ${columns.join(", ")}) VALUES (${["?", ...columns.map(() => "?")].join(", ")})`;
     for (const row of backup[table]) {
-      statements.push({ sql, args: [companyId, ...columns.map(column => row[column] ?? (column.endsWith("amount") || column === "amount_charged" ? 0 : ""))] });
+      statements.push({ sql, args: [companyId, ...columns.map(column => row[column] ?? (column === "status" ? "Active" : column.endsWith("amount") || column === "amount_charged" ? 0 : ""))] });
     }
   }
   await tursoTransaction(env, statements);
@@ -643,7 +643,21 @@ async function tursoTransaction(env, statements) {
     throw new Error("Restore failed and was rolled back");
   }
 }
+let schemaReady;
 async function turso(env, sql, ...args) {
+  schemaReady ??= (async () => {
+    for (const ddl of [
+      "ALTER TABLE customers ADD COLUMN starting_date TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE customers ADD COLUMN status TEXT NOT NULL DEFAULT 'Active'"
+    ]) {
+      try { await tursoCore(env, ddl); } catch { /* column already exists */ }
+    }
+  })();
+  await schemaReady;
+  return tursoCore(env, sql, ...args);
+}
+
+async function tursoCore(env, sql, ...args) {
   const configuredUrl = env.SILVERDICE_URL || env.TURSO_HTTP_URL;
   const httpUrl = requiredSecret(configuredUrl, "SILVERDICE_URL")
     .replace(/^(libsql|turso):\/\//, "https://")
@@ -698,6 +712,12 @@ function validateCustomer(customer) {
   requiredString(customer.last_name, "last_name", 120);
   const amount = Number(customer.amount_charged || 0);
   if (!Number.isFinite(amount) || Math.abs(amount) > 1e12) throw httpError(400, "Invalid amount_charged");
+  if (customer.starting_date) {
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(customer.starting_date);
+    const d = m && new Date(Date.UTC(+m[3], +m[1] - 1, +m[2]));
+    if (!d || d.getUTCDate() !== +m[2] || d.getUTCMonth() !== +m[1] - 1) throw httpError(400, "starting_date must be MM/DD/YYYY");
+  }
+  if (customer.status && !["Active", "Inactive"].includes(customer.status)) throw httpError(400, "status must be Active or Inactive");
 }
 
 function requiredString(value, name, maxLength) {

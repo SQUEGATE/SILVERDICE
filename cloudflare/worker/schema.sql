@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS customers (
     service_day TEXT NOT NULL DEFAULT '',
     amount_charged REAL NOT NULL DEFAULT 0,
     notes TEXT NOT NULL DEFAULT '',
+    starting_date TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'Active',
     PRIMARY KEY (company_id, customer_id),
     FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE
 );

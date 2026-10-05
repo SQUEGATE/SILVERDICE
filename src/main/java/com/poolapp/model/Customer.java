@@ -16,6 +16,8 @@ public class Customer {
     private String serviceDay;
     private BigDecimal amountCharged;
     private String notes;
+    private String startingDate = "";
+    private String status = "Active";
 
     public Customer(String id,
                     String firstName,
@@ -153,6 +155,26 @@ public class Customer {
 
     public void setNotes(String notes) {
         this.notes = notes;
+    }
+
+    public String getStartingDate() {
+        return startingDate;
+    }
+
+    public void setStartingDate(String startingDate) {
+        this.startingDate = startingDate == null ? "" : startingDate;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = "Inactive".equalsIgnoreCase(status) ? "Inactive" : "Active";
+    }
+
+    public boolean isActive() {
+        return !"Inactive".equals(status);
     }
 
     public String getFullName() {

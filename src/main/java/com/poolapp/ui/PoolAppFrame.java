@@ -52,6 +52,7 @@ import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 
 public class PoolAppFrame extends JFrame {
+    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("MM/dd/uuuu").withResolverStyle(java.time.format.ResolverStyle.STRICT);
     private static final String[] DAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$");
     private static final String DEBIT_PREFIX = "DEBIT: ";
@@ -71,6 +72,8 @@ public class PoolAppFrame extends JFrame {
     private final JTextField emailField;
     private final JComboBox<String> dayCombo;
     private final JTextField amountField;
+    private final JTextField startingDateField;
+    private final JComboBox<String> statusCombo;
     private final JTextArea notesArea;
     private final JTextField searchField;
     private final JTextField detailSearchField;
@@ -82,6 +85,16 @@ public class PoolAppFrame extends JFrame {
     private final JTextArea revenueArea;
     private final JPanel cardPanel;
     private final JPanel miniTabsPanel;
+    private final List<String> favoriteIds = new ArrayList<>();
+    private final Map<String, JButton> starButtons = new java.util.HashMap<>();
+    private String currentScreen = "";
+    private final javax.swing.table.DefaultTableModel chargedModel = new javax.swing.table.DefaultTableModel(new Object[]{"Customer", "ID", "Balance"}, 0) {
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return false;
+        }
+    };
+    private final JLabel chargedTotalLabel = new JLabel(" ");
     private final DefaultListModel<EmployeeProfile> employeeListModel;
     private final JList<EmployeeProfile> employeeList;
     private final JLabel employeeScreenLabel;
@@ -142,6 +155,9 @@ public class PoolAppFrame extends JFrame {
         emailField = new JTextField(40);
         dayCombo = new JComboBox<>(DAYS);
         amountField = new JTextField(10);
+        startingDateField = new JTextField(10);
+        ((AbstractDocument) startingDateField.getDocument()).setDocumentFilter(new DateFilter());
+        statusCombo = new JComboBox<>(new String[]{"Active", "Inactive"});
         notesArea = new JTextArea(6, 28);
         searchField = new JTextField(22);
         detailSearchField = new JTextField(18);
@@ -149,7 +165,8 @@ public class PoolAppFrame extends JFrame {
         nextCustomerButton = new JButton("Next");
         prevCustomerButton.setPreferredSize(new Dimension(100, 28));
         nextCustomerButton.setPreferredSize(new Dimension(100, 28));
-        recordDateField = new JTextField(LocalDate.now().format(DateTimeFormatter.ofPattern("MM/dd/yyyy")), 10);
+        recordDateField = new JTextField(10);
+        recordDateField.setText(LocalDate.now().format(DATE_FORMAT));
         recordTypeCombo = new JComboBox<>();
         recordTypeCombo.setEditable(true);
         recordAmountField = new JTextField(10);
@@ -179,6 +196,7 @@ public class PoolAppFrame extends JFrame {
         ((AbstractDocument) zipField.getDocument()).setDocumentFilter(new DigitFilter(10));
         ((AbstractDocument) amountField.getDocument()).setDocumentFilter(new CurrencyFilter());
         ((AbstractDocument) recordAmountField.getDocument()).setDocumentFilter(new CurrencyFilter());
+        ((AbstractDocument) recordDateField.getDocument()).setDocumentFilter(new DateFilter());
         recordAmountField.setText("$0.00");
         recordAmountField.addFocusListener(new FocusAdapter() {
             @Override
@@ -412,6 +430,18 @@ public class PoolAppFrame extends JFrame {
         row++;
         gc.gridx = 0;
         gc.gridy = row;
+        formPanel.add(new JLabel("Starting Date (MM/DD/YYYY):"), gc);
+        gc.gridx = 1;
+        formPanel.add(startingDateField, gc);
+
+        gc.gridx = 2;
+        formPanel.add(new JLabel("Status:"), gc);
+        gc.gridx = 3;
+        formPanel.add(statusCombo, gc);
+
+        row++;
+        gc.gridx = 0;
+        gc.gridy = row;
         gc.anchor = GridBagConstraints.NORTHWEST;
         formPanel.add(new JLabel("Notes:"), gc);
         gc.gridx = 1;
@@ -612,6 +642,7 @@ public class PoolAppFrame extends JFrame {
 
         JPanel navigationPanel = new JPanel(new GridLayout(0, 1, 12, 12));
         navigationPanel.setBorder(BorderFactory.createTitledBorder("View Options"));
+        loadFavorites();
         JButton customerDetailsButton = new JButton("Customer Details");
         JButton customersButton = new JButton("Customers");
         JButton statementsButton = new JButton("Statements");
@@ -625,22 +656,32 @@ public class PoolAppFrame extends JFrame {
         pdfButton.setFont(pdfButton.getFont().deriveFont(Font.BOLD, 14f));
         employeesButton.setFont(employeesButton.getFont().deriveFont(Font.BOLD, 14f));
         if (canAccessScreen("CustomerDetails")) {
-            navigationPanel.add(customerDetailsButton);
+            navigationPanel.add(withStar("CustomerDetails", customerDetailsButton));
         }
         if (canAccessScreen("Customers")) {
-            navigationPanel.add(customersButton);
+            navigationPanel.add(withStar("Customers", customersButton));
         }
         if (canAccessScreen("Statements")) {
-            navigationPanel.add(statementsButton);
+            navigationPanel.add(withStar("Statements", statementsButton));
+            JButton monthlyStatementButton = new JButton("Monthly Statement");
+            monthlyStatementButton.setFont(monthlyStatementButton.getFont().deriveFont(Font.BOLD, 14f));
+            monthlyStatementButton.addActionListener(e -> runMonthlyStatement());
+            navigationPanel.add(withStar("MonthlyStatement", monthlyStatementButton));
+        }
+        if (canAccessScreen("ChargedSummary")) {
+            JButton chargedSummaryButton = new JButton("Charged Summary");
+            chargedSummaryButton.setFont(chargedSummaryButton.getFont().deriveFont(Font.BOLD, 14f));
+            chargedSummaryButton.addActionListener(e -> showScreen("ChargedSummary"));
+            navigationPanel.add(withStar("ChargedSummary", chargedSummaryButton));
         }
         if (canAccessScreen("RevenueSummary")) {
-            navigationPanel.add(revenueSummaryButton);
+            navigationPanel.add(withStar("RevenueSummary", revenueSummaryButton));
         }
         if (canAccessScreen("PDF")) {
-            navigationPanel.add(pdfButton);
+            navigationPanel.add(withStar("PDF", pdfButton));
         }
         if (canAccessScreen("Employees")) {
-            navigationPanel.add(employeesButton);
+            navigationPanel.add(withStar("Employees", employeesButton));
         }
 
         cardPanel.add(formPanel, "CustomerDetails");
@@ -648,6 +689,7 @@ public class PoolAppFrame extends JFrame {
         cardPanel.add(recordPanel, "Statements");
         cardPanel.add(revenuePanel, "RevenueSummary");
         cardPanel.add(createPdfPanel(), "PDF");
+        cardPanel.add(createChargedSummaryPanel(), "ChargedSummary");
         cardPanel.add(employeesPanel, "Employees");
 
         JPanel contentPanel = new JPanel(new BorderLayout(8, 8));
@@ -749,48 +791,188 @@ public class PoolAppFrame extends JFrame {
         if ("Statements".equals(screenName) && activeRecordCustomerId != null && !activeRecordCustomerId.isBlank()) {
             loadStatementRecordsForCustomer(activeRecordCustomerId);
         }
+        if ("ChargedSummary".equals(screenName)) {
+            refreshChargedSummary();
+        }
         updateMiniTabs(screenName);
     }
 
-    private void updateMiniTabs(String currentScreen) {
+    private static final String[][] FAVORITE_ITEMS = {
+        {"CustomerDetails", "Customer Details"}, {"Customers", "Customers"}, {"Statements", "Statements"},
+        {"MonthlyStatement", "Monthly Statement"}, {"ChargedSummary", "Charged Summary"},
+        {"RevenueSummary", "Revenue Summary"}, {"PDF", "PDF"}, {"Employees", "Employees"}
+    };
+
+    private java.util.prefs.Preferences favoritePrefs() {
+        return java.util.prefs.Preferences.userNodeForPackage(PoolAppFrame.class);
+    }
+
+    private String favoritesKey() {
+        String scope = employeeProfile != null
+                ? "emp:" + employeeProfile.getUsername() + "@" + employeeProfile.getCompanyName()
+                : companyProfile != null ? "co:" + companyProfile.getCompanyName() : "default";
+        return "favorites." + Integer.toHexString(scope.hashCode());
+    }
+
+    private void loadFavorites() {
+        favoriteIds.clear();
+        String saved = favoritePrefs().get(favoritesKey(), "");
+        for (String id : saved.split(",")) {
+            if (!id.isBlank() && !favoriteIds.contains(id)) {
+                favoriteIds.add(id);
+            }
+        }
+    }
+
+    private void saveFavorites() {
+        favoritePrefs().put(favoritesKey(), String.join(",", favoriteIds));
+    }
+
+    private JComponent withStar(String id, JButton button) {
+        button.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        button.setAlignmentX(1f);
+        button.setAlignmentY(0f);
+        JButton star = new JButton();
+        star.setBorderPainted(false);
+        star.setContentAreaFilled(false);
+        star.setFocusPainted(false);
+        star.setMargin(new java.awt.Insets(0, 0, 0, 0));
+        star.setFont(new Font("Segoe UI Symbol", Font.PLAIN, 16));
+        star.setToolTipText("Mark as favorite (shows in Quick Switch)");
+        Dimension size = new Dimension(24, 24);
+        star.setPreferredSize(size);
+        star.setMaximumSize(size);
+        star.setAlignmentX(1f);
+        star.setAlignmentY(0f);
+        star.addActionListener(e -> {
+            if (!favoriteIds.remove(id)) {
+                favoriteIds.add(id);
+            }
+            saveFavorites();
+            updateStar(id);
+            updateMiniTabs(currentScreen);
+        });
+        starButtons.put(id, star);
+        updateStar(id);
+        JPanel holder = new JPanel();
+        holder.setLayout(new OverlayLayout(holder));
+        holder.add(star);
+        holder.add(button);
+        return holder;
+    }
+
+    private void updateStar(String id) {
+        JButton star = starButtons.get(id);
+        if (star == null) {
+            return;
+        }
+        boolean favorite = favoriteIds.contains(id);
+        star.setText(favorite ? "\u2605" : "\u2606");
+        star.setForeground(favorite ? new Color(0xE0A800) : Color.GRAY);
+    }
+
+    private void updateMiniTabs(String screen) {
+        currentScreen = screen == null ? "" : screen;
         miniTabsPanel.removeAll();
         miniTabsPanel.setLayout(new GridLayout(0, 1, 6, 6));
-
-        if (canAccessScreen("CustomerDetails") && !"CustomerDetails".equals(currentScreen)) {
-            JButton tab = new JButton("Customer Details");
-            tab.addActionListener(e -> showScreen("CustomerDetails"));
+        for (String id : favoriteIds) {
+            String label = null;
+            for (String[] item : FAVORITE_ITEMS) {
+                if (item[0].equals(id)) {
+                    label = item[1];
+                }
+            }
+            boolean isAction = "MonthlyStatement".equals(id);
+            boolean allowed = isAction ? canAccessScreen("Statements") : canAccessScreen(id);
+            if (label == null || !allowed || (!isAction && id.equals(currentScreen))) {
+                continue;
+            }
+            JButton tab = new JButton(label);
+            if (isAction) {
+                tab.addActionListener(e -> runMonthlyStatement());
+            } else {
+                tab.addActionListener(e -> showScreen(id));
+            }
             miniTabsPanel.add(tab);
         }
-        if (canAccessScreen("Customers") && !"Customers".equals(currentScreen)) {
-            JButton tab = new JButton("Customers");
-            tab.addActionListener(e -> showScreen("Customers"));
-            miniTabsPanel.add(tab);
+        if (miniTabsPanel.getComponentCount() == 0) {
+            JLabel hint = new JLabel("<html>Click the star on a<br>view option to pin it here.</html>");
+            hint.setForeground(Color.GRAY);
+            miniTabsPanel.add(hint);
         }
-        if (canAccessScreen("RevenueSummary") && !"RevenueSummary".equals(currentScreen)) {
-            JButton tab = new JButton("Revenue Summary");
-            tab.addActionListener(e -> showScreen("RevenueSummary"));
-            miniTabsPanel.add(tab);
-        }
-        if (canAccessScreen("Statements") && !"Statements".equals(currentScreen)) {
-            JButton tab = new JButton("Statements");
-            tab.addActionListener(e -> showScreen("Statements"));
-            miniTabsPanel.add(tab);
-        }
-        if (canAccessScreen("PDF") && !"PDF".equals(currentScreen)) {
-            JButton tab = new JButton("PDF");
-            tab.addActionListener(e -> showScreen("PDF"));
-            miniTabsPanel.add(tab);
-        }
-        if (canAccessScreen("Employees") && !"Employees".equals(currentScreen)) {
-            JButton tab = new JButton("Employees");
-            tab.addActionListener(e -> showScreen("Employees"));
-            miniTabsPanel.add(tab);
-        }
-
         miniTabsPanel.revalidate();
         miniTabsPanel.repaint();
     }
 
+    private JPanel createChargedSummaryPanel() {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        JLabel title = new JLabel("Charged Summary - active customers with a balance above $0.00");
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 15f));
+        JButton refresh = new JButton("Refresh");
+        refresh.addActionListener(e -> refreshChargedSummary());
+        JPanel top = new JPanel(new BorderLayout());
+        top.add(title, BorderLayout.WEST);
+        top.add(refresh, BorderLayout.EAST);
+        panel.add(top, BorderLayout.NORTH);
+        JTable table = new JTable(chargedModel);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+        panel.add(chargedTotalLabel, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private void refreshChargedSummary() {
+        chargedTotalLabel.setText("Loading balances...");
+        List<Customer> active = new ArrayList<>();
+        for (Customer customer : filterAccessibleCustomers(dbManager.getAllCustomers())) {
+            if (customer.isActive()) {
+                active.add(customer);
+            }
+        }
+        new SwingWorker<List<Object[]>, Void>() {
+            @Override
+            protected List<Object[]> doInBackground() throws Exception {
+                java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+                try {
+                    List<java.util.concurrent.Future<BigDecimal>> futures = new ArrayList<>();
+                    for (Customer customer : active) {
+                        futures.add(pool.submit(() -> dbManager.getStatementBalance(customer.getId())));
+                    }
+                    List<Object[]> rows = new ArrayList<>();
+                    for (int i = 0; i < active.size(); i++) {
+                        BigDecimal balance = futures.get(i).get();
+                        if (balance.signum() > 0) {
+                            rows.add(new Object[]{active.get(i), balance});
+                        }
+                    }
+                    rows.sort((x, y) -> ((BigDecimal) y[1]).compareTo((BigDecimal) x[1]));
+                    return rows;
+                } finally {
+                    pool.shutdown();
+                }
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    List<Object[]> rows = get();
+                    chargedModel.setRowCount(0);
+                    BigDecimal total = BigDecimal.ZERO;
+                    for (Object[] row : rows) {
+                        Customer customer = (Customer) row[0];
+                        BigDecimal balance = (BigDecimal) row[1];
+                        total = total.add(balance);
+                        chargedModel.addRow(new Object[]{customer.getFullName(), customer.getId(),
+                                "$" + balance.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString()});
+                    }
+                    chargedTotalLabel.setText(rows.size() + " customer(s) - Total owed: $"
+                            + total.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
+                } catch (Exception e) {
+                    chargedTotalLabel.setText("Unable to load balances: " + e.getMessage());
+                }
+            }
+        }.execute();
+    }
     private void refreshDetailCustomerList() {
         customersById.clear();
         customersById.addAll(filterAccessibleCustomers(dbManager.getAllCustomersOrderedById()));
@@ -856,6 +1038,8 @@ public class PoolAppFrame extends JFrame {
         dayCombo.setSelectedItem(customer.getServiceDay());
         amountField.setText("$" + customer.getAmountCharged().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
         notesArea.setText(customer.getNotes());
+        startingDateField.setText(customer.getStartingDate());
+        statusCombo.setSelectedItem(customer.getStatus());
     }
 
     private void searchCustomerInDetails() {
@@ -949,6 +1133,8 @@ public class PoolAppFrame extends JFrame {
                 return employeeProfile.isCanViewRevenueSummary();
             case "PDF":
                 return employeeProfile.isCanViewPdf();
+            case "ChargedSummary":
+                return employeeProfile.isCanViewStatements();
             case "Employees":
                 return false;
             default:
@@ -993,6 +1179,8 @@ public class PoolAppFrame extends JFrame {
         phoneField.setEditable(false);
         emailField.setEditable(false);
         dayCombo.setEnabled(false);
+        startingDateField.setEditable(false);
+        statusCombo.setEnabled(false);
         amountField.setEditable(false);
         notesArea.setEditable(false);
     }
@@ -1231,6 +1419,10 @@ public class PoolAppFrame extends JFrame {
         String zip = zipField.getText().trim();
         String serviceDay = Objects.toString(dayCombo.getSelectedItem(), "Monday");
         String notes = notesArea.getText().trim();
+        String startingDate = startingDateField.getText().trim();
+        if (!startingDate.isEmpty() && !isValidDate(startingDate)) {
+            throw new IllegalArgumentException("Starting date must be a real date in MM/DD/YYYY format.");
+        }
 
         if (firstName.isBlank() || lastName.isBlank()) {
             throw new IllegalArgumentException("First name and last name are required.");
@@ -1261,7 +1453,19 @@ public class PoolAppFrame extends JFrame {
             throw new IllegalArgumentException("Amount must be a valid number.");
         }
 
-        return new Customer(id, firstName, lastName, address, city, state, zip, phone, email, serviceDay, amount, notes);
+        Customer built = new Customer(id, firstName, lastName, address, city, state, zip, phone, email, serviceDay, amount, notes);
+        built.setStartingDate(startingDate);
+        built.setStatus(Objects.toString(statusCombo.getSelectedItem(), "Active"));
+        return built;
+    }
+
+    private static boolean isValidDate(String text) {
+        try {
+            LocalDate.parse(text, DATE_FORMAT);
+            return true;
+        } catch (java.time.format.DateTimeParseException e) {
+            return false;
+        }
     }
 
     private void clearForm() {
@@ -1280,6 +1484,8 @@ public class PoolAppFrame extends JFrame {
         dayCombo.setSelectedIndex(0);
         amountField.setText("$0.00");
         notesArea.setText("");
+        startingDateField.setText("");
+        statusCombo.setSelectedIndex(0);
         customerTable.clearSelection();
         currentCustomerIndex = -1;
         updateNavigationButtons();
@@ -2123,7 +2329,8 @@ public class PoolAppFrame extends JFrame {
             }
             document.addPage(page);
             
-            try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
+            PDPageContentStream contentStream = new PDPageContentStream(document, page);
+            try {
                 float marginLeft = pdfSettings.getMarginLeft();
                 float marginRight = pdfSettings.getMarginRight();
                 float marginTop = pdfSettings.getMarginTop();
@@ -2246,39 +2453,11 @@ public class PoolAppFrame extends JFrame {
                 float typeColX = tableX + (tableWidth * 0.35f);
                 float amountColX = tableX + (tableWidth * 0.75f);
                 
-                if (pdfSettings.isShowTableBorders()) {
-                    contentStream.setStrokingColor(pdfSettings.getTableBorderColorAsColor());
-                    contentStream.setLineWidth(0.5f);
-                    
-                    // Draw table borders
-                    float tableStartY = yPosition + 5;
-                    float tableEndY = yPosition - (records.size() * (pdfSettings.getBodySize() + 2)) - 10;
-                    contentStream.moveTo(tableX, tableStartY);
-                    contentStream.lineTo(tableX + tableWidth, tableStartY);
-                    contentStream.stroke();
-                    
-                    contentStream.moveTo(tableX, tableEndY);
-                    contentStream.lineTo(tableX + tableWidth, tableEndY);
-                    contentStream.stroke();
-                    
-                    // Vertical lines
-                    contentStream.moveTo(tableX, tableStartY);
-                    contentStream.lineTo(tableX, tableEndY);
-                    contentStream.stroke();
-                    
-                    contentStream.moveTo(tableX + (tableWidth * 0.33f), tableStartY);
-                    contentStream.lineTo(tableX + (tableWidth * 0.33f), tableEndY);
-                    contentStream.stroke();
-                    
-                    contentStream.moveTo(tableX + (tableWidth * 0.72f), tableStartY);
-                    contentStream.lineTo(tableX + (tableWidth * 0.72f), tableEndY);
-                    contentStream.stroke();
-                    
-                    contentStream.moveTo(tableX + tableWidth, tableStartY);
-                    contentStream.lineTo(tableX + tableWidth, tableEndY);
-                    contentStream.stroke();
-                }
-                
+                float tableStartY = yPosition + 5;
+                float bottomLimit = 100;
+                float topStart = pageHeight - marginTop;
+                float rowHeight = pdfSettings.getBodySize() + 2;
+
                 contentStream.beginText();
                 contentStream.newLineAtOffset(dateColX, yPosition);
                 contentStream.showText("Date");
@@ -2299,10 +2478,22 @@ public class PoolAppFrame extends JFrame {
                 BigDecimal totalBalance = BigDecimal.ZERO;
                 
                 for (StatementRecord record : records) {
-                    if (yPosition < 100) {
-                        // If we're running out of space, we could add another page here
-                        // For now, we'll just continue (records might get cut off)
-                        break;
+                    if (yPosition < bottomLimit) {
+                        if (pdfSettings.isShowTableBorders()) {
+                            drawTableBorders(contentStream, tableX, tableWidth, tableStartY, yPosition + rowHeight - 4);
+                        }
+                        drawStatementFooter(contentStream, contentLeft, contentWidth);
+                        contentStream.close();
+                        page = new PDPage(pageSize);
+                        if (pdfSettings.isLandscape()) {
+                            page.setRotation(90);
+                        }
+                        document.addPage(page);
+                        contentStream = new PDPageContentStream(document, page);
+                        yPosition = topStart;
+                        tableStartY = yPosition + 5;
+                        contentStream.setFont(bodyFont, pdfSettings.getBodySize());
+                        contentStream.setNonStrokingColor(pdfSettings.getBodyColorAsColor());
                     }
                     
                     contentStream.beginText();
@@ -2325,30 +2516,62 @@ public class PoolAppFrame extends JFrame {
                     yPosition -= pdfSettings.getBodySize() + 2;
                 }
                 
+                if (pdfSettings.isShowTableBorders()) {
+                    drawTableBorders(contentStream, tableX, tableWidth, tableStartY, yPosition + rowHeight - 4);
+                }
+
                 // Total Balance
+                if (yPosition < bottomLimit) {
+                    drawStatementFooter(contentStream, contentLeft, contentWidth);
+                    contentStream.close();
+                    page = new PDPage(pageSize);
+                    if (pdfSettings.isLandscape()) {
+                        page.setRotation(90);
+                    }
+                    document.addPage(page);
+                    contentStream = new PDPageContentStream(document, page);
+                    yPosition = topStart;
+                }
                 yPosition -= 10;
                 contentStream.setFont(headerFont, pdfSettings.getHeaderSize());
                 contentStream.setNonStrokingColor(pdfSettings.getHeaderColorAsColor());
                 drawCenteredText(contentStream, headerFont, pdfSettings.getHeaderSize(), "Total Balance: $" + totalBalance.setScale(2, java.math.RoundingMode.HALF_UP), contentLeft, contentWidth, yPosition);
                 
-                // Footer
-                PDFont footerFont = getFont(pdfSettings.getFooterFont());
-                contentStream.setFont(footerFont, pdfSettings.getFooterSize());
-                contentStream.setNonStrokingColor(pdfSettings.getFooterColorAsColor());
-                
-                if (!pdfSettings.getFooterText().isBlank()) {
-                    drawCenteredText(contentStream, footerFont, pdfSettings.getFooterSize(), pdfSettings.getFooterText(), contentLeft, contentWidth, 50);
-                }
-                
-                if (pdfSettings.isShowGenerationDate()) {
-                    drawCenteredText(contentStream, footerFont, pdfSettings.getFooterSize(), "Generated on " + LocalDate.now().format(DateTimeFormatter.ofPattern("MM/dd/yyyy")), contentLeft, contentWidth, 30);
-                }
+                drawStatementFooter(contentStream, contentLeft, contentWidth);
+            } finally {
+                contentStream.close();
             }
-            
+
             if (pdfFile.exists()) {
                 pdfFile.delete();
             }
             document.save(pdfFile);
+        }
+    }
+
+    private void drawTableBorders(PDPageContentStream cs, float x, float width, float startY, float endY) throws IOException {
+        cs.setStrokingColor(pdfSettings.getTableBorderColorAsColor());
+        cs.setLineWidth(0.5f);
+        cs.moveTo(x, startY);
+        cs.lineTo(x + width, startY);
+        cs.moveTo(x, endY);
+        cs.lineTo(x + width, endY);
+        for (float f : new float[] {0f, 0.33f, 0.72f, 1f}) {
+            cs.moveTo(x + width * f, startY);
+            cs.lineTo(x + width * f, endY);
+        }
+        cs.stroke();
+    }
+
+    private void drawStatementFooter(PDPageContentStream contentStream, float contentLeft, float contentWidth) throws IOException {
+        PDFont footerFont = getFont(pdfSettings.getFooterFont());
+        contentStream.setFont(footerFont, pdfSettings.getFooterSize());
+        contentStream.setNonStrokingColor(pdfSettings.getFooterColorAsColor());
+        if (!pdfSettings.getFooterText().isBlank()) {
+            drawCenteredText(contentStream, footerFont, pdfSettings.getFooterSize(), pdfSettings.getFooterText(), contentLeft, contentWidth, 50);
+        }
+        if (pdfSettings.isShowGenerationDate()) {
+            drawCenteredText(contentStream, footerFont, pdfSettings.getFooterSize(), "Generated on " + LocalDate.now().format(DateTimeFormatter.ofPattern("MM/dd/yyyy")), contentLeft, contentWidth, 30);
         }
     }
 
@@ -2629,7 +2852,7 @@ public class PoolAppFrame extends JFrame {
         }
         activeRecordCustomerId = customer.getId();
         recordCustomerLabel.setText("Customer: " + customer.getFullName());
-        recordDateField.setText(LocalDate.now().format(DateTimeFormatter.ofPattern("MM/dd/yyyy")));
+        recordDateField.setText(LocalDate.now().format(DATE_FORMAT));
         recordTypeCombo.setSelectedIndex(0);
         recordAmountField.setText("$0.00");
         loadStatementRecordsForCustomer(customer.getId());
@@ -2660,7 +2883,11 @@ public class PoolAppFrame extends JFrame {
         }
         
         String rawAmount = recordAmountField.getText().trim().replaceAll("[^0-9.-]+", "");
-        if (date.isBlank() || rawAmount.isBlank() || rawAmount.equals("-") || rawAmount.equals("+")) {
+        if (!isValidDate(date)) {
+            JOptionPane.showMessageDialog(this, "Enter a real date in MM/DD/YYYY format.", "Validation", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if (rawAmount.isBlank() || rawAmount.equals("-") || rawAmount.equals("+")) {
             JOptionPane.showMessageDialog(this, "Enter both date and amount for the record.", "Validation", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
@@ -2677,6 +2904,67 @@ public class PoolAppFrame extends JFrame {
         dbManager.addStatementRecord(activeRecordCustomerId, date, type, amount);
         loadStatementRecordsForCustomer(activeRecordCustomerId);
         recordAmountField.setText("$0.00");
+    }
+
+    private void runMonthlyStatement() {
+        if (!canEditStatementData()) {
+            JOptionPane.showMessageDialog(this, "You have view-only access for statement data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        List<String> creditTypes = new ArrayList<>();
+        for (String type : dbManager.getRecordTypes()) {
+            if (classifyRecordType(type) == RecordTypeCategory.CREDIT) {
+                creditTypes.add(type);
+            }
+        }
+        creditTypes.sort(String.CASE_INSENSITIVE_ORDER);
+        if (creditTypes.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No credit types are saved for this company.", "Monthly Statement", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        Object choice = JOptionPane.showInputDialog(this, "Select the credit type to charge:", "Monthly Statement",
+                JOptionPane.QUESTION_MESSAGE, null, creditTypes.toArray(), creditTypes.get(0));
+        if (choice == null) {
+            return;
+        }
+        String type = choice.toString();
+        List<Customer> active = new ArrayList<>();
+        for (Customer customer : filterAccessibleCustomers(dbManager.getAllCustomers())) {
+            if (customer.isActive()) {
+                active.add(customer);
+            }
+        }
+        String date = LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()).format(DATE_FORMAT);
+        if (active.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "There are no active customers.", "Monthly Statement", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Add a \"" + type + "\" record dated " + date + " to " + active.size() + " active customer(s)?",
+                "Monthly Statement", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION) {
+            return;
+        }
+        int added = 0;
+        List<String> failed = new ArrayList<>();
+        for (Customer customer : active) {
+            try {
+                dbManager.addStatementRecord(customer.getId(), date, type,
+                        customer.getAmountCharged().setScale(2, java.math.RoundingMode.HALF_UP));
+                added++;
+            } catch (Exception e) {
+                failed.add(customer.getFullName());
+            }
+        }
+        if (activeRecordCustomerId != null && !activeRecordCustomerId.isBlank()) {
+            loadStatementRecordsForCustomer(activeRecordCustomerId);
+        }
+        String message = "Added " + added + " record(s) dated " + date + ".";
+        if (!failed.isEmpty()) {
+            message += "\nFailed for: " + String.join(", ", failed);
+        }
+        JOptionPane.showMessageDialog(this, message, "Monthly Statement",
+                failed.isEmpty() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE);
     }
 
     private String promptForCheckNumber() {
@@ -3159,6 +3447,9 @@ public class PoolAppFrame extends JFrame {
         }
         BigDecimal totalRevenue = BigDecimal.ZERO.setScale(2, java.math.RoundingMode.HALF_UP);
         for (Customer customer : accessibleCustomers) {
+            if (!customer.isActive()) {
+                continue;
+            }
             BigDecimal amount = customer.getAmountCharged().setScale(2, java.math.RoundingMode.HALF_UP);
             String day = customer.getServiceDay() == null ? "Unknown" : customer.getServiceDay();
             revenueByDay.put(day, revenueByDay.getOrDefault(day, BigDecimal.ZERO.setScale(2, java.math.RoundingMode.HALF_UP)).add(amount));
@@ -3421,6 +3712,38 @@ public class PoolAppFrame extends JFrame {
 
         EmployeeProfile getEmployeeProfile() {
             return employeeProfile;
+        }
+    }
+
+    private static class DateFilter extends DocumentFilter {
+        private static String format(String text) {
+            String digits = text.replaceAll("\\D", "");
+            if (digits.length() > 8) digits = digits.substring(0, 8);
+            StringBuilder out = new StringBuilder(digits);
+            if (digits.length() > 4) out.insert(4, '/');
+            if (digits.length() > 2) out.insert(2, '/');
+            return out.toString();
+        }
+
+        private void apply(FilterBypass fb, int offset, int length, String text, javax.swing.text.AttributeSet attrs) throws javax.swing.text.BadLocationException {
+            String current = fb.getDocument().getText(0, fb.getDocument().getLength());
+            String next = current.substring(0, offset) + (text == null ? "" : text) + current.substring(offset + length);
+            fb.replace(0, current.length(), format(next), attrs);
+        }
+
+        @Override
+        public void insertString(FilterBypass fb, int offset, String string, javax.swing.text.AttributeSet attr) throws javax.swing.text.BadLocationException {
+            apply(fb, offset, 0, string, attr);
+        }
+
+        @Override
+        public void replace(FilterBypass fb, int offset, int length, String text, javax.swing.text.AttributeSet attrs) throws javax.swing.text.BadLocationException {
+            apply(fb, offset, length, text, attrs);
+        }
+
+        @Override
+        public void remove(FilterBypass fb, int offset, int length) throws javax.swing.text.BadLocationException {
+            apply(fb, offset, length, "", null);
         }
     }
 

@@ -148,7 +148,9 @@ public class DatabaseManager {
                     + "email TEXT,"
                     + "service_day TEXT,"
                     + "amount_charged REAL,"
-                    + "notes TEXT"
+                    + "notes TEXT,"
+                    + "starting_date TEXT DEFAULT '',"
+                    + "status TEXT DEFAULT 'Active'"
                     + ");");
             statement.execute("CREATE TABLE IF NOT EXISTS statement_records ("
                     + "record_id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -169,6 +171,8 @@ public class DatabaseManager {
             addColumnIfMissing(connection, "customers", "city", "TEXT");
             addColumnIfMissing(connection, "customers", "state", "TEXT");
             addColumnIfMissing(connection, "customers", "zip", "TEXT");
+            addColumnIfMissing(connection, "customers", "starting_date", "TEXT DEFAULT ''");
+            addColumnIfMissing(connection, "customers", "status", "TEXT DEFAULT 'Active'");
         } catch (SQLException e) {
             throw new RuntimeException("Failed to initialize database", e);
         }
@@ -211,7 +215,7 @@ public class DatabaseManager {
             apiPost("/v1/customers", customerJson(customer));
             return;
         }
-        String sql = "INSERT INTO customers (customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO customers (customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, customer.getId());
             statement.setString(2, customer.getFirstName());
@@ -225,6 +229,8 @@ public class DatabaseManager {
             statement.setString(10, customer.getServiceDay());
             statement.setBigDecimal(11, customer.getAmountCharged());
             statement.setString(12, customer.getNotes());
+            statement.setString(13, customer.getStartingDate());
+            statement.setString(14, customer.getStatus());
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Unable to add customer", e);
@@ -236,7 +242,7 @@ public class DatabaseManager {
             apiPut("/v1/customers/" + encodePath(customer.getId()), customerJson(customer));
             return;
         }
-        String sql = "UPDATE customers SET first_name = ?, last_name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, email = ?, service_day = ?, amount_charged = ?, notes = ? WHERE customer_id = ?";
+        String sql = "UPDATE customers SET first_name = ?, last_name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, email = ?, service_day = ?, amount_charged = ?, notes = ?, starting_date = ?, status = ? WHERE customer_id = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, customer.getFirstName());
             statement.setString(2, customer.getLastName());
@@ -249,7 +255,9 @@ public class DatabaseManager {
             statement.setString(9, customer.getServiceDay());
             statement.setBigDecimal(10, customer.getAmountCharged());
             statement.setString(11, customer.getNotes());
-            statement.setString(12, customer.getId());
+            statement.setString(12, customer.getStartingDate());
+            statement.setString(13, customer.getStatus());
+            statement.setString(14, customer.getId());
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Unable to update customer", e);
@@ -351,6 +359,27 @@ public class DatabaseManager {
     }
 
     public List<StatementRecord> getStatementRecords(String customerId) {
+        List<StatementRecord> records = loadStatementRecords(customerId);
+        records.sort(java.util.Comparator
+                .comparing((StatementRecord r) -> parseRecordDate(r.getDate()))
+                .thenComparing(r -> r.getAmount().signum() >= 0 ? 0 : 1)
+                .thenComparingLong(StatementRecord::getId));
+        return records;
+    }
+
+    private static java.time.LocalDate parseRecordDate(String text) {
+        try {
+            String[] p = text.trim().split("/");
+            int a = Integer.parseInt(p[0]);
+            int b = Integer.parseInt(p[1]);
+            int year = Integer.parseInt(p[2]);
+            return java.time.LocalDate.of(year, a, b);
+        } catch (Exception e) {
+            return java.time.LocalDate.MAX;
+        }
+    }
+
+    private List<StatementRecord> loadStatementRecords(String customerId) {
         if (isRemote()) return remoteStatements(CompManagerApiClient.array(apiGet("/v1/customers/" + encodePath(customerId) + "/statements")));
         String sql = "SELECT record_id, record_date, type, amount FROM statement_records WHERE customer_id = ? ORDER BY record_id";
         List<StatementRecord> records = new ArrayList<>();
@@ -478,7 +507,7 @@ public class DatabaseManager {
             }
             return result;
         }
-        String sql = "SELECT service_day, SUM(amount_charged) AS total FROM customers GROUP BY service_day";
+        String sql = "SELECT service_day, SUM(amount_charged) AS total FROM customers WHERE COALESCE(status, 'Active') <> 'Inactive' GROUP BY service_day";
         Map<String, BigDecimal> revenue = new HashMap<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
             while (resultSet.next()) {
@@ -494,7 +523,7 @@ public class DatabaseManager {
 
     public BigDecimal getTotalRevenue() {
         if (isRemote()) return BigDecimal.valueOf(CompManagerApiClient.object(apiGet("/v1/revenue")).optDouble("total", 0)).setScale(2, RoundingMode.HALF_UP);
-        String sql = "SELECT SUM(amount_charged) AS total FROM customers";
+        String sql = "SELECT SUM(amount_charged) AS total FROM customers WHERE COALESCE(status, 'Active') <> 'Inactive'";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
             if (resultSet.next()) {
                 double total = resultSet.getDouble("total");
@@ -519,7 +548,9 @@ public class DatabaseManager {
                 .put("email", customer.getEmail())
                 .put("service_day", customer.getServiceDay())
                 .put("amount_charged", customer.getAmountCharged())
-                .put("notes", customer.getNotes());
+                .put("notes", customer.getNotes())
+                .put("starting_date", customer.getStartingDate())
+                .put("status", customer.getStatus());
     }
 
     private List<Customer> remoteCustomers(JSONArray rows) {
@@ -529,10 +560,13 @@ public class DatabaseManager {
     }
 
     private Customer remoteCustomer(JSONObject row) {
-        return new Customer(row.optString("customer_id"), row.optString("first_name"), row.optString("last_name"),
+        Customer customer = new Customer(row.optString("customer_id"), row.optString("first_name"), row.optString("last_name"),
                 row.optString("address"), row.optString("city"), row.optString("state"), row.optString("zip"),
                 row.optString("phone"), row.optString("email"), row.optString("service_day"),
                 BigDecimal.valueOf(row.optDouble("amount_charged", 0)).setScale(2, RoundingMode.HALF_UP), row.optString("notes"));
+        customer.setStartingDate(row.optString("starting_date", ""));
+        customer.setStatus(row.optString("status", "Active"));
+        return customer;
     }
 
     private List<StatementRecord> remoteStatements(JSONArray rows) {
@@ -575,7 +609,10 @@ public class DatabaseManager {
         String serviceDay = resultSet.getString("service_day");
         BigDecimal amount = BigDecimal.valueOf(resultSet.getDouble("amount_charged")).setScale(2, RoundingMode.HALF_UP);
         String notes = resultSet.getString("notes");
-        return new Customer(id, firstName, lastName, address, city, state, zip, phone, email, serviceDay, amount, notes);
+        Customer customer = new Customer(id, firstName, lastName, address, city, state, zip, phone, email, serviceDay, amount, notes);
+        customer.setStartingDate(resultSet.getString("starting_date"));
+        customer.setStatus(resultSet.getString("status"));
+        return customer;
     }
 
     public List<String> getRecordTypes() {

@@ -110,6 +110,8 @@ public class MasterDashboardFrame extends JFrame {
         JButton deleteButton = new JButton("Delete Company");
         JButton companyViewButton = new JButton("Company View");
         JButton packageButton = createPackageButton();
+        JButton phoneLinkButton = new JButton("Phone Web App Link");
+        phoneLinkButton.addActionListener(e -> showPhoneLink());
         JButton logoutButton = new JButton("Logout");
 
         addButton.addActionListener(e -> openCompanyEditor(null));
@@ -123,12 +125,61 @@ public class MasterDashboardFrame extends JFrame {
         buttonPanel.add(deleteButton);
         buttonPanel.add(companyViewButton);
         buttonPanel.add(packageButton);
+        buttonPanel.add(phoneLinkButton);
         buttonPanel.add(logoutButton);
         root.add(buttonPanel, BorderLayout.SOUTH);
 
         return root;
     }
 
+    private void showPhoneLink() {
+        String url = com.poolapp.db.AppApiConfiguration.getWebAppUrl();
+        JDialog dialog = new JDialog(this, "Phone Web App Link", true);
+        JTextField field = new JTextField(url, 34);
+        field.setEditable(false);
+        JLabel status = new JLabel(" ");
+        JButton copy = new JButton("Copy Link");
+        JButton open = new JButton("Open in Browser");
+        JButton close = new JButton("Close");
+        copy.addActionListener(e -> {
+            try {
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(url), null);
+                status.setText("Link copied to the clipboard.");
+            } catch (Exception ex) {
+                field.requestFocusInWindow();
+                field.selectAll();
+                status.setText("Copy failed - press Ctrl+C to copy the selected link.");
+            }
+        });
+        open.addActionListener(e -> {
+            try {
+                if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                    Desktop.getDesktop().browse(java.net.URI.create(url));
+                } else {
+                    new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url).start();
+                }
+            } catch (Exception ex) {
+                status.setText("Unable to open browser: " + ex.getMessage());
+            }
+        });
+        close.addActionListener(e -> dialog.dispose());
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
+        buttons.add(copy);
+        buttons.add(open);
+        buttons.add(close);
+        JPanel panel = new JPanel(new BorderLayout(6, 6));
+        panel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        panel.add(new JLabel("<html>Send this link to phones. Open it in the browser, log in with the same<br>username and password, and use \"Add to Home Screen\".</html>"), BorderLayout.NORTH);
+        JPanel center = new JPanel(new BorderLayout(4, 4));
+        center.add(field, BorderLayout.NORTH);
+        center.add(status, BorderLayout.SOUTH);
+        panel.add(center, BorderLayout.CENTER);
+        panel.add(buttons, BorderLayout.SOUTH);
+        dialog.setContentPane(panel);
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+    }
     private JButton createPackageButton() {
         JButton button = new JButton("Generate App ZIP");
         button.setEnabled(appPackageGenerator.canGenerate());

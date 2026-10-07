@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>Comp Manager</title>
+<style>
+*{box-sizing:border-box}
+:root{--bg:#f1f5f9;--card:#fff;--ink:#0f172a;--mute:#64748b;--brand:#2563eb;--bad:#dc2626;--good:#16a34a;--line:#e2e8f0}
+body{margin:0;font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);-webkit-text-size-adjust:100%}
+header{position:sticky;top:0;z-index:10;background:#0f172a;color:#fff;display:flex;align-items:center;gap:10px;padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top))}
+header h1{font-size:17px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header button{background:#1e293b;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:16px}
+#quick{display:flex;gap:8px;overflow-x:auto;padding:8px 12px;background:#e2e8f0}
+#quick:empty{display:none}
+#quick button{flex:0 0 auto;border:0;background:#fff;border-radius:16px;padding:6px 12px;font-size:14px}
+main{max-width:900px;margin:0 auto;padding:12px;padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+.card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+h2{margin:4px 0 12px;font-size:20px}
+label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+input,select,textarea{width:100%;padding:12px;font-size:16px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:var(--ink)}
+button.b{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:12px 16px;font-size:16px;margin:4px 4px 4px 0}
+button.b.alt{background:#475569}button.b.bad{background:var(--bad)}button.b.ok{background:var(--good)}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 140px}
+.item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border:0}.item .t{flex:1;min-width:0}.item .s{color:var(--mute);font-size:13px}
+.item .t b{display:block;overflow:hidden;text-overflow:ellipsis}
+.pos{color:var(--good)}.neg{color:var(--bad)}
+.err{background:#fee2e2;color:#991b1b;padding:10px;border-radius:8px;margin-bottom:10px}
+.msg{background:#dcfce7;color:#166534;padding:10px;border-radius:8px;margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left}
+td.r,th.r{text-align:right}.scroll{overflow-x:auto}
+.chk{display:flex;align-items:center;gap:8px;margin:6px 0}.chk input{width:auto}
+#drawer{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20;display:none}
+#drawer.open{display:block}
+#drawer nav{background:#fff;width:min(300px,85vw);height:100%;overflow-y:auto;padding:12px;padding-top:calc(12px + env(safe-area-inset-top))}
+#drawer .nv{display:flex;align-items:center;border-bottom:1px solid var(--line)}
+#drawer .nv button.go{flex:1;text-align:left;background:none;border:0;padding:14px 4px;font-size:17px}
+#drawer .nv button.star{background:none;border:0;font-size:22px;color:#f59e0b;padding:8px}
+.hide{display:none}
+#printarea{display:none}
+@media print{body>*:not(#printarea){display:none!important}#printarea{display:block}}
+@media(min-width:760px){#drawer{display:block;position:fixed;right:auto;width:240px;background:none;inset:48px auto 0 0;top:56px}
+ #drawer nav{width:240px}#menuBtn{display:none}body.authed main,body.authed #quick{margin-left:250px;max-width:none}}
+</style>
+</head>
+<body>
+<header><button id="menuBtn" class="hide">&#9776;</button><h1 id="title">Comp Manager</h1><button id="logout" class="hide">Log out</button></header>
+<div id="quick"></div>
+<div id="drawer"><nav id="nav"></nav></div>
+<main id="app"></main>
+<div id="printarea"></div>
+<script>
+"use strict";
+var DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+var PERMS=[["canViewCustomerDetails","View customer details"],["canViewCustomers","View customers"],["canViewStatements","View statements"],["canViewRevenueSummary","View revenue summary"],["canViewPdf","View PDF settings"],["canEditCustomers","Edit customers"],["canEditStatements","Edit statements"],["canEditPdf","Edit PDF settings"]];
+var DEF_CREDIT="payment, paid, credit, refund, discount, adjustment, rebate, deposit, return, transfer in, check, cheque";
+var DEF_DEBIT="cash, bill, charge, service, invoice, fee, debit, purchase, due, owed, repair, labor, parts, materials";
+var S={token:localStorage.getItem("cm.token")||"",account:JSON.parse(localStorage.getItem("cm.account")||"null"),view:"",arg:null,kw:null,master:false};
+var app=document.getElementById("app");
+
+function esc(v){return String(v==null?"":v).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
+function money(n){n=Number(n)||0;return (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+function $(id){return document.getElementById(id)}
+function flash(kind,text){var e=$("flash");if(e)e.innerHTML=text?'<div class="'+kind+'">'+esc(text)+'</div>':""}
+
+async function api(path,opts){
+  opts=opts||{};var h={"Content-Type":"application/json"};
+  if(S.token)h.Authorization="Bearer "+S.token;
+  var r=await fetch(path,{method:opts.method||"GET",headers:h,body:opts.body!==undefined?JSON.stringify(opts.body):undefined});
+  var data=null;try{data=await r.json()}catch(e){}
+  if(!r.ok){
+    if(r.status===401&&S.token&&path.indexOf("/auth/")<0){signOut();throw new Error("Session expired. Please log in again.")}
+    throw new Error((data&&data.error)||("Request failed ("+r.status+")"));
+  }
+  return data;
+}
+function can(p){var a=S.account;if(!a)return false;if(a.role!=="EMPLOYEE")return true;return !!(a.permissions&&a.permissions[p])}
+function isManager(){return S.account&&S.account.role!=="EMPLOYEE"}
+
+/* ---------- dates (MM/dd/yyyy) ---------- */
+function parseDate(s){
+  var m=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec((s||"").trim());if(!m)return null;
+  var mo=+m[1],d=+m[2],y=+m[3],dt=new Date(y,mo-1,d);
+  if(dt.getFullYear()!==y||dt.getMonth()!==mo-1||dt.getDate()!==d)return null;
+  return dt;
+}
+function fmtDate(dt){return String(dt.getMonth()+1).padStart(2,"0")+"/"+String(dt.getDate()).padStart(2,"0")+"/"+dt.getFullYear()}
+function dateInput(el){el.addEventListener("input",function(){
+  var d=el.value.replace(/\D/g,"").slice(0,8),o=d;
+  if(d.length>4)o=d.slice(0,2)+"/"+d.slice(2,4)+"/"+d.slice(4);else if(d.length>2)o=d.slice(0,2)+"/"+d.slice(2);
+  el.value=o});el.setAttribute("inputmode","numeric");el.placeholder="MM/DD/YYYY";el.maxLength=10}
+function cmpRecords(a,b){
+  var da=parseDate(a.record_date),db=parseDate(b.record_date);
+  if(da&&!db)return -1;if(!da&&db)return 1;
+  if(da&&db&&da-db!==0)return da-db;
+  var ca=a.amount>=0?0:1,cb=b.amount>=0?0:1;
+  if(ca!==cb)return ca-cb;
+  return a.record_id-b.record_id;
+}
+
+/* ---------- classification ---------- */
+async function loadKw(){
+  if(S.kw)return S.kw;var s={};
+  if(can("canViewPdf")||isManager()){try{s=await api("/v1/settings")}catch(e){}}
+  S.kw={credit:kwList(s.recordTypeCreditKeywords||DEF_CREDIT),debit:kwList(s.recordTypeDebitKeywords||DEF_DEBIT),settings:s};
+  return S.kw;
+}
+function kwList(v){return String(v).split(/[,\n]/).map(function(x){return x.trim().toLowerCase()}).filter(Boolean)}
+function isCredit(type){
+  var v=(type||"").trim().toLowerCase();if(!v||!S.kw)return false;
+  return S.kw.credit.some(function(k){return v.indexOf(k)>=0});
+}
+
+/* ---------- favorites ---------- */
+var VIEWS=[
+ {id:"customers",label:"Customers",perm:function(){return can("canViewCustomers")||can("canViewCustomerDetails")}},
+ {id:"statements",label:"Statements",perm:function(){return can("canViewStatements")}},
+ {id:"monthly",label:"Monthly Statement",perm:function(){return can("canEditStatements")&&can("canViewStatements")}},
+ {id:"charged",label:"Charged Summary",perm:function(){return can("canViewStatements")}},
+ {id:"revenue",label:"Revenue Summary",perm:function(){return can("canViewRevenueSummary")}},
+ {id:"types",label:"Record Types",perm:function(){return can("canViewStatements")}},
+ {id:"pdf",label:"PDF Settings",perm:function(){return can("canViewPdf")}},
+ {id:"employees",label:"Employees",perm:function(){return isManager()}},
+ {id:"backup",label:"Backup / Restore",perm:function(){return isManager()}}
+];
+function favKey(){var a=S.account||{};return "cm.fav."+a.username+"."+(a.companyId||0)}
+function favs(){try{return JSON.parse(localStorage.getItem(favKey())||"[]")}catch(e){return[]}}
+function toggleFav(id){var f=favs(),i=f.indexOf(id);if(i>=0)f.splice(i,1);else f.push(id);localStorage.setItem(favKey(),JSON.stringify(f));renderChrome()}
+
+function renderChrome(){
+  var on=!!S.token&&!S.master;
+  document.body.classList.toggle("authed",!!S.token);
+  $("menuBtn").classList.toggle("hide",!S.token);$("logout").classList.toggle("hide",!S.token);
+  var nav=$("nav"),qk=$("quick");nav.innerHTML="";qk.innerHTML="";
+  if(!S.token)return;
+  $("drawer").classList.remove("open");
+  if(S.master){
+    nav.innerHTML='<div class="nv"><button class="go" data-go="companies">Companies</button></div>';
+  }else{
+    var fv=favs();
+    VIEWS.filter(function(v){return v.perm()}).forEach(function(v){
+      var d=document.createElement("div");d.className="nv";
+      d.innerHTML='<button class="go" data-go="'+v.id+'">'+esc(v.label)+'</button><button class="star" data-star="'+v.id+'">'+(fv.indexOf(v.id)>=0?"\u2605":"\u2606")+'</button>';
+      nav.appendChild(d);
+    });
+    if(S.account.role==="COMPANY"&&S.account.masterToken){var b=document.createElement("div");b.className="nv";b.innerHTML='<button class="go" data-go="backmaster">\u2190 Back to companies</button>';nav.appendChild(b)}
+    fv.forEach(function(id){var v=VIEWS.filter(function(x){return x.id===id&&x.perm()})[0];if(!v)return;
+      var b=document.createElement("button");b.textContent=v.label;b.setAttribute("data-go",id);qk.appendChild(b)});
+  }
+}
+document.addEventListener("click",function(e){
+  var t=e.target.closest("[data-go],[data-star]");
+  if(t&&t.hasAttribute("data-star")){toggleFav(t.getAttribute("data-star"));$("drawer").classList.add("open");return}
+  if(t&&t.hasAttribute("data-go")){
+    var id=t.getAttribute("data-go");$("drawer").classList.remove("open");
+    if(id==="backmaster")return backToMaster();
+    go(id);return;
+  }
+  if(e.target.id==="drawer")$("drawer").classList.remove("open");
+});
+$("menuBtn").onclick=function(){$("drawer").classList.toggle("open")};
+$("logout").onclick=function(){signOut()};
+
+function signOut(){S.token="";S.account=null;S.kw=null;S.master=false;localStorage.removeItem("cm.token");localStorage.removeItem("cm.account");localStorage.removeItem("cm.master");renderChrome();showLogin()}
+function backToMaster(){
+  var m=JSON.parse(localStorage.getItem("cm.master")||"null");if(!m)return signOut();
+  S.token=m.token;S.account=m.account;S.master=true;S.kw=null;localStorage.setItem("cm.token",S.token);localStorage.setItem("cm.account",JSON.stringify(S.account));
+  renderChrome();go("companies");
+}
+function go(view,arg){
+  S.view=view;S.arg=arg||null;window.scrollTo(0,0);
+  var fn={companies:vCompanies,customers:vCustomers,customer:vCustomer,statements:vPickCustomer,statement:vStatement,monthly:vMonthly,charged:vCharged,revenue:vRevenue,types:vTypes,pdf:vPdf,employees:vEmployees,employee:vEmployee,backup:vBackup,company:vCompany}[view];
+  var v=VIEWS.filter(function(x){return x.id===view})[0];
+  $("title").textContent=(S.account&&S.account.companyName&&!S.master?S.account.companyName+" \u2022 ":"")+(v?v.label:(view==="companies"?"Companies":"Comp Manager"));
+  app.innerHTML='<div id="flash"></div><div class="card">Loading...</div>';
+  Promise.resolve().then(fn).catch(function(e){app.innerHTML='<div class="err">'+esc(e.message)+'</div>'});
+}
+
+/* ---------- login ---------- */
+function showLogin(){
+  $("title").textContent="Comp Manager";
+  app.innerHTML='<div class="card" style="max-width:420px;margin:24px auto"><h2>Log in</h2><div id="flash"></div>'+
+   '<label>Username</label><input id="u" autocapitalize="none" autocomplete="username">'+
+   '<label>Password</label><input id="p" type="password" autocomplete="current-password">'+
+   '<button class="b" id="lg" style="width:100%;margin-top:16px">Log in</button></div>';
+  var run=async function(){
+    flash("","");
+    try{
+      var r=await api("/v1/auth/login",{method:"POST",body:{username:$("u").value.trim(),password:$("p").value}});
+      S.token=r.token;S.account=r.account;S.kw=null;S.master=r.account.role==="MASTER";
+      localStorage.setItem("cm.token",S.token);localStorage.setItem("cm.account",JSON.stringify(S.account));
+      localStorage.removeItem("cm.master");start();
+    }catch(e){flash("err",e.message)}
+  };
+  $("lg").onclick=run;$("p").addEventListener("keydown",function(e){if(e.key==="Enter")run()});
+}
+function start(){
+  S.master=S.account&&S.account.role==="MASTER";renderChrome();
+  if(S.master)return go("companies");
+  loadKw().then(function(){var f=VIEWS.filter(function(v){return v.perm()})[0];go(f?f.id:"customers")});
+}
+
+/* ---------- master: companies ---------- */
+async function vCompanies(){
+  var rows=await api("/v1/admin/companies");
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>Phone web app link</h2><p class="s">Send this link to phones. They log in with their normal username and password.</p><input id="lk" readonly value="'+esc(location.origin)+'"><button class="b" id="cp">Copy link</button><button class="b alt" id="sh">Share</button></div>'+
+   '<div class="card"><div class="row"><button class="b" id="newc">+ New company</button></div>'+
+   rows.map(function(c){return '<div class="item"><div class="t"><b>'+esc(c.company_name)+'</b><span class="s">'+esc(c.username)+' \u2022 '+esc(c.phone||"")+'</span></div>'+
+   '<button class="b" data-open="'+c.company_id+'">Open</button><button class="b alt" data-edit="'+c.company_id+'">Edit</button></div>'}).join("")+'</div>';
+  $("newc").onclick=function(){go("company",{})};
+  $("cp").onclick=function(){var l=$("lk");l.select();(navigator.clipboard?navigator.clipboard.writeText(l.value):Promise.reject()).catch(function(){document.execCommand("copy")}).then(function(){flash("msg","Link copied.")},function(){flash("msg","Link copied.")})};
+  $("sh").onclick=function(){if(navigator.share)navigator.share({title:"Comp Manager",url:location.origin}).catch(function(){});else $("cp").click()};
+  app.querySelectorAll("[data-open]").forEach(function(b){b.onclick=async function(){
+    var id=b.getAttribute("data-open"),r=await api("/v1/admin/companies/"+id+"/session",{method:"POST"});
+    var co=rows.filter(function(c){return String(c.company_id)===id})[0];
+    localStorage.setItem("cm.master",JSON.stringify({token:S.token,account:S.account}));
+    S.token=r.token;S.account={role:"COMPANY",username:S.account.username,companyId:Number(id),companyName:co.company_name,permissions:{},masterToken:true};
+    S.master=false;S.kw=null;localStorage.setItem("cm.token",S.token);localStorage.setItem("cm.account",JSON.stringify(S.account));
+    start();}});
+  app.querySelectorAll("[data-edit]").forEach(function(b){b.onclick=function(){
+    var id=b.getAttribute("data-edit");go("company",rows.filter(function(c){return String(c.company_id)===id})[0])}});
+}
+function vCompany(){
+  var c=S.arg||{};
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>'+(c.company_id?"Edit company":"New company")+'</h2>'+
+   '<label>Company name</label><input id="cn" value="'+esc(c.company_name)+'"><label>Phone</label><input id="cp" value="'+esc(c.phone)+'">'+
+   '<label>Email</label><input id="ce" value="'+esc(c.email)+'"><label>Address</label><input id="ca" value="'+esc(c.address)+'">'+
+   '<label>Login username</label><input id="cu" autocapitalize="none" value="'+esc(c.username)+'">'+
+   '<label>Password'+(c.company_id?' (leave blank to keep)':'')+'</label><input id="cw" type="password">'+
+   '<button class="b" id="sv">Save</button><button class="b alt" id="cx">Cancel</button>'+(c.company_id?'<button class="b bad" id="dl">Delete company</button>':'')+'</div>';
+  $("cx").onclick=function(){go("companies")};
+  $("sv").onclick=async function(){try{
+    await api("/v1/admin/companies",{method:"POST",body:{company_id:c.company_id||0,company_name:$("cn").value,phone:$("cp").value,email:$("ce").value,address:$("ca").value,username:$("cu").value,password:$("cw").value}});go("companies")}catch(e){flash("err",e.message)}};
+  if(c.company_id)$("dl").onclick=async function(){
+    if(prompt('Type DELETE to permanently delete this company and ALL its data')!=="DELETE")return;
+    try{await api("/v1/admin/companies/"+c.company_id,{method:"DELETE"});go("companies")}catch(e){flash("err",e.message)}};
+}
+
+/* ---------- customers ---------- */
+async function vCustomers(){
+  var list=await api("/v1/customers");
+  var active=S.arg&&S.arg.pick;
+  app.innerHTML='<div id="flash"></div><div class="card"><div class="row"><input id="q" placeholder="Search name, address, city..."><select id="df"><option value="">All days</option>'+DAYS.map(function(d){return "<option>"+d+"</option>"}).join("")+'</select></div>'+
+   (can("canEditCustomers")&&!active?'<button class="b ok" id="nc">+ New customer</button>':'')+'<div id="lst"></div></div>';
+  function draw(){
+    var q=$("q").value.toLowerCase(),d=$("df").value;
+    var rows=list.filter(function(c){return (!d||c.service_day===d)&&(!q||(c.customer_id+" "+c.first_name+" "+c.last_name+" "+c.address+" "+c.city+" "+c.phone).toLowerCase().indexOf(q)>=0)});
+    $("lst").innerHTML=rows.length?rows.map(function(c){return '<div class="item"><div class="t"><b>'+esc(c.last_name)+', '+esc(c.first_name)+(c.status==="Inactive"?' (inactive)':'')+'</b><span class="s">#'+esc(c.customer_id)+' \u2022 '+esc(c.service_day)+' \u2022 '+esc(c.address)+' '+esc(c.city)+' \u2022 '+money(c.amount_charged)+'</span></div>'+
+      (can("canViewStatements")?'<button class="b" data-st="'+esc(c.customer_id)+'">Statement</button>':'')+
+      (!active&&(can("canViewCustomerDetails")||can("canEditCustomers"))?'<button class="b alt" data-cu="'+esc(c.customer_id)+'">Details</button>':'')+'</div>'}).join(""):'<p class="s">No customers found.</p>';
+    app.querySelectorAll("[data-st]").forEach(function(b){b.onclick=function(){go("statement",b.getAttribute("data-st"))}});
+    app.querySelectorAll("[data-cu]").forEach(function(b){b.onclick=function(){go("customer",b.getAttribute("data-cu"))}});
+  }
+  $("q").oninput=draw;$("df").onchange=draw;draw();
+  if($("nc"))$("nc").onclick=function(){go("customer","")};
+}
+function vPickCustomer(){S.arg={pick:true};return vCustomers()}
+async function vCustomer(){
+  var id=S.arg,c={customer_id:"",first_name:"",last_name:"",address:"",city:"",state:"",zip:"",phone:"",email:"",service_day:"Monday",amount_charged:0,notes:"",starting_date:"",status:"Active"};
+  if(id)c=await api("/v1/customers/"+encodeURIComponent(id));else{try{c.customer_id=(await api("/v1/customers/next-id")).customer_id}catch(e){}}
+  var ro=!can("canEditCustomers")?" disabled":"";
+  function f(k,l,t){return '<div><label>'+l+'</label><input id="f_'+k+'" value="'+esc(c[k])+'"'+(t?' type="'+t+'"':"")+ro+'></div>'}
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>'+(id?"Customer #"+esc(id):"New customer")+'</h2><div class="row">'+f("customer_id","Customer ID")+f("first_name","First name")+f("last_name","Last name")+'</div>'+
+   f("address","Address")+'<div class="row">'+f("city","City")+f("state","State")+f("zip","ZIP")+'</div><div class="row">'+f("phone","Phone","tel")+f("email","Email","email")+'</div>'+
+   '<div class="row"><div><label>Service day</label><select id="f_service_day"'+ro+'>'+DAYS.map(function(d){return "<option"+(d===c.service_day?" selected":"")+">"+d+"</option>"}).join("")+'</select></div>'+
+   '<div><label>Amount charged</label><input id="f_amount_charged" type="number" step="0.01" inputmode="decimal" value="'+esc(c.amount_charged)+'"'+ro+'></div></div>'+
+   '<div class="row"><div><label>Starting date</label><input id="f_starting_date" value="'+esc(c.starting_date)+'"'+ro+'></div>'+
+   '<div><label>Status</label><select id="f_status"'+ro+'><option'+(c.status!=="Inactive"?" selected":"")+'>Active</option><option'+(c.status==="Inactive"?" selected":"")+'>Inactive</option></select></div></div>'+
+   '<label>Notes</label><textarea id="f_notes" rows="3"'+ro+'>'+esc(c.notes)+'</textarea>'+
+   (can("canEditCustomers")?'<button class="b" id="sv">Save</button>':'')+(id&&can("canEditCustomers")?'<button class="b bad" id="dl">Delete</button>':'')+
+   (id&&can("canViewStatements")?'<button class="b alt" id="st">Statement</button>':'')+'<button class="b alt" id="bk">Back</button></div>';
+  dateInput($("f_starting_date"));$("f_starting_date").maxLength=10;
+  $("bk").onclick=function(){go("customers")};
+  if($("st"))$("st").onclick=function(){go("statement",id)};
+  if($("sv"))$("sv").onclick=async function(){
+    var b={};["customer_id","first_name","last_name","address","city","state","zip","phone","email","service_day","notes","starting_date","status"].forEach(function(k){b[k]=$("f_"+k).value.trim()});
+    b.amount_charged=Number($("f_amount_charged").value||0);
+    if(b.starting_date&&!parseDate(b.starting_date))return flash("err","Starting date must be a valid MM/DD/YYYY date.");
+    if(!b.customer_id)return flash("err","Customer ID is required.");
+    try{if(id)await api("/v1/customers/"+encodeURIComponent(id),{method:"PUT",body:b});else await api("/v1/customers",{method:"POST",body:b});go("customers")}catch(e){flash("err",e.message)}};
+  if($("dl"))$("dl").onclick=async function(){if(!confirm("Delete this customer and all of its statement records?"))return;
+    try{await api("/v1/customers/"+encodeURIComponent(id),{method:"DELETE"});go("customers")}catch(e){flash("err",e.message)}};
+}
+
+/* ---------- statement ---------- */
+async function vStatement(){
+  await loadKw();var id=S.arg;
+  var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api("/v1/customers/"+encodeURIComponent(id)+"/statements"),api("/v1/record-types")]);
+  var c=res[0],recs=res[1].slice().sort(cmpRecords),types=res[2];
+  var run=0;recs.forEach(function(r){run+=r.amount;r.run=run});
+  var edit=can("canEditStatements");
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc(c.first_name)+' '+esc(c.last_name)+' <span class="s">#'+esc(c.customer_id)+'</span></h2>'+
+   '<div class="s">'+esc(c.address)+' '+esc(c.city)+' '+esc(c.state)+' '+esc(c.zip)+'</div><h2 class="'+(run>0?"pos":run<0?"neg":"")+'">Balance: '+money(run)+'</h2>'+
+   '<button class="b alt" id="bk">Back</button><button class="b alt" id="pr">Print / Save PDF</button></div>'+
+   (edit?'<div class="card"><h2>Add record</h2><div class="row"><div><label>Date</label><input id="rd"></div><div><label>Type</label><select id="rt">'+types.map(function(t){return "<option>"+esc(t)+"</option>"}).join("")+'</select></div>'+
+   '<div id="ckw" class="hide"><label>Check #</label><input id="rc" inputmode="numeric"></div><div><label>Amount</label><input id="ra" type="number" step="0.01" min="0" inputmode="decimal"></div></div>'+
+   '<p class="s" id="hint"></p><button class="b ok" id="add">Add record</button></div>':'')+
+   '<div class="card scroll"><table><thead><tr><th>Date</th><th>Type</th><th class="r">Amount</th><th class="r">Balance</th><th></th></tr></thead><tbody>'+
+   recs.map(function(r){return '<tr><td>'+esc(r.record_date)+'</td><td>'+esc(r.type)+'</td><td class="r '+(r.amount<0?"neg":"pos")+'">'+money(r.amount)+'</td><td class="r">'+money(r.run)+'</td><td>'+(edit?'<button class="b bad" data-del="'+r.record_id+'" style="margin:0;padding:6px 10px">\u2715</button>':"")+'</td></tr>'}).join("")+
+   '</tbody></table>'+(recs.length?"":'<p class="s">No records yet.</p>')+'</div>';
+  $("bk").onclick=function(){go("statements")};
+  $("pr").onclick=function(){printStatement(c,recs,run)};
+  app.querySelectorAll("[data-del]").forEach(function(b){b.onclick=async function(){if(!confirm("Delete this record?"))return;
+    try{await api("/v1/statements/"+b.getAttribute("data-del"),{method:"DELETE"});go("statement",id)}catch(e){flash("err",e.message)}}});
+  if(edit){
+    var rd=$("rd");dateInput(rd);rd.value=fmtDate(new Date());
+    var upd=function(){var t=$("rt").value;$("ckw").classList.toggle("hide",t.toLowerCase().indexOf("check")<0);
+      $("hint").textContent=t?(isCredit(t)?"Credit \u2013 increases the balance":"Debit \u2013 reduces the balance"):""};
+    $("rt").onchange=upd;upd();
+    $("add").onclick=async function(){
+      var t=$("rt").value,a=Math.abs(Number($("ra").value));
+      if(!parseDate(rd.value))return flash("err","Date must be a valid MM/DD/YYYY date.");
+      if(!t)return flash("err","Choose a record type (add types under Record Types).");
+      if(!isFinite(a)||$("ra").value==="")return flash("err","Enter an amount.");
+      var tn=t;if(t.toLowerCase().indexOf("check")>=0&&$("rc").value.trim())tn=t.split(":")[0]+": #"+$("rc").value.trim().replace(/^#/,"");
+      try{await api("/v1/customers/"+encodeURIComponent(id)+"/statements",{method:"POST",body:{record_date:rd.value,type:tn,amount:isCredit(t)?a:-a}});go("statement",id)}catch(e){flash("err",e.message)}};
+  }
+}
+function printStatement(c,recs,bal){
+  var st=(S.kw&&S.kw.settings)||{};
+  $("printarea").innerHTML='<div style="font-family:Arial,sans-serif;padding:16px"><h1 style="margin:0">'+esc(st.companyName||S.account.companyName||"Statement")+'</h1><div>'+esc(st.companyAddress||"")+' '+esc(st.companyPhone||"")+' '+esc(st.companyEmail||"")+'</div><hr>'+
+   '<h2>Statement \u2013 '+esc(c.first_name)+' '+esc(c.last_name)+' (#'+esc(c.customer_id)+')</h2><div>'+esc(c.address)+' '+esc(c.city)+' '+esc(c.state)+' '+esc(c.zip)+'</div><br>'+
+   '<table style="width:100%;border-collapse:collapse" border="1" cellpadding="6"><tr><th>Date</th><th>Type</th><th align="right">Amount</th><th align="right">Balance</th></tr>'+
+   recs.map(function(r){return '<tr><td>'+esc(r.record_date)+'</td><td>'+esc(r.type)+'</td><td align="right">'+money(r.amount)+'</td><td align="right">'+money(r.run)+'</td></tr>'}).join("")+
+   '</table><h3>Balance due: '+money(bal)+'</h3><div>'+esc(st.footerText||"")+'</div>'+(String(st.showGenerationDate)==="false"?"":'<div>Generated '+fmtDate(new Date())+'</div>')+'</div>';
+  window.print();
+}
+
+/* ---------- monthly statement ---------- */
+async function vMonthly(){
+  await loadKw();
+  var types=(await api("/v1/record-types")).filter(isCredit);
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>Monthly Statement</h2><p class="s">Adds one record for every active customer using their amount charged, dated the last day of the current month.</p>'+
+   (types.length?'<label>Credit type</label><select id="mt">'+types.map(function(t){return "<option>"+esc(t)+"</option>"}).join("")+'</select><button class="b ok" id="go" style="margin-top:12px">Apply to active customers</button>':'<p class="neg">No credit record types exist. Add one under Record Types first.</p>')+'</div>';
+  if(!$("go"))return;
+  $("go").onclick=async function(){
+    var list=(await api("/v1/customers")).filter(function(c){return c.status!=="Inactive"});
+    var now=new Date(),last=new Date(now.getFullYear(),now.getMonth()+1,0),date=fmtDate(last),type=$("mt").value;
+    if(!confirm("Add a "+type+" record dated "+date+" to "+list.length+" active customers?"))return;
+    var ok=0,fail=0;$("go").disabled=true;
+    for(var i=0;i<list.length;i++){try{await api("/v1/customers/"+encodeURIComponent(list[i].customer_id)+"/statements",{method:"POST",body:{record_date:date,type:type,amount:Math.abs(Number(list[i].amount_charged)||0)}});ok++}catch(e){fail++}}
+    flash(fail?"err":"msg","Added "+ok+" records"+(fail?"; "+fail+" failed.":"."));$("go").disabled=false;
+  };
+}
+
+/* ---------- charged summary ---------- */
+async function vCharged(){
+  var list=(await api("/v1/customers")).filter(function(c){return c.status!=="Inactive"});
+  var rows=await Promise.all(list.map(async function(c){try{return {c:c,b:(await api("/v1/customers/"+encodeURIComponent(c.customer_id)+"/balance")).balance}}catch(e){return {c:c,b:0}}}));
+  rows=rows.filter(function(r){return r.b>0}).sort(function(a,b){return b.b-a.b});
+  var total=rows.reduce(function(s,r){return s+r.b},0);
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>Charged Summary</h2><p class="s">Active customers with a balance above $0.00</p><button class="b alt" id="rf">Refresh</button><h3>Total: '+money(total)+' ('+rows.length+')</h3>'+
+   (rows.length?rows.map(function(r){return '<div class="item"><div class="t"><b>'+esc(r.c.last_name)+', '+esc(r.c.first_name)+'</b><span class="s">#'+esc(r.c.customer_id)+' \u2022 '+esc(r.c.service_day)+'</span></div><b class="pos">'+money(r.b)+'</b><button class="b alt" data-st="'+esc(r.c.customer_id)+'">Open</button></div>'}).join(""):'<p class="s">Nobody currently owes a balance.</p>')+'</div>';
+  $("rf").onclick=function(){go("charged")};
+  app.querySelectorAll("[data-st]").forEach(function(b){b.onclick=function(){go("statement",b.getAttribute("data-st"))}});
+}
+
+/* ---------- revenue ---------- */
+async function vRevenue(){
+  var r=await api("/v1/revenue");
+  var by={};r.by_day.forEach(function(x){by[x.service_day]=Number(x.total)||0});
+  app.innerHTML='<div class="card"><h2>Revenue Summary</h2><p class="s">Inactive customers are not included.</p>'+
+   DAYS.concat(Object.keys(by).filter(function(k){return DAYS.indexOf(k)<0})).filter(function(d){return d in by}).map(function(d){return '<div class="item"><span>'+esc(d)+'</span><b>'+money(by[d])+'</b></div>'}).join("")+
+   '<div class="item"><b>Total</b><b>'+money(r.total)+'</b></div></div>';
+}
+
+/* ---------- record types ---------- */
+async function vTypes(){
+  await loadKw();var types=await api("/v1/record-types"),edit=can("canEditStatements");
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>Record Types</h2>'+
+   (edit?'<div class="row"><input id="nt" placeholder="New type name"><button class="b ok" id="ad" style="flex:0 0 auto">Add</button></div>':'')+
+   types.map(function(t){return '<div class="item"><div class="t"><b>'+esc(t)+'</b><span class="s">'+(isCredit(t)?"Credit":"Debit")+'</span></div>'+(edit?'<button class="b alt" data-rn="'+esc(t)+'">Rename</button><button class="b bad" data-rm="'+esc(t)+'">Delete</button>':'')+'</div>'}).join("")+'</div>'+
+   (edit&&(can("canEditPdf")||isManager())?'<div class="card"><h2>Credit / Debit keywords</h2><p class="s">A type containing a credit keyword adds to the balance; anything else is a debit.</p><label>Credit keywords</label><textarea id="kc" rows="3">'+esc(S.kw.credit.join(", "))+'</textarea><label>Debit keywords</label><textarea id="kd" rows="3">'+esc(S.kw.debit.join(", "))+'</textarea><button class="b" id="sk">Save keywords</button></div>':"");
+  if(edit){
+    $("ad").onclick=async function(){var n=$("nt").value.trim();if(!n)return;try{await api("/v1/record-types",{method:"POST",body:{type_name:n}});go("types")}catch(e){flash("err",e.message)}};
+    app.querySelectorAll("[data-rm]").forEach(function(b){b.onclick=async function(){if(!confirm("Delete this type?"))return;try{await api("/v1/record-types/"+encodeURIComponent(b.getAttribute("data-rm")),{method:"DELETE"});go("types")}catch(e){flash("err",e.message)}}});
+    app.querySelectorAll("[data-rn]").forEach(function(b){b.onclick=async function(){var o=b.getAttribute("data-rn"),n=prompt("New name",o);if(!n||n===o)return;try{await api("/v1/record-types",{method:"PUT",body:{old_name:o,new_name:n}});go("types")}catch(e){flash("err",e.message)}}});
+    if($("sk"))$("sk").onclick=async function(){try{
+      await api("/v1/settings",{method:"PUT",body:{key:"recordTypeCreditKeywords",value:$("kc").value}});
+      await api("/v1/settings",{method:"PUT",body:{key:"recordTypeDebitKeywords",value:$("kd").value}});S.kw=null;go("types")}catch(e){flash("err",e.message)}};
+  }
+}
+
+/* ---------- pdf settings (company details used on printed statements) ---------- */
+async function vPdf(){
+  await loadKw();var s=S.kw.settings,edit=can("canEditPdf");
+  var F=[["companyName","Company name"],["companyAddress","Address"],["companyPhone","Phone"],["companyEmail","Email"],["footerText","Footer text"]];
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>PDF Settings</h2><p class="s">Used on printed / saved statements. Fonts, margins and logo positions are managed in the desktop app.</p>'+
+   F.map(function(f){return '<label>'+f[1]+'</label><input id="s_'+f[0]+'" value="'+esc(s[f[0]]||"")+'"'+(edit?"":" disabled")+'>'}).join("")+
+   '<div class="chk"><input type="checkbox" id="s_gen"'+(String(s.showGenerationDate)==="false"?"":" checked")+(edit?"":" disabled")+'><span>Show generation date</span></div>'+(edit?'<button class="b" id="sv">Save</button>':"")+'</div>';
+  if(edit)$("sv").onclick=async function(){try{
+    for(var i=0;i<F.length;i++)await api("/v1/settings",{method:"PUT",body:{key:F[i][0],value:$("s_"+F[i][0]).value}});
+    await api("/v1/settings",{method:"PUT",body:{key:"showGenerationDate",value:String($("s_gen").checked)}});S.kw=null;flash("msg","Saved.")}catch(e){flash("err",e.message)}};
+}
+
+/* ---------- employees ---------- */
+async function vEmployees(){
+  var list=await api("/v1/admin/companies/"+S.account.companyId+"/employees");
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>Employees</h2><button class="b ok" id="ne">+ New employee</button>'+
+   list.map(function(e){return '<div class="item"><div class="t"><b>'+esc(e.first_name)+' '+esc(e.last_name)+'</b><span class="s">'+esc(e.username)+'</span></div><button class="b alt" data-e="'+e.employee_id+'">Edit</button></div>'}).join("")+'</div>';
+  $("ne").onclick=function(){go("employee",{})};
+  app.querySelectorAll("[data-e]").forEach(function(b){b.onclick=function(){go("employee",list.filter(function(e){return String(e.employee_id)===b.getAttribute("data-e")})[0])}});
+}
+function vEmployee(){
+  var e=S.arg||{},p=e.permissions||{},days=e.allowed_days||[];
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>'+(e.employee_id?"Edit employee":"New employee")+'</h2><div class="row"><div><label>First name</label><input id="e_f" value="'+esc(e.first_name)+'"></div><div><label>Last name</label><input id="e_l" value="'+esc(e.last_name)+'"></div></div>'+
+   '<div class="row"><div><label>Phone</label><input id="e_p" value="'+esc(e.phone)+'"></div><div><label>Email</label><input id="e_m" value="'+esc(e.email)+'"></div></div>'+
+   '<div class="row"><div><label>Username</label><input id="e_u" autocapitalize="none" value="'+esc(e.username)+'"></div><div><label>Password'+(e.employee_id?" (blank = keep)":"")+'</label><input id="e_w" type="password"></div></div>'+
+   '<label>Permissions</label>'+PERMS.map(function(x){return '<div class="chk"><input type="checkbox" data-perm="'+x[0]+'"'+(p[x[0]]?" checked":"")+'><span>'+x[1]+'</span></div>'}).join("")+
+   '<label>Allowed service days (none = all)</label>'+DAYS.map(function(d){return '<div class="chk"><input type="checkbox" data-day="'+d+'"'+(days.indexOf(d)>=0?" checked":"")+'><span>'+d+'</span></div>'}).join("")+
+   '<label>Allowed customer IDs (comma separated, blank = all)</label><input id="e_c" value="'+esc((e.allowed_customer_ids||[]).join(", "))+'">'+
+   '<button class="b" id="sv">Save</button><button class="b alt" id="cx">Cancel</button>'+(e.employee_id?'<button class="b bad" id="dl">Delete</button>':"")+'</div>';
+  $("cx").onclick=function(){go("employees")};
+  $("sv").onclick=async function(){
+    var perms={};app.querySelectorAll("[data-perm]").forEach(function(c){perms[c.getAttribute("data-perm")]=c.checked});
+    var ad=[];app.querySelectorAll("[data-day]").forEach(function(c){if(c.checked)ad.push(c.getAttribute("data-day"))});
+    var ids=$("e_c").value.split(",").map(function(x){return x.trim()}).filter(Boolean);
+    try{await api("/v1/admin/companies/"+S.account.companyId+"/employees",{method:"POST",body:{employee_id:e.employee_id||0,first_name:$("e_f").value,last_name:$("e_l").value,phone:$("e_p").value,email:$("e_m").value,username:$("e_u").value,password:$("e_w").value,permissions:perms,allowed_days:ad,allowed_customer_ids:ids}});go("employees")}catch(x){flash("err",x.message)}};
+  if(e.employee_id)$("dl").onclick=async function(){if(!confirm("Delete this employee?"))return;try{await api("/v1/admin/employees/"+e.employee_id,{method:"DELETE"});go("employees")}catch(x){flash("err",x.message)}};
+}
+
+/* ---------- backup ---------- */
+function vBackup(){
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>Backup / Restore</h2><p class="s">Backup copies only this company\'s data. Restore replaces this company\'s data with the backup file; other companies are not touched.</p>'+
+   '<button class="b" id="bk">Download backup</button><label>Restore from file</label><input type="file" id="rf" accept=".json,application/json"><button class="b bad" id="rs">Restore</button></div>';
+  $("bk").onclick=async function(){try{
+    var d=await api("/v1/backup"),blob=new Blob([JSON.stringify(d)],{type:"application/json"}),a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);a.download="backup-"+(S.account.companyName||"company").replace(/\W+/g,"_")+"-"+fmtDate(new Date()).replace(/\//g,"-")+".json";document.body.appendChild(a);a.click();a.remove();
+    flash("msg","Backup downloaded.")}catch(e){flash("err",e.message)}};
+  $("rs").onclick=async function(){var f=$("rf").files[0];if(!f)return flash("err","Choose a backup file first.");
+    if(!confirm("Replace ALL of this company's current data with the backup?"))return;
+    try{await api("/v1/backup/restore",{method:"POST",body:JSON.parse(await f.text())});flash("msg","Restore complete.")}catch(e){flash("err",e.message)}};
+}
+
+/* ---------- boot ---------- */
+if(S.token&&S.account){start()}else{showLogin()}
+</script>
+</body>
+</html>

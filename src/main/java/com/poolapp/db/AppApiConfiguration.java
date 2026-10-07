@@ -12,6 +12,13 @@ public final class AppApiConfiguration {
     private AppApiConfiguration() {
     }
 
+    public static final String DEFAULT_WEB_URL = "https://silverdice.josueguerra5555.workers.dev";
+
+    public static String getWebAppUrl() {
+        String url = getBaseUrl().replaceAll("/+$", "");
+        return url.matches("(?i)https?://.+") ? url : DEFAULT_WEB_URL;
+    }
+
     public static String getBaseUrl() {
         String environment = System.getenv("COMP_MANAGER_API_URL");
         if (environment != null && !environment.isBlank()) return environment.trim();

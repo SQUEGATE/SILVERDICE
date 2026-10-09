@@ -18,6 +18,7 @@ public class Customer {
     private String notes;
     private String startingDate = "";
     private String status = "Active";
+    private int routeOrder;
 
     public Customer(String id,
                     String firstName,
@@ -171,6 +172,14 @@ public class Customer {
 
     public void setStatus(String status) {
         this.status = "Inactive".equalsIgnoreCase(status) ? "Inactive" : "Active";
+    }
+
+    public int getRouteOrder() {
+        return routeOrder;
+    }
+
+    public void setRouteOrder(int routeOrder) {
+        this.routeOrder = Math.max(0, routeOrder);
     }
 
     public boolean isActive() {

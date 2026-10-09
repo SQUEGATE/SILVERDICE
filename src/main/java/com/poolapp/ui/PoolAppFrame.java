@@ -71,6 +71,7 @@ public class PoolAppFrame extends JFrame {
     private final JTextField phoneField;
     private final JTextField emailField;
     private final JComboBox<String> dayCombo;
+    private final JTextField routeOrderField;
     private final JTextField amountField;
     private final JTextField startingDateField;
     private final JComboBox<String> statusCombo;
@@ -154,6 +155,23 @@ public class PoolAppFrame extends JFrame {
         phoneField = new JTextField(14);
         emailField = new JTextField(40);
         dayCombo = new JComboBox<>(DAYS);
+        routeOrderField = new JTextField(4);
+        ((AbstractDocument) routeOrderField.getDocument()).setDocumentFilter(new DocumentFilter() {
+            @Override
+            public void replace(FilterBypass fb, int offset, int length, String text, javax.swing.text.AttributeSet attrs) throws javax.swing.text.BadLocationException {
+                String clean = text == null ? "" : text.replaceAll("[^0-9]", "");
+                if (fb.getDocument().getLength() - length + clean.length() <= 6) {
+                    super.replace(fb, offset, length, clean, attrs);
+                }
+            }
+
+            @Override
+            public void insertString(FilterBypass fb, int offset, String text, javax.swing.text.AttributeSet attrs) throws javax.swing.text.BadLocationException {
+                replace(fb, offset, 0, text, attrs);
+            }
+        });
+        routeOrderField.setToolTipText("Position of this customer in the list for the selected service day.");
+        dayCombo.addActionListener(e -> updateRouteOrderEnabled());
         amountField = new JTextField(10);
         startingDateField = new JTextField(10);
         ((AbstractDocument) startingDateField.getDocument()).setDocumentFilter(new DateFilter());
@@ -282,7 +300,7 @@ public class PoolAppFrame extends JFrame {
             dayFilterCombo.addItem(day);
         }
 
-        JPanel formPanel = new JPanel(new GridBagLayout());
+        JPanel formPanel = new ScrollableFormPanel();
         formPanel.setBorder(BorderFactory.createTitledBorder("Customer Details"));
         GridBagConstraints gc = new GridBagConstraints();
         gc.insets = new Insets(6, 6, 6, 6);
@@ -416,7 +434,12 @@ public class PoolAppFrame extends JFrame {
         gc.gridy = row;
         formPanel.add(new JLabel("Service Day:"), gc);
         gc.gridx = 1;
-        formPanel.add(dayCombo, gc);
+        JPanel dayPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        dayPanel.setOpaque(false);
+        dayPanel.add(dayCombo);
+        dayPanel.add(new JLabel("Order:"));
+        dayPanel.add(routeOrderField);
+        formPanel.add(dayPanel, gc);
 
         gc.gridx = 2;
         formPanel.add(new JLabel("Amount Charged:"), gc);
@@ -684,7 +707,10 @@ public class PoolAppFrame extends JFrame {
             navigationPanel.add(withStar("Employees", employeesButton));
         }
 
-        cardPanel.add(formPanel, "CustomerDetails");
+        JScrollPane formScroll = new JScrollPane(formPanel);
+        formScroll.setBorder(BorderFactory.createEmptyBorder());
+        formScroll.getVerticalScrollBar().setUnitIncrement(16);
+        cardPanel.add(formScroll, "CustomerDetails");
         cardPanel.add(tablePanel, "Customers");
         cardPanel.add(recordPanel, "Statements");
         cardPanel.add(revenuePanel, "RevenueSummary");
@@ -755,6 +781,9 @@ public class PoolAppFrame extends JFrame {
                 }
             }
         });
+
+        installCustomerRowDragging();
+        updateRouteOrderEnabled();
 
         customerTable.addMouseListener(new MouseAdapter() {
             @Override
@@ -1036,6 +1065,8 @@ public class PoolAppFrame extends JFrame {
         phoneField.setText(customer.getPhone());
         emailField.setText(customer.getEmail());
         dayCombo.setSelectedItem(customer.getServiceDay());
+        routeOrderField.setText(customer.getRouteOrder() > 0 ? String.valueOf(customer.getRouteOrder()) : "");
+        updateRouteOrderEnabled();
         amountField.setText("$" + customer.getAmountCharged().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
         notesArea.setText(customer.getNotes());
         startingDateField.setText(customer.getStartingDate());
@@ -1092,6 +1123,88 @@ public class PoolAppFrame extends JFrame {
         }
 
         loadCustomers(customers);
+    }
+
+    private void updateRouteOrderEnabled() {
+        boolean hasDay = dayCombo.getSelectedItem() != null && !Objects.toString(dayCombo.getSelectedItem(), "").isBlank();
+        routeOrderField.setEnabled(hasDay);
+        if (!hasDay) {
+            routeOrderField.setText("");
+        }
+    }
+
+    private boolean canReorderCustomers() {
+        return canEditCustomerData()
+                && !"All".equals(Objects.toString(dayFilterCombo.getSelectedItem(), "All"))
+                && searchField.getText().trim().isEmpty();
+    }
+
+    private void installCustomerRowDragging() {
+        customerTable.setDragEnabled(true);
+        customerTable.setDropMode(DropMode.INSERT_ROWS);
+        customerTable.setToolTipText("Filter by a service day, then drag a row up or down to set the order.");
+        customerTable.setTransferHandler(new TransferHandler() {
+            @Override
+            public int getSourceActions(JComponent component) {
+                return canReorderCustomers() ? MOVE : NONE;
+            }
+
+            @Override
+            protected java.awt.datatransfer.Transferable createTransferable(JComponent component) {
+                int row = customerTable.getSelectedRow();
+                return row < 0 ? null : new java.awt.datatransfer.StringSelection(String.valueOf(row));
+            }
+
+            @Override
+            public boolean canImport(TransferSupport support) {
+                return canReorderCustomers() && support.isDrop()
+                        && support.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.stringFlavor);
+            }
+
+            @Override
+            public boolean importData(TransferSupport support) {
+                if (!canImport(support)) {
+                    return false;
+                }
+                try {
+                    int from = Integer.parseInt((String) support.getTransferable().getTransferData(java.awt.datatransfer.DataFlavor.stringFlavor));
+                    int to = ((JTable.DropLocation) support.getDropLocation()).getRow();
+                    if (to > from) {
+                        to--;
+                    }
+                    if (from < 0 || from >= tableModel.getRowCount() || to < 0 || to >= tableModel.getRowCount() || from == to) {
+                        return false;
+                    }
+                    tableModel.moveRow(from, from, to);
+                    customerTable.getSelectionModel().setSelectionInterval(to, to);
+                    saveCustomerRowOrder();
+                    return true;
+                } catch (Exception e) {
+                    return false;
+                }
+            }
+        });
+    }
+
+    private void saveCustomerRowOrder() {
+        String day = Objects.toString(dayFilterCombo.getSelectedItem(), "All");
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            ids.add(Objects.toString(tableModel.getValueAt(i, 0), ""));
+        }
+        try {
+            dbManager.reorderCustomers(day, ids);
+            String shownId = idField.getText().trim();
+            if (!shownId.isEmpty()) {
+                Customer shown = dbManager.getCustomerById(shownId);
+                if (shown != null && canAccessCustomer(shown)) {
+                    populateFieldsWithCustomer(shown);
+                }
+            }
+        } catch (RuntimeException e) {
+            JOptionPane.showMessageDialog(this, "Unable to save the new order: " + e.getMessage(), "Order Not Saved", JOptionPane.ERROR_MESSAGE);
+            loadFilteredCustomers();
+        }
     }
 
     private void resetFilters() {
@@ -1179,6 +1292,7 @@ public class PoolAppFrame extends JFrame {
         phoneField.setEditable(false);
         emailField.setEditable(false);
         dayCombo.setEnabled(false);
+        routeOrderField.setEditable(false);
         startingDateField.setEditable(false);
         statusCombo.setEnabled(false);
         amountField.setEditable(false);
@@ -1399,6 +1513,7 @@ public class PoolAppFrame extends JFrame {
                     dbManager.updateCustomer(customer);
                 }
             }
+            if (!dbManager.isRemote()) placeCustomerInRoute(customer);
             loadFilteredCustomers();
             refreshRevenueSummary();
             refreshDetailCustomerList();
@@ -1407,6 +1522,34 @@ public class PoolAppFrame extends JFrame {
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this, "Unable to save customer: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private static final class ScrollableFormPanel extends JPanel implements Scrollable {
+        ScrollableFormPanel() { super(new GridBagLayout()); }
+        @Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+        @Override public int getScrollableUnitIncrement(Rectangle r, int o, int d) { return 16; }
+        @Override public int getScrollableBlockIncrement(Rectangle r, int o, int d) { return 64; }
+        @Override public boolean getScrollableTracksViewportWidth() {
+            return !(getParent() instanceof JViewport vp) || vp.getWidth() >= getPreferredSize().width;
+        }
+        @Override public boolean getScrollableTracksViewportHeight() {
+            return !(getParent() instanceof JViewport vp) || vp.getHeight() >= getPreferredSize().height;
+        }
+    }
+
+    private void placeCustomerInRoute(Customer saved) throws Exception {
+        String day = saved.getServiceDay();
+        if (day == null || day.isBlank()) return;
+        List<String> ids = new ArrayList<>();
+        int current = -1;
+        for (Customer c : dbManager.getAllCustomers()) {
+            if (!day.equals(c.getServiceDay())) continue;
+            if (c.getId().equals(saved.getId())) { current = ids.size(); continue; }
+            ids.add(c.getId());
+        }
+        int index = saved.getRouteOrder() > 0 ? saved.getRouteOrder() - 1 : (current >= 0 ? current : ids.size());
+        ids.add(Math.max(0, Math.min(index, ids.size())), saved.getId());
+        dbManager.reorderCustomers(day, ids);
     }
 
     private Customer buildCustomerFromForm() {
@@ -1455,6 +1598,8 @@ public class PoolAppFrame extends JFrame {
 
         Customer built = new Customer(id, firstName, lastName, address, city, state, zip, phone, email, serviceDay, amount, notes);
         built.setStartingDate(startingDate);
+        String orderText = routeOrderField.getText().trim();
+        built.setRouteOrder(routeOrderField.isEnabled() && !orderText.isEmpty() ? Integer.parseInt(orderText) : 0);
         built.setStatus(Objects.toString(statusCombo.getSelectedItem(), "Active"));
         return built;
     }
@@ -1482,6 +1627,7 @@ public class PoolAppFrame extends JFrame {
         phoneField.setText("");
         emailField.setText("");
         dayCombo.setSelectedIndex(0);
+        routeOrderField.setText("");
         amountField.setText("$0.00");
         notesArea.setText("");
         startingDateField.setText("");

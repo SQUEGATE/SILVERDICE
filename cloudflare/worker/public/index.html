@@ -30,6 +30,7 @@ button.b.alt{background:#475569}button.b.bad{background:var(--bad)}button.b.ok{b
 .item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}
 .item:last-child{border:0}.item .t{flex:1;min-width:0}.item .s{color:var(--mute);font-size:13px}
 .item .t b{display:block;overflow:hidden;text-overflow:ellipsis}
+.item .grip{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;font-size:22px;padding:6px 10px;color:var(--mute)}.item.drag{background:#e8f0fe;opacity:.85}.mv{display:flex;gap:4px}.mv .b{width:auto;margin:0;padding:6px 10px}
 .pos{color:var(--good)}.neg{color:var(--bad)}
 .err{background:#fee2e2;color:#991b1b;padding:10px;border-radius:8px;margin-bottom:10px}
 .msg{background:#dcfce7;color:#166534;padding:10px;border-radius:8px;margin-bottom:10px}
@@ -64,6 +65,7 @@ var DEF_DEBIT="cash, bill, charge, service, invoice, fee, debit, purchase, due, 
 var S={token:localStorage.getItem("cm.token")||"",account:JSON.parse(localStorage.getItem("cm.account")||"null"),view:"",arg:null,kw:null,master:false};
 var app=document.getElementById("app");
 
+function mapLink(c){var a=[c.address,c.city,c.state,c.zip].filter(Boolean).join(", ");if(!a.trim())return "";return '<a href="https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(a)+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">'+esc(a)+'</a>'}
 function esc(v){return String(v==null?"":v).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
 function money(n){n=Number(n)||0;return (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
 function $(id){return document.getElementById(id)}
@@ -247,29 +249,62 @@ async function vCustomers(){
   var list=await api("/v1/customers");
   var active=S.arg&&S.arg.pick;
   app.innerHTML='<div id="flash"></div><div class="card"><div class="row"><input id="q" placeholder="Search name, address, city..."><select id="df"><option value="">All days</option>'+DAYS.map(function(d){return "<option>"+d+"</option>"}).join("")+'</select></div>'+
-   (can("canEditCustomers")&&!active?'<button class="b ok" id="nc">+ New customer</button>':'')+'<div id="lst"></div></div>';
+   (can("canEditCustomers")&&!active?'<button class="b ok" id="nc">+ New customer</button>':'')+'<p class="s" id="hint" style="display:none">Drag \u2630 or tap \u25B2\u25BC to set the route order for this day.</p><div id="lst"></div></div>';
   function draw(){
     var q=$("q").value.toLowerCase(),d=$("df").value;
     var rows=list.filter(function(c){return (!d||c.service_day===d)&&(!q||(c.customer_id+" "+c.first_name+" "+c.last_name+" "+c.address+" "+c.city+" "+c.phone).toLowerCase().indexOf(q)>=0)});
-    $("lst").innerHTML=rows.length?rows.map(function(c){return '<div class="item"><div class="t"><b>'+esc(c.last_name)+', '+esc(c.first_name)+(c.status==="Inactive"?' (inactive)':'')+'</b><span class="s">#'+esc(c.customer_id)+' \u2022 '+esc(c.service_day)+' \u2022 '+esc(c.address)+' '+esc(c.city)+' \u2022 '+money(c.amount_charged)+'</span></div>'+
+    var canDrag=!!d&&!q&&!active&&can("canEditCustomers");
+    $("lst").innerHTML=rows.length?rows.map(function(c){return '<div class="item" data-id="'+esc(c.customer_id)+'">'+(canDrag?'<span class="grip" title="Drag to reorder">\u2630</span><span class="mv"><button class="b alt" data-mv="-1" aria-label="Move up">\u25B2</button><button class="b alt" data-mv="1" aria-label="Move down">\u25BC</button></span>':'')+'<div class="t"><b>'+(d&&c.route_order>0?esc(c.route_order)+'. ':'')+esc(c.last_name)+', '+esc(c.first_name)+(c.status==="Inactive"?' (inactive)':'')+'</b><span class="s">#'+esc(c.customer_id)+' \u2022 '+esc(c.service_day)+' \u2022 '+mapLink(c)+' \u2022 '+money(c.amount_charged)+'</span></div>'+
       (can("canViewStatements")?'<button class="b" data-st="'+esc(c.customer_id)+'">Statement</button>':'')+
       (!active&&(can("canViewCustomerDetails")||can("canEditCustomers"))?'<button class="b alt" data-cu="'+esc(c.customer_id)+'">Details</button>':'')+'</div>'}).join(""):'<p class="s">No customers found.</p>';
     app.querySelectorAll("[data-st]").forEach(function(b){b.onclick=function(){go("statement",b.getAttribute("data-st"))}});
     app.querySelectorAll("[data-cu]").forEach(function(b){b.onclick=function(){go("customer",b.getAttribute("data-cu"))}});
+    if(canDrag)enableDrag(d);
+    $("hint").style.display=(d&&!q&&!active&&can("canEditCustomers"))?"block":"none";
+  }
+  async function saveOrder(day){
+    var ids=[].map.call($("lst").querySelectorAll(".item"),function(r){return r.getAttribute("data-id")});
+    try{await api("/v1/customers/reorder",{method:"POST",body:{service_day:day,customer_ids:ids}});list=await api("/v1/customers");draw()}catch(e){flash("err",e.message)}
+  }
+  function enableDrag(day){
+    var box=$("lst");
+    box.querySelectorAll("[data-mv]").forEach(function(b){b.onclick=function(){
+      var row=b.closest(".item"),dir=Number(b.getAttribute("data-mv"));
+      if(dir<0&&row.previousElementSibling)box.insertBefore(row,row.previousElementSibling);
+      else if(dir>0&&row.nextElementSibling)box.insertBefore(row.nextElementSibling,row);else return;
+      saveOrder(day);
+    }});
+    box.querySelectorAll(".grip").forEach(function(g){
+      g.onpointerdown=function(ev){
+        ev.preventDefault();
+        var row=g.closest(".item");row.classList.add("drag");g.setPointerCapture(ev.pointerId);
+        g.onpointermove=function(e){
+          var over=document.elementFromPoint(e.clientX,e.clientY);over=over&&over.closest&&over.closest(".item");
+          if(!over||over===row||over.parentNode!==box)return;
+          var r=over.getBoundingClientRect();
+          if(e.clientY<r.top+r.height/2)box.insertBefore(row,over);else box.insertBefore(row,over.nextSibling);
+        };
+        g.onpointerup=g.onpointercancel=async function(){
+          g.onpointermove=g.onpointerup=g.onpointercancel=null;row.classList.remove("drag");
+          await saveOrder(day);
+        };
+      };
+    });
   }
   $("q").oninput=draw;$("df").onchange=draw;draw();
   if($("nc"))$("nc").onclick=function(){go("customer","")};
 }
 function vPickCustomer(){S.arg={pick:true};return vCustomers()}
 async function vCustomer(){
-  var id=S.arg,c={customer_id:"",first_name:"",last_name:"",address:"",city:"",state:"",zip:"",phone:"",email:"",service_day:"Monday",amount_charged:0,notes:"",starting_date:"",status:"Active"};
+  var id=S.arg,c={customer_id:"",first_name:"",last_name:"",address:"",city:"",state:"",zip:"",phone:"",email:"",service_day:"Monday",amount_charged:0,notes:"",starting_date:"",status:"Active",route_order:0};
   if(id)c=await api("/v1/customers/"+encodeURIComponent(id));else{try{c.customer_id=(await api("/v1/customers/next-id")).customer_id}catch(e){}}
   var ro=!can("canEditCustomers")?" disabled":"";
   function f(k,l,t){return '<div><label>'+l+'</label><input id="f_'+k+'" value="'+esc(c[k])+'"'+(t?' type="'+t+'"':"")+ro+'></div>'}
   app.innerHTML='<div id="flash"></div><div class="card"><h2>'+(id?"Customer #"+esc(id):"New customer")+'</h2><div class="row">'+f("customer_id","Customer ID")+f("first_name","First name")+f("last_name","Last name")+'</div>'+
    f("address","Address")+'<div class="row">'+f("city","City")+f("state","State")+f("zip","ZIP")+'</div><div class="row">'+f("phone","Phone","tel")+f("email","Email","email")+'</div>'+
    '<div class="row"><div><label>Service day</label><select id="f_service_day"'+ro+'>'+DAYS.map(function(d){return "<option"+(d===c.service_day?" selected":"")+">"+d+"</option>"}).join("")+'</select></div>'+
-   '<div><label>Amount charged</label><input id="f_amount_charged" type="number" step="0.01" inputmode="decimal" value="'+esc(c.amount_charged)+'"'+ro+'></div></div>'+
+   '<div><label>Order in day</label><input id="f_route_order" type="number" min="1" step="1" inputmode="numeric" placeholder="Position" value="'+(c.route_order>0?esc(c.route_order):"")+'"'+ro+'></div></div>'+
+   '<div class="row"><div><label>Amount charged</label><input id="f_amount_charged" type="number" step="0.01" inputmode="decimal" value="'+esc(c.amount_charged)+'"'+ro+'></div></div>'+
    '<div class="row"><div><label>Starting date</label><input id="f_starting_date" value="'+esc(c.starting_date)+'"'+ro+'></div>'+
    '<div><label>Status</label><select id="f_status"'+ro+'><option'+(c.status!=="Inactive"?" selected":"")+'>Active</option><option'+(c.status==="Inactive"?" selected":"")+'>Inactive</option></select></div></div>'+
    '<label>Notes</label><textarea id="f_notes" rows="3"'+ro+'>'+esc(c.notes)+'</textarea>'+
@@ -281,6 +316,7 @@ async function vCustomer(){
   if($("sv"))$("sv").onclick=async function(){
     var b={};["customer_id","first_name","last_name","address","city","state","zip","phone","email","service_day","notes","starting_date","status"].forEach(function(k){b[k]=$("f_"+k).value.trim()});
     b.amount_charged=Number($("f_amount_charged").value||0);
+    b.route_order=b.service_day?Math.max(0,parseInt($("f_route_order").value,10)||0):0;
     if(b.starting_date&&!parseDate(b.starting_date))return flash("err","Starting date must be a valid MM/DD/YYYY date.");
     if(!b.customer_id)return flash("err","Customer ID is required.");
     try{if(id)await api("/v1/customers/"+encodeURIComponent(id),{method:"PUT",body:b});else await api("/v1/customers",{method:"POST",body:b});go("customers")}catch(e){flash("err",e.message)}};
@@ -296,7 +332,7 @@ async function vStatement(){
   var run=0;recs.forEach(function(r){run+=r.amount;r.run=run});
   var edit=can("canEditStatements");
   app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc(c.first_name)+' '+esc(c.last_name)+' <span class="s">#'+esc(c.customer_id)+'</span></h2>'+
-   '<div class="s">'+esc(c.address)+' '+esc(c.city)+' '+esc(c.state)+' '+esc(c.zip)+'</div><h2 class="'+(run>0?"pos":run<0?"neg":"")+'">Balance: '+money(run)+'</h2>'+
+   '<div class="s">'+mapLink(c)+'</div><h2 class="'+(run>0?"pos":run<0?"neg":"")+'">Balance: '+money(run)+'</h2>'+
    '<button class="b alt" id="bk">Back</button><button class="b alt" id="pr">Print / Save PDF</button></div>'+
    (edit?'<div class="card"><h2>Add record</h2><div class="row"><div><label>Date</label><input id="rd"></div><div><label>Type</label><select id="rt">'+types.map(function(t){return "<option>"+esc(t)+"</option>"}).join("")+'</select></div>'+
    '<div id="ckw" class="hide"><label>Check #</label><input id="rc" inputmode="numeric"></div><div><label>Amount</label><input id="ra" type="number" step="0.01" min="0" inputmode="decimal"></div></div>'+

@@ -99,6 +99,9 @@ export default {
         const rows = await turso(env, "SELECT MAX(CAST(customer_id AS INTEGER)) AS max_id FROM customers WHERE company_id = ? AND customer_id GLOB '[0-9]*'", requiredCompanyId(session));
         return json({ customer_id: String(Number(rows[0]?.max_id || 0) + 1) }, 200, request);
       }
+      if (url.pathname === "/v1/customers/reorder" && request.method === "POST") {
+        return await reorderCustomers(request, env, session);
+      }
       if (url.pathname === "/v1/customers" && request.method === "POST") {
         return await createCustomer(request, env, session);
       }
@@ -355,7 +358,7 @@ async function listCustomers(request, env, session) {
   const query = (url.searchParams.get("q") || "").trim().toLowerCase();
   const orderById = url.searchParams.get("order") === "id";
   const filters = customerAccessSql(session);
-  let sql = "SELECT customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status FROM customers WHERE company_id = ?";
+  let sql = "SELECT customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status, route_order FROM customers WHERE company_id = ?";
   const args = [requiredCompanyId(session)];
   sql += filters.sql;
   args.push(...filters.args);
@@ -366,8 +369,37 @@ async function listCustomers(request, env, session) {
   }
   sql += orderById
     ? " ORDER BY CASE WHEN customer_id GLOB '[0-9]*' THEN CAST(customer_id AS INTEGER) ELSE 999999999 END, customer_id"
-    : " ORDER BY service_day, last_name, first_name";
-  return json(await turso(env, sql, ...args), 200, request);
+    : " ORDER BY service_day, CASE WHEN route_order > 0 THEN 0 ELSE 1 END, route_order, last_name, first_name";
+  const rows = await turso(env, sql, ...args);
+  if (!orderById && !query && !filters.sql) await healRouteOrders(env, requiredCompanyId(session), rows);
+  return json(rows, 200, request);
+}
+
+async function healRouteOrders(env, companyId, rows) {
+  const byDay = new Map();
+  for (const r of rows) if (r.service_day) { if (!byDay.has(r.service_day)) byDay.set(r.service_day, []); byDay.get(r.service_day).push(r); }
+  const statements = [];
+  for (const [day, list] of byDay) {
+    if (list.every((r, i) => Number(r.route_order) === i + 1)) continue;
+    list.forEach((r, i) => {
+      if (Number(r.route_order) !== i + 1) {
+        r.route_order = i + 1;
+        statements.push({ sql: "UPDATE customers SET route_order = ? WHERE company_id = ? AND customer_id = ?", args: [i + 1, companyId, r.customer_id] });
+      }
+    });
+  }
+  if (statements.length) { try { await tursoTransaction(env, statements); } catch (e) { /* display order still correct */ } }
+}
+
+async function placeInRoute(env, companyId, day, customerId, desired) {
+  if (!day) return;
+  const rows = await turso(env, "SELECT customer_id FROM customers WHERE company_id = ? AND service_day = ? ORDER BY CASE WHEN route_order > 0 THEN 0 ELSE 1 END, route_order, last_name, first_name", companyId, day);
+  const ids = rows.map(r => String(r.customer_id)).filter(id => id !== String(customerId));
+  const current = rows.findIndex(r => String(r.customer_id) === String(customerId));
+  let index = desired > 0 ? desired - 1 : (current >= 0 ? current : ids.length);
+  index = Math.max(0, Math.min(index, ids.length));
+  if (customerId !== "") ids.splice(index, 0, String(customerId));
+  await tursoTransaction(env, ids.map((id, i) => ({ sql: "UPDATE customers SET route_order = ? WHERE company_id = ? AND customer_id = ?", args: [i + 1, companyId, id] })));
 }
 
 async function getCustomer(request, env, session, customerId) {
@@ -389,10 +421,12 @@ async function createCustomer(request, env, session) {
   }
   const companyId = requiredCompanyId(session);
   await turso(env,
-    "INSERT INTO customers (company_id, customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO customers (company_id, customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status, route_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     companyId, customer.customer_id, customer.first_name, customer.last_name, customer.address || "", customer.city || "",
     customer.state || "", customer.zip || "", customer.phone || "", customer.email || "", customer.service_day || "",
-    Number(customer.amount_charged || 0), customer.notes || "", customer.starting_date || "", customer.status === "Inactive" ? "Inactive" : "Active");
+    Number(customer.amount_charged || 0), customer.notes || "", customer.starting_date || "", customer.status === "Inactive" ? "Inactive" : "Active", routeOrderFor(customer));
+  await turso(env, "SELECT 1");
+  await placeInRoute(env, companyId, customer.service_day || "", customer.customer_id, routeOrderFor(customer));
   return json({ saved: true, customer_id: customer.customer_id }, 201, request);
 }
 
@@ -402,10 +436,36 @@ async function updateCustomer(request, env, session, customerId) {
   const customer = await readJson(request);
   validateCustomer({ ...existing, ...customer, customer_id: customerId });
   await turso(env,
-    "UPDATE customers SET first_name = ?, last_name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, email = ?, service_day = ?, amount_charged = ?, notes = ?, starting_date = ?, status = ? WHERE company_id = ? AND customer_id = ?",
+    "UPDATE customers SET first_name = ?, last_name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, email = ?, service_day = ?, amount_charged = ?, notes = ?, starting_date = ?, status = ?, route_order = ? WHERE company_id = ? AND customer_id = ?",
     customer.first_name, customer.last_name, customer.address || "", customer.city || "", customer.state || "",
     customer.zip || "", customer.phone || "", customer.email || "", customer.service_day || "",
-    Number(customer.amount_charged || 0), customer.notes || "", customer.starting_date || "", customer.status === "Inactive" ? "Inactive" : "Active", requiredCompanyId(session), customerId);
+    Number(customer.amount_charged || 0), customer.notes || "", customer.starting_date || "", customer.status === "Inactive" ? "Inactive" : "Active", routeOrderFor({ ...customer, route_order: customer.route_order ?? existing.route_order }), requiredCompanyId(session), customerId);
+  const companyId = requiredCompanyId(session);
+  const newDay = customer.service_day || "";
+  const sameDay = newDay === (existing.service_day || "");
+  await placeInRoute(env, companyId, newDay, customerId, sameDay ? Number(customer.route_order ?? existing.route_order) : Number(customer.route_order || 0));
+  if (!sameDay) await placeInRoute(env, companyId, existing.service_day || "", "", 0).catch(() => {});
+  return json({ saved: true }, 200, request);
+}
+
+function routeOrderFor(customer) {
+  const n = Math.floor(Number(customer.route_order || 0));
+  return customer.service_day && Number.isFinite(n) && n > 0 ? Math.min(n, 1000000) : 0;
+}
+
+async function reorderCustomers(request, env, session) {
+  requirePermission(session, "canEditCustomers");
+  const body = await readJson(request);
+  const day = requiredString(body.service_day, "service_day", 20);
+  if (!Array.isArray(body.customer_ids) || body.customer_ids.length > 5000) throw httpError(400, "customer_ids must be an array");
+  await turso(env, "SELECT 1");
+  const companyId = requiredCompanyId(session);
+  const statements = [];
+  let position = 1;
+  for (const id of body.customer_ids) {
+    statements.push({ sql: "UPDATE customers SET route_order = ? WHERE company_id = ? AND customer_id = ? AND service_day = ?", args: [position++, companyId, String(id), day] });
+  }
+  if (statements.length) await tursoTransaction(env, statements);
   return json({ saved: true }, 200, request);
 }
 
@@ -453,7 +513,7 @@ async function deleteStatement(request, env, session, recordId) {
 async function findAccessibleCustomer(env, session, customerId) {
   const filters = customerAccessSql(session);
   const rows = await turso(env,
-    "SELECT customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status FROM customers WHERE company_id = ? AND customer_id = ?" + filters.sql + " LIMIT 1",
+    "SELECT customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status, route_order FROM customers WHERE company_id = ? AND customer_id = ?" + filters.sql + " LIMIT 1",
     requiredCompanyId(session), customerId, ...filters.args);
   if (!rows.length) throw httpError(404, "Customer not found or not assigned to this employee");
   return rows[0];
@@ -572,7 +632,7 @@ async function hashPassword(password) {
 }
 
 const BACKUP_TABLES = {
-  customers: ["customer_id", "first_name", "last_name", "address", "city", "state", "zip", "phone", "email", "service_day", "amount_charged", "notes", "starting_date", "status"],
+  customers: ["customer_id", "first_name", "last_name", "address", "city", "state", "zip", "phone", "email", "service_day", "amount_charged", "notes", "starting_date", "status", "route_order"],
   statement_records: ["record_id", "customer_id", "record_date", "type", "amount"],
   record_types: ["type_name"],
   pdf_settings: ["setting_key", "setting_value"]
@@ -608,7 +668,7 @@ async function restoreCompanyBackup(request, env, companyId) {
     const columns = BACKUP_TABLES[table];
     const sql = `INSERT INTO ${table} (company_id, ${columns.join(", ")}) VALUES (${["?", ...columns.map(() => "?")].join(", ")})`;
     for (const row of backup[table]) {
-      statements.push({ sql, args: [companyId, ...columns.map(column => row[column] ?? (column === "status" ? "Active" : column.endsWith("amount") || column === "amount_charged" ? 0 : ""))] });
+      statements.push({ sql, args: [companyId, ...columns.map(column => row[column] ?? (column === "status" ? "Active" : column.endsWith("amount") || column === "amount_charged" || column === "route_order" ? 0 : ""))] });
     }
   }
   await tursoTransaction(env, statements);
@@ -648,7 +708,8 @@ async function turso(env, sql, ...args) {
   schemaReady ??= (async () => {
     for (const ddl of [
       "ALTER TABLE customers ADD COLUMN starting_date TEXT NOT NULL DEFAULT ''",
-      "ALTER TABLE customers ADD COLUMN status TEXT NOT NULL DEFAULT 'Active'"
+      "ALTER TABLE customers ADD COLUMN status TEXT NOT NULL DEFAULT 'Active'",
+      "ALTER TABLE customers ADD COLUMN route_order INTEGER NOT NULL DEFAULT 0"
     ]) {
       try { await tursoCore(env, ddl); } catch { /* column already exists */ }
     }

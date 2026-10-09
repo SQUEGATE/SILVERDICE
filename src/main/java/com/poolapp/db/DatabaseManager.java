@@ -150,7 +150,8 @@ public class DatabaseManager {
                     + "amount_charged REAL,"
                     + "notes TEXT,"
                     + "starting_date TEXT DEFAULT '',"
-                    + "status TEXT DEFAULT 'Active'"
+                    + "status TEXT DEFAULT 'Active',"
+                    + "route_order INTEGER DEFAULT 0"
                     + ");");
             statement.execute("CREATE TABLE IF NOT EXISTS statement_records ("
                     + "record_id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -173,6 +174,7 @@ public class DatabaseManager {
             addColumnIfMissing(connection, "customers", "zip", "TEXT");
             addColumnIfMissing(connection, "customers", "starting_date", "TEXT DEFAULT ''");
             addColumnIfMissing(connection, "customers", "status", "TEXT DEFAULT 'Active'");
+            addColumnIfMissing(connection, "customers", "route_order", "INTEGER DEFAULT 0");
         } catch (SQLException e) {
             throw new RuntimeException("Failed to initialize database", e);
         }
@@ -215,7 +217,7 @@ public class DatabaseManager {
             apiPost("/v1/customers", customerJson(customer));
             return;
         }
-        String sql = "INSERT INTO customers (customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO customers (customer_id, first_name, last_name, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status, route_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, customer.getId());
             statement.setString(2, customer.getFirstName());
@@ -231,6 +233,7 @@ public class DatabaseManager {
             statement.setString(12, customer.getNotes());
             statement.setString(13, customer.getStartingDate());
             statement.setString(14, customer.getStatus());
+            statement.setInt(15, customer.getRouteOrder());
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Unable to add customer", e);
@@ -242,7 +245,7 @@ public class DatabaseManager {
             apiPut("/v1/customers/" + encodePath(customer.getId()), customerJson(customer));
             return;
         }
-        String sql = "UPDATE customers SET first_name = ?, last_name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, email = ?, service_day = ?, amount_charged = ?, notes = ?, starting_date = ?, status = ? WHERE customer_id = ?";
+        String sql = "UPDATE customers SET first_name = ?, last_name = ?, address = ?, city = ?, state = ?, zip = ?, phone = ?, email = ?, service_day = ?, amount_charged = ?, notes = ?, starting_date = ?, status = ?, route_order = ? WHERE customer_id = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, customer.getFirstName());
             statement.setString(2, customer.getLastName());
@@ -257,7 +260,8 @@ public class DatabaseManager {
             statement.setString(11, customer.getNotes());
             statement.setString(12, customer.getStartingDate());
             statement.setString(13, customer.getStatus());
-            statement.setString(14, customer.getId());
+            statement.setInt(14, customer.getRouteOrder());
+            statement.setString(15, customer.getId());
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Unable to update customer", e);
@@ -266,7 +270,7 @@ public class DatabaseManager {
 
     public List<Customer> getAllCustomers() {
         if (isRemote()) return remoteCustomers(CompManagerApiClient.array(apiGet("/v1/customers")));
-        String sql = "SELECT * FROM customers ORDER BY service_day, last_name, first_name";
+        String sql = "SELECT * FROM customers ORDER BY service_day, CASE WHEN route_order > 0 THEN 0 ELSE 1 END, route_order, last_name, first_name";
         List<Customer> customers = new ArrayList<>();
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet resultSet = statement.executeQuery()) {
             while (resultSet.next()) {
@@ -280,7 +284,7 @@ public class DatabaseManager {
 
     public List<Customer> searchCustomers(String query) {
         if (isRemote()) return remoteCustomers(CompManagerApiClient.array(apiGet("/v1/customers?q=" + encodeQuery(query))));
-        String sql = "SELECT * FROM customers WHERE lower(first_name) LIKE ? OR lower(last_name) LIKE ? OR lower(address) LIKE ? OR lower(city) LIKE ? OR lower(state) LIKE ? OR lower(zip) LIKE ? OR lower(email) LIKE ? ORDER BY service_day, last_name, first_name";
+        String sql = "SELECT * FROM customers WHERE lower(first_name) LIKE ? OR lower(last_name) LIKE ? OR lower(address) LIKE ? OR lower(city) LIKE ? OR lower(state) LIKE ? OR lower(zip) LIKE ? OR lower(email) LIKE ? ORDER BY service_day, CASE WHEN route_order > 0 THEN 0 ELSE 1 END, route_order, last_name, first_name";
         List<Customer> customers = new ArrayList<>();
         String pattern = "%" + query.toLowerCase() + "%";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -550,7 +554,27 @@ public class DatabaseManager {
                 .put("amount_charged", customer.getAmountCharged())
                 .put("notes", customer.getNotes())
                 .put("starting_date", customer.getStartingDate())
-                .put("status", customer.getStatus());
+                .put("status", customer.getStatus())
+                .put("route_order", customer.getRouteOrder());
+    }
+
+    public void reorderCustomers(String serviceDay, List<String> customerIds) {
+        if (isRemote()) {
+            apiPost("/v1/customers/reorder", new JSONObject().put("service_day", serviceDay).put("customer_ids", new JSONArray(customerIds)));
+            return;
+        }
+        try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement("UPDATE customers SET route_order = ? WHERE customer_id = ? AND service_day = ?")) {
+            int position = 1;
+            for (String id : customerIds) {
+                statement.setInt(1, position++);
+                statement.setString(2, id);
+                statement.setString(3, serviceDay);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        } catch (SQLException e) {
+            throw new RuntimeException("Unable to save customer order", e);
+        }
     }
 
     private List<Customer> remoteCustomers(JSONArray rows) {
@@ -566,6 +590,7 @@ public class DatabaseManager {
                 BigDecimal.valueOf(row.optDouble("amount_charged", 0)).setScale(2, RoundingMode.HALF_UP), row.optString("notes"));
         customer.setStartingDate(row.optString("starting_date", ""));
         customer.setStatus(row.optString("status", "Active"));
+        customer.setRouteOrder(row.optInt("route_order", 0));
         return customer;
     }
 
@@ -612,6 +637,7 @@ public class DatabaseManager {
         Customer customer = new Customer(id, firstName, lastName, address, city, state, zip, phone, email, serviceDay, amount, notes);
         customer.setStartingDate(resultSet.getString("starting_date"));
         customer.setStatus(resultSet.getString("status"));
+        customer.setRouteOrder(resultSet.getInt("route_order"));
         return customer;
     }
 

@@ -327,7 +327,7 @@ async function vCustomer(){
 
 /* ---------- statement ---------- */
 async function vStatement(){
-  await loadKw();var id=S.arg;
+  S.kw=null;await loadKw();var id=S.arg;
   var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api("/v1/customers/"+encodeURIComponent(id)+"/statements"),api("/v1/record-types")]);
   var c=res[0],recs=res[1].slice().sort(cmpRecords),types=res[2];
   var run=0;recs.forEach(function(r){run+=r.amount;r.run=run});
@@ -407,7 +407,17 @@ function printStatement(c,recs,bal){
    '<div class="ps-total"><span>Total:</span><b>'+stmtAmt(total)+'</b></div>'+
    '<div class="ps-foot"><div>'+esc(st.footerText||"")+'</div><div>'+esc(gen)+'</div></div>'+
    '</div>';
-  window.print();
+  var fn=String(c.last_name||"").trim(),gn=String(c.first_name||"").trim();
+  var base=((fn&&gn)?fn+"_"+gn:(gn+" "+fn).trim())+"_POOL_STATEMENT";
+  base=base.toUpperCase().replace(/[^A-Z0-9_]/g,"_").replace(/_+/g,"_").replace(/^_|_$/g,"");
+  var oldTitle=document.title,restored=false;
+  function restore(){if(restored)return;restored=true;document.title=oldTitle;window.removeEventListener("afterprint",restore)}
+  window.addEventListener("afterprint",restore);
+  document.title=base;
+  var imgs=[].slice.call($("printarea").querySelectorAll("img")),go2=function(){window.print()};
+  if(!imgs.length)go2();
+  else Promise.all(imgs.map(function(im){return im.decode?im.decode().catch(function(){}):new Promise(function(r){if(im.complete)r();else{im.onload=im.onerror=r}})})).then(go2);
+  setTimeout(restore,60000);
 }
 /* ---------- monthly statement ---------- */
 async function vMonthly(){

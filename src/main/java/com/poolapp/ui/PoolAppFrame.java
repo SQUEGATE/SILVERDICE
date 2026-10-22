@@ -209,6 +209,7 @@ public class PoolAppFrame extends JFrame {
         activeRecordCustomerId = "";
         customersById = new ArrayList<>();
         pdfSettings = loadPdfSettings();
+        syncEmbeddedLogo(pdfSettings);
         loadRecordTypeKeywords();
 
         ((AbstractDocument) zipField.getDocument()).setDocumentFilter(new DigitFilter(10));
@@ -2484,6 +2485,7 @@ public class PoolAppFrame extends JFrame {
     private void createStatementPDF(Customer customer, List<StatementRecord> records, File pdfFile) throws IOException {
         try {
             pdfSettings = loadPdfSettings();
+            syncEmbeddedLogo(pdfSettings);
         } catch (RuntimeException ignored) {
             // Keep the settings already in memory if they cannot be refreshed.
         }
@@ -2732,6 +2734,25 @@ public class PoolAppFrame extends JFrame {
             // A missing or unreadable logo should not stop the statement from being generated.
         }
         return null;
+    }
+
+    // Shares this PC's logo file with the web app and other PCs whenever the stored copy is missing or outdated.
+    private void syncEmbeddedLogo(PdfSettings settings) {
+        String path = settings.getLogoPath();
+        if (path == null || path.isBlank() || !new File(path).isFile()) {
+            return;
+        }
+        String previous = settings.getLogoData() == null ? "" : settings.getLogoData();
+        refreshEmbeddedLogo(settings);
+        String current = settings.getLogoData() == null ? "" : settings.getLogoData();
+        if (!current.isEmpty() && !current.equals(previous)) {
+            try {
+                dbManager.savePdfSetting("logoData", current);
+            } catch (RuntimeException e) {
+                settings.setLogoData(previous);
+                System.err.println("Unable to share the PDF logo: " + e.getMessage());
+            }
+        }
     }
 
     private void refreshEmbeddedLogo(PdfSettings settings) {

@@ -12,42 +12,43 @@
 <style>
 *{box-sizing:border-box}
 :root{--bg:#f1f5f9;--card:#fff;--ink:#0f172a;--mute:#64748b;--brand:#2563eb;--bad:#dc2626;--good:#16a34a;--line:#e2e8f0}
-body{margin:0;font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);-webkit-text-size-adjust:100%}
+body{margin:0;font:1rem/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);-webkit-text-size-adjust:100%}
 header{position:sticky;top:0;z-index:10;background:#0f172a;color:#fff;display:flex;align-items:center;gap:10px;padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top))}
-header h1{font-size:17px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-header button{background:#1e293b;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:16px}
+header{flex-wrap:wrap}header h1{font-size:1.0625rem;margin:0;flex:1;min-width:0;overflow-wrap:anywhere}
+header button{background:#1e293b;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:1rem}
 #quick{display:flex;gap:8px;overflow-x:auto;padding:8px 12px;background:#e2e8f0}
 #quick:empty{display:none}
-#quick button{flex:0 0 auto;border:0;background:#fff;border-radius:16px;padding:6px 12px;font-size:14px}
+#quick button{flex:0 0 auto;border:0;background:#fff;border-radius:16px;padding:6px 12px;font-size:0.875rem}
 main{max-width:900px;margin:0 auto;padding:12px;padding-bottom:calc(24px + env(safe-area-inset-bottom))}
 .card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
-h2{margin:4px 0 12px;font-size:20px}
-label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
-input,select,textarea{width:100%;padding:12px;font-size:16px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:var(--ink)}
-button.b{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:12px 16px;font-size:16px;margin:4px 4px 4px 0}
+h2{margin:4px 0 12px;font-size:1.25rem}
+label{display:block;font-size:0.8125rem;color:var(--mute);margin:10px 0 4px}
+input,select,textarea{width:100%;padding:12px;font-size:1rem;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:var(--ink)}
+button.b{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:12px 16px;font-size:1rem;margin:4px 4px 4px 0}
 button.b.alt{background:#475569}button.b.bad{background:var(--bad)}button.b.ok{background:var(--good)}
-.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 140px}
-.item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}
-.item:last-child{border:0}.item .t{flex:1;min-width:0}.item .s{color:var(--mute);font-size:13px}
-.item .t b{display:block;overflow:hidden;text-overflow:ellipsis}
-.item .grip{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;font-size:22px;padding:6px 10px;color:var(--mute)}.item.drag{background:#e8f0fe;opacity:.85}.mv{display:flex;gap:4px}.mv .b{width:auto;margin:0;padding:6px 10px}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 9rem;min-width:0}
+.item{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border:0}.item .t{flex:1 1 12rem;min-width:0;overflow-wrap:anywhere}.item .s{color:var(--mute);font-size:0.8125rem}
+.item .t b{display:block;overflow-wrap:anywhere}
+.item .grip{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;font-size:1.375rem;padding:6px 10px;color:var(--mute)}.item.drag{background:#e8f0fe;opacity:.85}.mv{display:flex;flex-direction:column;gap:4px;flex:0 0 auto}.mv .b{width:2.4rem;min-width:0;height:2rem;margin:0;padding:0;font-size:0.8125rem;line-height:1}.item .t{min-width:0;flex:1 1 auto}
 .pos{color:var(--good)}.neg{color:var(--bad)}
 .err{background:#fee2e2;color:#991b1b;padding:10px;border-radius:8px;margin-bottom:10px}
 .msg{background:#dcfce7;color:#166534;padding:10px;border-radius:8px;margin-bottom:10px}
-table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left}
+img,table{max-width:100%}table{width:100%;border-collapse:collapse;font-size:0.875rem}th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left}
 td.r,th.r{text-align:right}.scroll{overflow-x:auto}
 .chk{display:flex;align-items:center;gap:8px;margin:6px 0}.chk input{width:auto}
 #drawer{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20;display:none}
 #drawer.open{display:block}
-#drawer nav{background:#fff;width:min(300px,85vw);height:100%;overflow-y:auto;padding:12px;padding-top:calc(12px + env(safe-area-inset-top))}
+#drawer nav{background:#fff;width:min(19rem,85vw);height:100%;overflow-y:auto;padding:12px;padding-top:calc(12px + env(safe-area-inset-top))}
 #drawer .nv{display:flex;align-items:center;border-bottom:1px solid var(--line)}
-#drawer .nv button.go{flex:1;text-align:left;background:none;border:0;padding:14px 4px;font-size:17px}
-#drawer .nv button.star{background:none;border:0;font-size:22px;color:#f59e0b;padding:8px}
+#drawer .nv button.go{flex:1;text-align:left;background:none;border:0;padding:14px 4px;font-size:1.0625rem}
+#drawer .nv button.star{background:none;border:0;font-size:1.375rem;color:#f59e0b;padding:8px}
 .hide{display:none}
 #printarea{display:none}
 @media print{body>*:not(#printarea){display:none!important}#printarea{display:block}}
-@media(min-width:760px){#drawer{display:block;position:fixed;right:auto;width:240px;background:none;inset:48px auto 0 0;top:56px}
- #drawer nav{width:240px}#menuBtn{display:none}body.authed main,body.authed #quick{margin-left:250px;max-width:none}}
+@media(min-width:62em){#drawer{display:block;position:fixed;right:auto;width:15rem;background:none;inset:0 auto 0 0;top:4rem}
+ #drawer nav{width:15rem}#menuBtn{display:none}body.authed main,body.authed #quick{margin-left:16rem;max-width:none}}
+button.b{max-width:100%}.card{overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -249,12 +250,12 @@ async function vCustomers(){
   var list=await api("/v1/customers");
   var active=S.arg&&S.arg.pick;
   app.innerHTML='<div id="flash"></div><div class="card"><div class="row"><input id="q" placeholder="Search name, address, city..."><select id="df"><option value="">All days</option>'+DAYS.map(function(d){return "<option>"+d+"</option>"}).join("")+'</select></div>'+
-   (can("canEditCustomers")&&!active?'<button class="b ok" id="nc">+ New customer</button>':'')+'<p class="s" id="hint" style="display:none">Drag \u2630 or tap \u25B2\u25BC to set the route order for this day.</p><div id="lst"></div></div>';
+   (can("canEditCustomers")&&!active?'<button class="b ok" id="nc">+ New customer</button>':'')+'<p class="s" id="hint" style="display:none">Tap \u25B2\u25BC to set the route order for this day.</p><div id="lst"></div></div>';
   function draw(){
     var q=$("q").value.toLowerCase(),d=$("df").value;
     var rows=list.filter(function(c){return (!d||c.service_day===d)&&(!q||(c.customer_id+" "+c.first_name+" "+c.last_name+" "+c.address+" "+c.city+" "+c.phone).toLowerCase().indexOf(q)>=0)});
     var canDrag=!!d&&!q&&!active&&can("canEditCustomers");
-    $("lst").innerHTML=rows.length?rows.map(function(c){return '<div class="item" data-id="'+esc(c.customer_id)+'">'+(canDrag?'<span class="grip" title="Drag to reorder">\u2630</span><span class="mv"><button class="b alt" data-mv="-1" aria-label="Move up">\u25B2</button><button class="b alt" data-mv="1" aria-label="Move down">\u25BC</button></span>':'')+'<div class="t"><b>'+(d&&c.route_order>0?esc(c.route_order)+'. ':'')+esc(c.last_name)+', '+esc(c.first_name)+(c.status==="Inactive"?' (inactive)':'')+'</b><span class="s">#'+esc(c.customer_id)+' \u2022 '+esc(c.service_day)+' \u2022 '+mapLink(c)+' \u2022 '+money(c.amount_charged)+'</span></div>'+
+    $("lst").innerHTML=rows.length?rows.map(function(c){return '<div class="item" data-id="'+esc(c.customer_id)+'">'+(canDrag?'<span class="mv"><button class="b alt" data-mv="-1" aria-label="Move up">\u25B2</button><button class="b alt" data-mv="1" aria-label="Move down">\u25BC</button></span>':'')+'<div class="t"><b>'+(d&&c.route_order>0?esc(c.route_order)+'. ':'')+esc(c.last_name)+', '+esc(c.first_name)+(c.status==="Inactive"?' (inactive)':'')+'</b><span class="s">#'+esc(c.customer_id)+' \u2022 '+esc(c.service_day)+' \u2022 '+mapLink(c)+' \u2022 '+money(c.amount_charged)+'</span></div>'+
       (can("canViewStatements")?'<button class="b" data-st="'+esc(c.customer_id)+'">Statement</button>':'')+
       (!active&&(can("canViewCustomerDetails")||can("canEditCustomers"))?'<button class="b alt" data-cu="'+esc(c.customer_id)+'">Details</button>':'')+'</div>'}).join(""):'<p class="s">No customers found.</p>';
     app.querySelectorAll("[data-st]").forEach(function(b){b.onclick=function(){go("statement",b.getAttribute("data-st"))}});
@@ -358,16 +359,56 @@ async function vStatement(){
       try{await api("/v1/customers/"+encodeURIComponent(id)+"/statements",{method:"POST",body:{record_date:rd.value,type:tn,amount:isCredit(t)?a:-a}});go("statement",id)}catch(e){flash("err",e.message)}};
   }
 }
+function stmtPhone(p){var d=String(p||"").replace(/\D/g,"");if(d.length===11&&d[0]==="1")d=d.slice(1);return d.length===10?"("+d.slice(0,3)+") "+d.slice(3,6)+"-"+d.slice(6):String(p||"").trim()}
+function stmtAmt(n){n=Number(n)||0;var v="$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});return n<0?"("+v+")":v}
+function stmtAddr(a){a=String(a||"").trim();if(!a)return[];var p=a.split(/\r?\n|\|/).map(function(x){return x.trim()}).filter(Boolean);if(p.length>1)return p;var i=a.indexOf(",");return i>0?[a.slice(0,i).trim(),a.slice(i+1).trim()]:[a]}
 function printStatement(c,recs,bal){
   var st=(S.kw&&S.kw.settings)||{};
-  $("printarea").innerHTML='<div style="font-family:Arial,sans-serif;padding:16px"><h1 style="margin:0">'+esc(st.companyName||S.account.companyName||"Statement")+'</h1><div>'+esc(st.companyAddress||"")+' '+esc(st.companyPhone||"")+' '+esc(st.companyEmail||"")+'</div><hr>'+
-   '<h2>Statement \u2013 '+esc(c.first_name)+' '+esc(c.last_name)+' (#'+esc(c.customer_id)+')</h2><div>'+esc(c.address)+' '+esc(c.city)+' '+esc(c.state)+' '+esc(c.zip)+'</div><br>'+
-   '<table style="width:100%;border-collapse:collapse" border="1" cellpadding="6"><tr><th>Date</th><th>Type</th><th align="right">Amount</th><th align="right">Balance</th></tr>'+
-   recs.map(function(r){return '<tr><td>'+esc(r.record_date)+'</td><td>'+esc(r.type)+'</td><td align="right">'+money(r.amount)+'</td><td align="right">'+money(r.run)+'</td></tr>'}).join("")+
-   '</table><h3>Balance due: '+money(bal)+'</h3><div>'+esc(st.footerText||"")+'</div>'+(String(st.showGenerationDate)==="false"?"":'<div>Generated '+fmtDate(new Date())+'</div>')+'</div>';
+  var name=(st.companyName||S.account.companyName||"").trim(),email=(st.companyEmail||"").trim(),pay=(st.paymentInfo||"").trim();
+  var head=stmtAddr(st.companyAddress).map(esc);
+  if(st.companyPhone)head.push(esc(stmtPhone(st.companyPhone)));
+  if(email&&pay.toLowerCase().indexOf(email.toLowerCase())<0)head.push(esc(email));
+  var logo=String(st.showLogo)!=="false"&&/^data:image\/(png|jpeg);base64,/.test(st.logoData||"")?'<img src="'+st.logoData+'" style="max-width:'+Math.max(40,Number(st.logoWidth)||150)+'pt;max-height:'+Math.max(30,Number(st.logoHeight)||90)+'pt">':"";
+  var csz=(c.city||"").trim();if((c.state||"").trim())csz+=(csz?", ":"")+c.state.trim();if((c.zip||"").trim())csz+=(csz?" ":"")+c.zip.trim();
+  var day=(c.service_day||"").trim()?((Number(c.route_order)>0?c.route_order+" ":"")+c.service_day.trim().toUpperCase()):"";
+  var info=[["Account No.:",c.customer_id],["Phone:",stmtPhone(c.phone)],["Service Day:",day],["Starting Date:",c.starting_date]];
+  var parts=pay.split("|").map(function(x){return x.trim()}).filter(Boolean);
+  var total=recs.reduce(function(s,r){return s+(Number(r.amount)||0)},0);
+  var gen=String(st.showGenerationDate)==="false"?"":new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  var land=String(st.landscape)==="true",size=(st.pageSize==="A4"?"A4":"letter")+(land?" landscape":"");
+  $("printarea").innerHTML='<style>'+
+   '@page{size:'+size+';margin:0.55in 0.55in 0.7in;@bottom-right{content:"Page " counter(page) " of " counter(pages);font:8pt Arial,sans-serif;color:#595959}}'+
+   '#printarea .ps{font-family:Arial,Helvetica,sans-serif;color:#000;font-size:10pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}'+
+   '#printarea .ps-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16pt}'+
+   '#printarea .ps-name{font-size:22pt;color:#7f7f7f;text-transform:uppercase;margin-bottom:4pt}'+
+   '#printarea .ps-co{font-weight:bold;font-size:11pt;line-height:1.3}'+
+   '#printarea .ps-title{text-align:center;color:#1f5fa0;font-size:20pt;margin:-14pt 0 8pt}'+
+   '#printarea .ps-box{border:0.75pt solid #bfbfbf;padding:6pt 8pt;margin-bottom:8pt}'+
+   '#printarea .ps-cust{display:flex;justify-content:space-between;gap:16pt;line-height:1.45}'+
+   '#printarea .ps-cust table{border-collapse:collapse;width:auto;min-width:38%}#printarea .ps-cust td{padding:0;border:0;font-size:10pt;background:none}#printarea .ps-cust td.l{color:#595959;padding-right:18pt}#printarea .ps-cust td.v{text-align:right}'+
+   '#printarea .ps-pay{display:flex;justify-content:center;gap:24pt;flex-wrap:wrap;color:#1f5fa0;font-size:10.5pt}'+
+   '#printarea table.ps-t{width:100%;border-collapse:collapse;border:0.75pt solid #bfbfbf}'+
+   '#printarea table.ps-t th{color:#595959;font-weight:bold;padding:5pt 6pt;border-bottom:0.75pt solid #bfbfbf;text-align:left}'+
+   '#printarea table.ps-t td{padding:3.5pt 6pt;border-bottom:0.75pt solid #bfbfbf;font-size:9.5pt}'+
+   '#printarea table.ps-t tr:nth-child(even) td{background:#f2f2f2}#printarea table.ps-t tr{break-inside:avoid;page-break-inside:avoid}'+
+   '#printarea .ps .c{text-align:center}#printarea .ps .r{text-align:right}#printarea table.ps-t th{font-size:10.5pt}#printarea table.ps-t th.c{text-align:center}#printarea table.ps-t th.r{text-align:right}'+
+   '#printarea .ps-total{display:flex;justify-content:flex-end;gap:60pt;margin-top:6pt;padding-right:6pt}#printarea .ps-total span{color:#595959}#printarea .ps-total b{font-size:11.5pt}'+
+   '#printarea .ps-foot{display:flex;justify-content:space-between;align-items:flex-end;margin-top:28pt;color:#595959;font-size:8.5pt}'+
+   '</style><div class="ps">'+
+   '<div class="ps-top"><div>'+(name?'<div class="ps-name">'+esc(name)+'</div>':"")+'<div class="ps-co">'+head.join("<br>")+'</div></div><div>'+logo+'</div></div>'+
+   '<div class="ps-title">STATEMENT</div>'+
+   '<div class="ps-box ps-cust"><div><b style="color:#595959;font-size:11pt">'+esc(((c.first_name||"")+" "+(c.last_name||"")).trim())+'</b><br>'+esc(c.address||"")+'<br>'+esc(csz)+'</div>'+
+   '<table>'+info.map(function(x){return '<tr><td class="l">'+x[0]+'</td><td class="v">'+esc(x[1]||"")+'</td></tr>'}).join("")+'</table></div>'+
+   '<div class="ps-box"><b style="color:#595959">Note:</b> '+esc(c.notes||"")+'</div>'+
+   (parts.length?'<div class="ps-box ps-pay">'+parts.map(function(x){return "<span>"+esc(x)+"</span>"}).join("")+'</div>':"")+
+   '<table class="ps-t"><thead><tr><th class="c" style="width:20%">Date</th><th>Description</th><th class="r" style="width:24%">Price/Credit</th></tr></thead><tbody>'+
+   (recs.length?recs.map(function(r){return '<tr><td class="c">'+esc(r.record_date)+'</td><td>'+esc(String(r.type||"").toUpperCase())+'</td><td class="r">'+stmtAmt(r.amount)+'</td></tr>'}).join(""):'<tr><td></td><td style="color:#595959">No records</td><td></td></tr>')+
+   '</tbody></table>'+
+   '<div class="ps-total"><span>Total:</span><b>'+stmtAmt(total)+'</b></div>'+
+   '<div class="ps-foot"><div>'+esc(st.footerText||"")+'</div><div>'+esc(gen)+'</div></div>'+
+   '</div>';
   window.print();
 }
-
 /* ---------- monthly statement ---------- */
 async function vMonthly(){
   await loadKw();
@@ -426,13 +467,25 @@ async function vTypes(){
 /* ---------- pdf settings (company details used on printed statements) ---------- */
 async function vPdf(){
   await loadKw();var s=S.kw.settings,edit=can("canEditPdf");
-  var F=[["companyName","Company name"],["companyAddress","Address"],["companyPhone","Phone"],["companyEmail","Email"],["footerText","Footer text"]];
-  app.innerHTML='<div id="flash"></div><div class="card"><h2>PDF Settings</h2><p class="s">Used on printed / saved statements. Fonts, margins and logo positions are managed in the desktop app.</p>'+
+  var F=[["companyName","Company name"],["companyAddress","Address"],["companyPhone","Phone"],["companyEmail","Email"],["paymentInfo","Payment info (separate items with |)"],["footerText","Footer text"]];
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>PDF Settings</h2><p class="s">Used on printed / saved statements. Fonts, margins and logo size are managed in the desktop app.</p>'+
    F.map(function(f){return '<label>'+f[1]+'</label><input id="s_'+f[0]+'" value="'+esc(s[f[0]]||"")+'"'+(edit?"":" disabled")+'>'}).join("")+
-   '<div class="chk"><input type="checkbox" id="s_gen"'+(String(s.showGenerationDate)==="false"?"":" checked")+(edit?"":" disabled")+'><span>Show generation date</span></div>'+(edit?'<button class="b" id="sv">Save</button>':"")+'</div>';
+   '<div class="chk"><input type="checkbox" id="s_gen"'+(String(s.showGenerationDate)==="false"?"":" checked")+(edit?"":" disabled")+'><span>Show generation date</span></div>'+
+   '<div class="chk"><input type="checkbox" id="s_logo"'+(String(s.showLogo)==="false"?"":" checked")+(edit?"":" disabled")+'><span>Show logo</span></div>'+
+   '<label>Logo</label><div id="lgp" style="margin:6px 0">'+(s.logoData?'<img src="'+esc(s.logoData)+'" style="max-width:160px;max-height:90px">':'<span class="s">No logo yet.</span>')+'</div>'+
+   (edit?'<input type="file" id="lgf" accept="image/png,image/jpeg"> <button class="b alt" id="lgx" type="button">Remove logo</button><br>':"")+
+   (edit?'<button class="b" id="sv">Save</button>':"")+'</div>';
+  var logoData=s.logoData||"";
+  if(edit){
+    $("lgf").onchange=function(){var f=this.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){var im=new Image();im.onload=function(){
+      var k=Math.min(1,320/Math.max(im.width,im.height)),cv=document.createElement("canvas");cv.width=Math.max(1,Math.round(im.width*k));cv.height=Math.max(1,Math.round(im.height*k));
+      cv.getContext("2d").drawImage(im,0,0,cv.width,cv.height);logoData=cv.toDataURL("image/png");$("lgp").innerHTML='<img src="'+logoData+'" style="max-width:160px;max-height:90px">'};
+      im.onerror=function(){flash("err","That image could not be read.")};im.src=rd.result};rd.readAsDataURL(f)};
+    $("lgx").onclick=function(){logoData="";$("lgf").value="";$("lgp").innerHTML='<span class="s">No logo yet.</span>'};
+  }
   if(edit)$("sv").onclick=async function(){try{
     for(var i=0;i<F.length;i++)await api("/v1/settings",{method:"PUT",body:{key:F[i][0],value:$("s_"+F[i][0]).value}});
-    await api("/v1/settings",{method:"PUT",body:{key:"showGenerationDate",value:String($("s_gen").checked)}});S.kw=null;flash("msg","Saved.")}catch(e){flash("err",e.message)}};
+    await api("/v1/settings",{method:"PUT",body:{key:"showGenerationDate",value:String($("s_gen").checked)}});await api("/v1/settings",{method:"PUT",body:{key:"showLogo",value:String($("s_logo").checked)}});if(logoData!==(s.logoData||""))await api("/v1/settings",{method:"PUT",body:{key:"logoData",value:logoData}});S.kw=null;flash("msg","Saved.")}catch(e){flash("err",e.message)}};
 }
 
 /* ---------- employees ---------- */

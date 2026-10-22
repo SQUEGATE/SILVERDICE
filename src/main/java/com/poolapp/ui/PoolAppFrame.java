@@ -1731,6 +1731,8 @@ public class PoolAppFrame extends JFrame {
         settings.setTableBorderColor(savedSettings.getOrDefault("tableBorderColor", settings.getTableBorderColor()));
 
         settings.setFooterText(savedSettings.getOrDefault("footerText", settings.getFooterText()));
+        settings.setPaymentInfo(savedSettings.getOrDefault("paymentInfo", settings.getPaymentInfo()));
+        settings.setLogoData(savedSettings.getOrDefault("logoData", settings.getLogoData()));
         settings.setShowGenerationDate(Boolean.parseBoolean(savedSettings.getOrDefault("showGenerationDate", String.valueOf(settings.isShowGenerationDate()))));
 
         settings.setPageSize(savedSettings.getOrDefault("pageSize", settings.getPageSize()));
@@ -1787,6 +1789,8 @@ public class PoolAppFrame extends JFrame {
         dbManager.savePdfSetting("tableBorderColor", settings.getTableBorderColor());
 
         dbManager.savePdfSetting("footerText", settings.getFooterText());
+        dbManager.savePdfSetting("paymentInfo", settings.getPaymentInfo());
+        dbManager.savePdfSetting("logoData", settings.getLogoData());
         dbManager.savePdfSetting("showGenerationDate", String.valueOf(settings.isShowGenerationDate()));
 
         dbManager.savePdfSetting("pageSize", settings.getPageSize());
@@ -2019,88 +2023,95 @@ public class PoolAppFrame extends JFrame {
         JCheckBox showGenerationDateCheck = new JCheckBox("Show Generation Date", pdfSettings.isShowGenerationDate());
         panel.add(showGenerationDateCheck, gbc);
 
+        gbc.gridx = 0; gbc.gridy = 21;
+        panel.add(new JLabel("Payment Info:"), gbc);
+        gbc.gridx = 1;
+        JTextField paymentInfoField = new JTextField(pdfSettings.getPaymentInfo(), 20);
+        paymentInfoField.setToolTipText("Shown in the blue payment bar. Separate items with | e.g. Forms of Payment: ZELLE you@mail.com | Check: Your Company LLC");
+        panel.add(paymentInfoField, gbc);
+
         // Position Offsets section
-        gbc.gridx = 0; gbc.gridy = 21; gbc.gridwidth = 2;
+        gbc.gridx = 0; gbc.gridy = 22; gbc.gridwidth = 2;
         panel.add(new JLabel("=== POSITION OFFSETS ==="), gbc);
 
-        gbc.gridwidth = 1; gbc.gridy = 22;
+        gbc.gridwidth = 1; gbc.gridy = 23;
         panel.add(new JLabel("Company Info - X:"), gbc);
         gbc.gridx = 1;
         JSpinner companyInfoOffsetXSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getCompanyInfoOffsetX(), -200, 200, 5));
         companyInfoOffsetXSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(companyInfoOffsetXSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 23;
+        gbc.gridx = 0; gbc.gridy = 24;
         panel.add(new JLabel("Company Info - Y:"), gbc);
         gbc.gridx = 1;
         JSpinner companyInfoOffsetYSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getCompanyInfoOffsetY(), -200, 200, 5));
         companyInfoOffsetYSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(companyInfoOffsetYSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 24;
+        gbc.gridx = 0; gbc.gridy = 25;
         panel.add(new JLabel("Title - X:"), gbc);
         gbc.gridx = 1;
         JSpinner titleOffsetXSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getTitleOffsetX(), -200, 200, 5));
         titleOffsetXSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(titleOffsetXSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 25;
+        gbc.gridx = 0; gbc.gridy = 26;
         panel.add(new JLabel("Title - Y:"), gbc);
         gbc.gridx = 1;
         JSpinner titleOffsetYSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getTitleOffsetY(), -200, 200, 5));
         titleOffsetYSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(titleOffsetYSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 26;
+        gbc.gridx = 0; gbc.gridy = 27;
         panel.add(new JLabel("Header - X:"), gbc);
         gbc.gridx = 1;
         JSpinner headerOffsetXSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getHeaderOffsetX(), -200, 200, 5));
         headerOffsetXSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(headerOffsetXSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 27;
+        gbc.gridx = 0; gbc.gridy = 28;
         panel.add(new JLabel("Header - Y:"), gbc);
         gbc.gridx = 1;
         JSpinner headerOffsetYSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getHeaderOffsetY(), -200, 200, 5));
         headerOffsetYSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(headerOffsetYSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 28;
+        gbc.gridx = 0; gbc.gridy = 29;
         panel.add(new JLabel("Body - X:"), gbc);
         gbc.gridx = 1;
         JSpinner bodyOffsetXSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getBodyOffsetX(), -200, 200, 5));
         bodyOffsetXSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(bodyOffsetXSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 29;
+        gbc.gridx = 0; gbc.gridy = 30;
         panel.add(new JLabel("Body - Y:"), gbc);
         gbc.gridx = 1;
         JSpinner bodyOffsetYSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getBodyOffsetY(), -200, 200, 5));
         bodyOffsetYSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(bodyOffsetYSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 30;
+        gbc.gridx = 0; gbc.gridy = 31;
         panel.add(new JLabel("Table - X:"), gbc);
         gbc.gridx = 1;
         JSpinner tableOffsetXSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getTableOffsetX(), -200, 200, 5));
         tableOffsetXSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(tableOffsetXSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 31;
+        gbc.gridx = 0; gbc.gridy = 32;
         panel.add(new JLabel("Table - Y:"), gbc);
         gbc.gridx = 1;
         JSpinner tableOffsetYSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getTableOffsetY(), -200, 200, 5));
         tableOffsetYSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(tableOffsetYSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 32;
+        gbc.gridx = 0; gbc.gridy = 33;
         panel.add(new JLabel("Footer - X:"), gbc);
         gbc.gridx = 1;
         JSpinner footerOffsetXSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getFooterOffsetX(), -200, 200, 5));
         footerOffsetXSpinner.addChangeListener(e -> previewContentPanel.repaint());
         panel.add(footerOffsetXSpinner, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 33;
+        gbc.gridx = 0; gbc.gridy = 34;
         panel.add(new JLabel("Footer - Y:"), gbc);
         gbc.gridx = 1;
         JSpinner footerOffsetYSpinner = new JSpinner(new SpinnerNumberModel((int)pdfSettings.getFooterOffsetY(), -200, 200, 5));
@@ -2108,7 +2119,7 @@ public class PoolAppFrame extends JFrame {
         panel.add(footerOffsetYSpinner, gbc);
 
         // Buttons
-        gbc.gridx = 0; gbc.gridy = 34; gbc.gridwidth = 2;
+        gbc.gridx = 0; gbc.gridy = 35; gbc.gridwidth = 2;
         JPanel buttonPanel = new JPanel(new FlowLayout());
         JButton saveButton = new JButton("Save Settings");
         JButton resetButton = new JButton("Reset to Defaults");
@@ -2133,6 +2144,8 @@ public class PoolAppFrame extends JFrame {
             pdfSettings.setLogoWidth((Integer) logoWidthSpinner.getValue());
             pdfSettings.setLogoHeight((Integer) logoHeightSpinner.getValue());
             pdfSettings.setFooterText(footerTextField.getText());
+            pdfSettings.setPaymentInfo(paymentInfoField.getText());
+            refreshEmbeddedLogo(pdfSettings);
             pdfSettings.setShowGenerationDate(showGenerationDateCheck.isSelected());
             
             // Update position offsets
@@ -2462,231 +2475,206 @@ public class PoolAppFrame extends JFrame {
         }
     }
 
+    private static final Color STMT_BLUE = new Color(0x1F, 0x5F, 0xA0);
+    private static final Color STMT_GREY = new Color(0x59, 0x59, 0x59);
+    private static final Color STMT_NAME_GREY = new Color(0x80, 0x80, 0x80);
+    private static final Color STMT_BORDER = new Color(0xA6, 0xA6, 0xA6);
+    private static final Color STMT_ROW_SHADE = new Color(0xF2, 0xF2, 0xF2);
+
     private void createStatementPDF(Customer customer, List<StatementRecord> records, File pdfFile) throws IOException {
+        try {
+            pdfSettings = loadPdfSettings();
+        } catch (RuntimeException ignored) {
+            // Keep the settings already in memory if they cannot be refreshed.
+        }
         try (PDDocument document = new PDDocument()) {
-            // Set page size and orientation based on settings
-            PDRectangle pageSize = PDRectangle.LETTER;
-            if ("A4".equals(pdfSettings.getPageSize())) {
-                pageSize = PDRectangle.A4;
-            }
-            PDPage page = new PDPage(pageSize);
+            PDRectangle pageSize = "A4".equals(pdfSettings.getPageSize()) ? PDRectangle.A4 : PDRectangle.LETTER;
             if (pdfSettings.isLandscape()) {
-                page.setRotation(90);
+                pageSize = new PDRectangle(pageSize.getHeight(), pageSize.getWidth());
             }
+            float pageHeight = pageSize.getHeight();
+            float left = clampStatementMargin(pdfSettings.getMarginLeft());
+            float right = pageSize.getWidth() - clampStatementMargin(pdfSettings.getMarginRight());
+            float width = right - left;
+            float top = pageHeight - clampStatementMargin(pdfSettings.getMarginTop());
+            float footerTop = clampStatementMargin(pdfSettings.getMarginBottom()) + 34;
+            PDFont regular = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+            PDFont bold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+
+            PDPage page = new PDPage(pageSize);
             document.addPage(page);
-            
-            PDPageContentStream contentStream = new PDPageContentStream(document, page);
+            PDPageContentStream cs = new PDPageContentStream(document, page);
             try {
-                float marginLeft = pdfSettings.getMarginLeft();
-                float marginRight = pdfSettings.getMarginRight();
-                float marginTop = pdfSettings.getMarginTop();
-                float pageWidth = pageSize.getWidth();
-                float pageHeight = pageSize.getHeight();
-                float contentWidth = pageWidth - marginLeft - marginRight;
-                float contentLeft = marginLeft;
-                
-                // Company header with logo
-                float yPosition = pageHeight - marginTop;
-                
-                if (pdfSettings.isShowLogo() && !pdfSettings.getLogoPath().isBlank()) {
-                    try {
-                        File logoFile = new File(pdfSettings.getLogoPath());
-                        if (logoFile.exists()) {
-                            PDImageXObject logo = PDImageXObject.createFromFile(pdfSettings.getLogoPath(), document);
-                            float logoX = marginLeft;
-                            float logoY = yPosition - pdfSettings.getLogoHeight();
-                            contentStream.drawImage(logo, logoX, logoY, pdfSettings.getLogoWidth(), pdfSettings.getLogoHeight());
-                            yPosition = logoY - 8;
-                        }
-                    } catch (Exception e) {
-                        // Logo loading failed, continue without logo
-                    }
-                }
-                
-                // Company information
-                if (!pdfSettings.getCompanyName().isBlank()) {
-                    PDFont titleFont = getFont(pdfSettings.getTitleFont());
-                    contentStream.setFont(titleFont, pdfSettings.getTitleSize());
-                    contentStream.setNonStrokingColor(pdfSettings.getTitleColorAsColor());
-                    drawCenteredText(contentStream, titleFont, pdfSettings.getTitleSize(), pdfSettings.getCompanyName(), contentLeft, contentWidth, yPosition);
-                    yPosition -= pdfSettings.getTitleSize() + 5;
-                }
-                
-                if (!pdfSettings.getCompanyAddress().isBlank()) {
-                    PDFont headerFont = getFont(pdfSettings.getHeaderFont());
-                    contentStream.setFont(headerFont, pdfSettings.getHeaderSize());
-                    contentStream.setNonStrokingColor(pdfSettings.getHeaderColorAsColor());
-                    drawCenteredText(contentStream, headerFont, pdfSettings.getHeaderSize(), pdfSettings.getCompanyAddress(), contentLeft, contentWidth, yPosition);
-                    yPosition -= pdfSettings.getHeaderSize() + 5;
-                }
-                
-                if (!pdfSettings.getCompanyPhone().isBlank()) {
-                    PDFont bodyFont = getFont(pdfSettings.getBodyFont());
-                    contentStream.setFont(bodyFont, pdfSettings.getBodySize());
-                    contentStream.setNonStrokingColor(pdfSettings.getBodyColorAsColor());
-                    drawCenteredText(contentStream, bodyFont, pdfSettings.getBodySize(), "Phone: " + pdfSettings.getCompanyPhone(), contentLeft, contentWidth, yPosition);
-                    yPosition -= pdfSettings.getBodySize() + 5;
-                }
-                
-                if (!pdfSettings.getCompanyEmail().isBlank()) {
-                    PDFont bodyFont = getFont(pdfSettings.getBodyFont());
-                    contentStream.setFont(bodyFont, pdfSettings.getBodySize());
-                    contentStream.setNonStrokingColor(pdfSettings.getBodyColorAsColor());
-                    drawCenteredText(contentStream, bodyFont, pdfSettings.getBodySize(), "Email: " + pdfSettings.getCompanyEmail(), contentLeft, contentWidth, yPosition);
-                    yPosition -= pdfSettings.getBodySize() + 5;
-                }
-                
-                // Statement title
-                yPosition -= 20;
-                PDFont titleFont = getFont(pdfSettings.getTitleFont());
-                contentStream.setFont(titleFont, pdfSettings.getTitleSize());
-                contentStream.setNonStrokingColor(pdfSettings.getTitleColorAsColor());
-                drawCenteredText(contentStream, titleFont, pdfSettings.getTitleSize(), "Pool Service Statement", contentLeft, contentWidth, yPosition);
-                yPosition -= pdfSettings.getTitleSize() + 10;
-                
-                // Customer Information
-                PDFont headerFont = getFont(pdfSettings.getHeaderFont());
-                contentStream.setFont(headerFont, pdfSettings.getHeaderSize());
-                contentStream.setNonStrokingColor(pdfSettings.getHeaderColorAsColor());
-                drawCenteredText(contentStream, headerFont, pdfSettings.getHeaderSize(), "Customer Information:", contentLeft, contentWidth, yPosition);
-                yPosition -= pdfSettings.getHeaderSize() + 5;
-                
-                PDFont bodyFont = getFont(pdfSettings.getBodyFont());
-                contentStream.setFont(bodyFont, pdfSettings.getBodySize());
-                contentStream.setNonStrokingColor(pdfSettings.getBodyColorAsColor());
-                
-                drawCenteredText(contentStream, bodyFont, pdfSettings.getBodySize(), "Name: " + customer.getFullName(), contentLeft, contentWidth, yPosition);
-                yPosition -= pdfSettings.getBodySize() + 3;
-                
-                drawCenteredText(contentStream, bodyFont, pdfSettings.getBodySize(), "Address: " + customer.getAddress(), contentLeft, contentWidth, yPosition);
-                yPosition -= pdfSettings.getBodySize() + 3;
-                
-                if (!customer.getCity().isBlank() || !customer.getState().isBlank() || !customer.getZip().isBlank()) {
-                    String cityStateZip = customer.getCity();
-                    if (!customer.getState().isBlank()) {
-                        cityStateZip += (cityStateZip.isBlank() ? "" : ", ") + customer.getState();
-                    }
-                    if (!customer.getZip().isBlank()) {
-                        cityStateZip += (cityStateZip.isBlank() ? "" : " ") + customer.getZip();
-                    }
-                    drawCenteredText(contentStream, bodyFont, pdfSettings.getBodySize(), "City/State/Zip: " + cityStateZip, contentLeft, contentWidth, yPosition);
-                    yPosition -= pdfSettings.getBodySize() + 3;
-                }
-                
-                if (!customer.getPhone().isBlank()) {
-                    drawCenteredText(contentStream, bodyFont, pdfSettings.getBodySize(), "Phone: " + customer.getPhone(), contentLeft, contentWidth, yPosition);
-                    yPosition -= pdfSettings.getBodySize() + 3;
-                }
-                
-                if (!customer.getEmail().isBlank()) {
-                    drawCenteredText(contentStream, bodyFont, pdfSettings.getBodySize(), "Email: " + customer.getEmail(), contentLeft, contentWidth, yPosition);
-                    yPosition -= pdfSettings.getBodySize() + 3;
-                }
-                
-                // Statement Records
-                yPosition -= 15;
-                contentStream.setFont(headerFont, pdfSettings.getHeaderSize());
-                contentStream.setNonStrokingColor(pdfSettings.getHeaderColorAsColor());
-                drawCenteredText(contentStream, headerFont, pdfSettings.getHeaderSize(), "Statement Records:", contentLeft, contentWidth, yPosition);
-                yPosition -= pdfSettings.getHeaderSize() + 5;
-                
-                // Table headers
-                contentStream.setFont(bodyFont, pdfSettings.getBodySize());
-                contentStream.setNonStrokingColor(pdfSettings.getBodyColorAsColor());
-                float tableWidth = contentWidth;
-                float tableX = contentLeft;
-                float dateColX = tableX + 5;
-                float typeColX = tableX + (tableWidth * 0.35f);
-                float amountColX = tableX + (tableWidth * 0.75f);
-                
-                float tableStartY = yPosition + 5;
-                float bottomLimit = 100;
-                float topStart = pageHeight - marginTop;
-                float rowHeight = pdfSettings.getBodySize() + 2;
+                float y = top;
 
-                contentStream.beginText();
-                contentStream.newLineAtOffset(dateColX, yPosition);
-                contentStream.showText("Date");
-                contentStream.endText();
-                
-                contentStream.beginText();
-                contentStream.newLineAtOffset(typeColX, yPosition);
-                contentStream.showText("Type");
-                contentStream.endText();
-                
-                contentStream.beginText();
-                contentStream.newLineAtOffset(amountColX, yPosition);
-                contentStream.showText("Amount");
-                contentStream.endText();
-                
-                yPosition -= pdfSettings.getBodySize() + 5;
-                
-                BigDecimal totalBalance = BigDecimal.ZERO;
-                
-                for (StatementRecord record : records) {
-                    if (yPosition < bottomLimit) {
-                        if (pdfSettings.isShowTableBorders()) {
-                            drawTableBorders(contentStream, tableX, tableWidth, tableStartY, yPosition + rowHeight - 4);
+                // Header: company details on the left, logo on the right
+                float logoBottom = top;
+                PDImageXObject logo = pdfSettings.isShowLogo() ? loadStatementLogo(document) : null;
+                if (logo != null) {
+                    float maxW = Math.max(40, pdfSettings.getLogoWidth());
+                    float maxH = Math.max(30, pdfSettings.getLogoHeight());
+                    float scale = Math.min(maxW / logo.getWidth(), maxH / logo.getHeight());
+                    float w = logo.getWidth() * scale;
+                    float h = logo.getHeight() * scale;
+                    cs.drawImage(logo, right - w, top - h, w, h);
+                    logoBottom = top - h;
+                }
+                float headerTextWidth = width * 0.62f;
+                String companyName = pdfSettings.getCompanyName() == null ? "" : pdfSettings.getCompanyName().trim();
+                if (!companyName.isBlank()) {
+                    y -= 24;
+                    drawPdfText(cs, regular, 24, STMT_NAME_GREY, fitPdfText(regular, 24, companyName.toUpperCase(Locale.US), headerTextWidth), left, y);
+                    y -= 6;
+                }
+                for (String line : splitCompanyAddress(pdfSettings.getCompanyAddress())) {
+                    y -= 14;
+                    drawPdfText(cs, bold, 11, Color.BLACK, fitPdfText(bold, 11, line, headerTextWidth), left, y);
+                }
+                String companyPhone = pdfSettings.getCompanyPhone() == null ? "" : pdfSettings.getCompanyPhone().trim();
+                if (!companyPhone.isBlank()) {
+                    y -= 14;
+                    drawPdfText(cs, bold, 11, Color.BLACK, formatStatementPhone(companyPhone), left, y);
+                }
+                String companyEmail = pdfSettings.getCompanyEmail() == null ? "" : pdfSettings.getCompanyEmail().trim();
+                String paymentInfo = pdfSettings.getPaymentInfo() == null ? "" : pdfSettings.getPaymentInfo().trim();
+                if (!companyEmail.isBlank() && !paymentInfo.toLowerCase(Locale.US).contains(companyEmail.toLowerCase(Locale.US))) {
+                    y -= 14;
+                    drawPdfText(cs, bold, 11, Color.BLACK, fitPdfText(bold, 11, companyEmail, headerTextWidth), left, y);
+                }
+
+                float titleY = Math.min(y, logoBottom - 22);
+                drawPdfText(cs, regular, 22, STMT_BLUE, "STATEMENT", left + (width - pdfTextWidth(regular, 22, "STATEMENT")) / 2f, titleY);
+                y = Math.min(y, titleY) - 14;
+
+                // Customer box
+                float pad = 8;
+                float line = 15;
+                String cityStateZip = customer.getCity() == null ? "" : customer.getCity().trim();
+                if (customer.getState() != null && !customer.getState().isBlank()) {
+                    cityStateZip += (cityStateZip.isBlank() ? "" : ", ") + customer.getState().trim();
+                }
+                if (customer.getZip() != null && !customer.getZip().isBlank()) {
+                    cityStateZip += (cityStateZip.isBlank() ? "" : " ") + customer.getZip().trim();
+                }
+                String[][] info = {
+                        {"Account No.:", customer.getId()},
+                        {"Phone:", formatStatementPhone(customer.getPhone())},
+                        {"Service Day:", statementServiceDay(customer)},
+                        {"Starting Date:", customer.getStartingDate()}
+                };
+                float boxHeight = pad * 2 + info.length * line - 3;
+                drawPdfBox(cs, left, y - boxHeight, width, boxHeight, null);
+                float leftColumnWidth = width * 0.52f - pad * 2;
+                float ty = y - pad - 11;
+                drawPdfText(cs, bold, 12, STMT_GREY, fitPdfText(bold, 12, customer.getFullName(), leftColumnWidth), left + pad, ty);
+                drawPdfText(cs, regular, 11, Color.BLACK, fitPdfText(regular, 11, customer.getAddress(), leftColumnWidth), left + pad, ty - line);
+                drawPdfText(cs, regular, 11, Color.BLACK, fitPdfText(regular, 11, cityStateZip, leftColumnWidth), left + pad, ty - line * 2);
+                float labelX = left + width * 0.62f;
+                float valueLeft = labelX + 82;
+                for (int i = 0; i < info.length; i++) {
+                    float rowY = ty - line * i;
+                    drawPdfText(cs, regular, 10, STMT_GREY, info[i][0], labelX, rowY);
+                    String value = fitPdfText(regular, 10, info[i][1], right - pad - valueLeft);
+                    drawPdfText(cs, regular, 10, Color.BLACK, value, right - pad - pdfTextWidth(regular, 10, value), rowY);
+                }
+                y -= boxHeight + 10;
+
+                // Note box
+                float noteLabelWidth = pdfTextWidth(bold, 10, "Note:") + 6;
+                List<String> noteLines = wrapPdfText(regular, 10, customer.getNotes(), width - pad * 2 - noteLabelWidth);
+                if (noteLines.size() > 6) {
+                    noteLines = new ArrayList<>(noteLines.subList(0, 6));
+                }
+                float noteHeight = pad * 2 + Math.max(1, noteLines.size()) * 13 - 3;
+                drawPdfBox(cs, left, y - noteHeight, width, noteHeight, null);
+                drawPdfText(cs, bold, 10, STMT_GREY, "Note:", left + pad, y - pad - 9);
+                for (int i = 0; i < noteLines.size(); i++) {
+                    drawPdfText(cs, regular, 10, Color.BLACK, noteLines.get(i), left + pad + noteLabelWidth, y - pad - 9 - i * 13);
+                }
+                y -= noteHeight + 10;
+
+                // Payment bar
+                List<String> paymentParts = new ArrayList<>();
+                for (String part : paymentInfo.split("\\|")) {
+                    if (!part.trim().isEmpty()) {
+                        paymentParts.add(part.trim());
+                    }
+                }
+                if (!paymentParts.isEmpty()) {
+                    float barHeight = 22;
+                    drawPdfBox(cs, left, y - barHeight, width, barHeight, null);
+                    float gap = 24;
+                    float fontSize = 11;
+                    float textTotal;
+                    do {
+                        textTotal = 0;
+                        for (String part : paymentParts) {
+                            textTotal += pdfTextWidth(regular, fontSize, part);
                         }
-                        drawStatementFooter(contentStream, contentLeft, contentWidth);
-                        contentStream.close();
+                        textTotal += gap * (paymentParts.size() - 1);
+                        if (textTotal <= width - 16 || fontSize <= 7) {
+                            break;
+                        }
+                        fontSize -= 0.5f;
+                    } while (true);
+                    float x = left + Math.max(8, (width - textTotal) / 2f);
+                    float slot = (width - 16 - gap * (paymentParts.size() - 1)) / paymentParts.size();
+                    for (String part : paymentParts) {
+                        String text = textTotal <= width - 16 ? part : fitPdfText(regular, fontSize, part, slot);
+                        drawPdfText(cs, regular, fontSize, STMT_BLUE, text, x, y - 15);
+                        x += pdfTextWidth(regular, fontSize, text) + gap;
+                    }
+                    y -= barHeight + 10;
+                }
+
+                // Records table
+                float[] columns = {left, left + width * 0.2f, left + width * 0.76f, right};
+                float headerHeight = 20;
+                float rowHeight = 18;
+                y = drawStatementTableHeader(cs, bold, columns, y, headerHeight);
+                BigDecimal total = BigDecimal.ZERO;
+                if (records.isEmpty()) {
+                    drawPdfBox(cs, left, y - rowHeight, width, rowHeight, null);
+                    drawPdfText(cs, regular, 10, STMT_GREY, "No records", columns[1] + 6, y - 12.5f);
+                    y -= rowHeight;
+                }
+                for (int i = 0; i < records.size(); i++) {
+                    if (y - rowHeight < footerTop) {
+                        cs.close();
                         page = new PDPage(pageSize);
-                        if (pdfSettings.isLandscape()) {
-                            page.setRotation(90);
-                        }
                         document.addPage(page);
-                        contentStream = new PDPageContentStream(document, page);
-                        yPosition = topStart;
-                        tableStartY = yPosition + 5;
-                        contentStream.setFont(bodyFont, pdfSettings.getBodySize());
-                        contentStream.setNonStrokingColor(pdfSettings.getBodyColorAsColor());
+                        cs = new PDPageContentStream(document, page);
+                        y = drawStatementTableHeader(cs, bold, columns, top, headerHeight);
                     }
-                    
-                    contentStream.beginText();
-                    contentStream.newLineAtOffset(dateColX, yPosition);
-                    contentStream.showText(record.getDate());
-                    contentStream.endText();
-                    
-                    contentStream.beginText();
-                    contentStream.newLineAtOffset(typeColX, yPosition);
-                    contentStream.showText(record.getType());
-                    contentStream.endText();
-                    
-                    String amountStr = (record.getAmount().signum() < 0 ? "-" : "") + "$" + record.getAmount().abs().setScale(2, java.math.RoundingMode.HALF_UP);
-                    contentStream.beginText();
-                    contentStream.newLineAtOffset(amountColX, yPosition);
-                    contentStream.showText(amountStr);
-                    contentStream.endText();
-                    
-                    totalBalance = totalBalance.add(record.getAmount());
-                    yPosition -= pdfSettings.getBodySize() + 2;
-                }
-                
-                if (pdfSettings.isShowTableBorders()) {
-                    drawTableBorders(contentStream, tableX, tableWidth, tableStartY, yPosition + rowHeight - 4);
+                    StatementRecord record = records.get(i);
+                    Color fill = i % 2 == 1 ? STMT_ROW_SHADE : null;
+                    drawPdfBox(cs, left, y - rowHeight, width, rowHeight, fill);
+                    float textY = y - 12.5f;
+                    String date = fitPdfText(regular, 10, record.getDate(), columns[1] - columns[0] - 6);
+                    drawPdfText(cs, regular, 10, Color.BLACK, date, columns[0] + (columns[1] - columns[0] - pdfTextWidth(regular, 10, date)) / 2f, textY);
+                    String type = record.getType() == null ? "" : record.getType().toUpperCase(Locale.US);
+                    drawPdfText(cs, regular, 10, Color.BLACK, fitPdfText(regular, 10, type, columns[2] - columns[1] - 12), columns[1] + 6, textY);
+                    String amount = formatStatementAmount(record.getAmount());
+                    drawPdfText(cs, regular, 10, Color.BLACK, amount, columns[3] - 6 - pdfTextWidth(regular, 10, amount), textY);
+                    total = total.add(record.getAmount() == null ? BigDecimal.ZERO : record.getAmount());
+                    y -= rowHeight;
                 }
 
-                // Total Balance
-                if (yPosition < bottomLimit) {
-                    drawStatementFooter(contentStream, contentLeft, contentWidth);
-                    contentStream.close();
+                if (y - 24 < footerTop) {
+                    cs.close();
                     page = new PDPage(pageSize);
-                    if (pdfSettings.isLandscape()) {
-                        page.setRotation(90);
-                    }
                     document.addPage(page);
-                    contentStream = new PDPageContentStream(document, page);
-                    yPosition = topStart;
+                    cs = new PDPageContentStream(document, page);
+                    y = top;
                 }
-                yPosition -= 10;
-                contentStream.setFont(headerFont, pdfSettings.getHeaderSize());
-                contentStream.setNonStrokingColor(pdfSettings.getHeaderColorAsColor());
-                drawCenteredText(contentStream, headerFont, pdfSettings.getHeaderSize(), "Total Balance: $" + totalBalance.setScale(2, java.math.RoundingMode.HALF_UP), contentLeft, contentWidth, yPosition);
-                
-                drawStatementFooter(contentStream, contentLeft, contentWidth);
+                String totalText = formatStatementAmount(total);
+                drawPdfText(cs, regular, 11, STMT_GREY, "Total:", columns[2] - 40, y - 18);
+                drawPdfText(cs, bold, 12, Color.BLACK, totalText, right - 6 - pdfTextWidth(bold, 12, totalText), y - 18);
             } finally {
-                contentStream.close();
+                cs.close();
             }
+
+            drawStatementFooters(document, regular, left, right);
 
             if (pdfFile.exists()) {
                 pdfFile.delete();
@@ -2695,32 +2683,233 @@ public class PoolAppFrame extends JFrame {
         }
     }
 
-    private void drawTableBorders(PDPageContentStream cs, float x, float width, float startY, float endY) throws IOException {
-        cs.setStrokingColor(pdfSettings.getTableBorderColorAsColor());
-        cs.setLineWidth(0.5f);
-        cs.moveTo(x, startY);
-        cs.lineTo(x + width, startY);
-        cs.moveTo(x, endY);
-        cs.lineTo(x + width, endY);
-        for (float f : new float[] {0f, 0.33f, 0.72f, 1f}) {
-            cs.moveTo(x + width * f, startY);
-            cs.lineTo(x + width * f, endY);
+    private float drawStatementTableHeader(PDPageContentStream cs, PDFont bold, float[] columns, float y, float height) throws IOException {
+        String[] titles = {"Date", "Description", "Price/Credit"};
+        drawPdfBox(cs, columns[0], y - height, columns[3] - columns[0], height, null);
+        float textY = y - 14;
+        drawPdfText(cs, bold, 11, STMT_GREY, titles[0], columns[0] + (columns[1] - columns[0] - pdfTextWidth(bold, 11, titles[0])) / 2f, textY);
+        drawPdfText(cs, bold, 11, STMT_GREY, titles[1], columns[1] + 6, textY);
+        drawPdfText(cs, bold, 11, STMT_GREY, titles[2], columns[3] - 6 - pdfTextWidth(bold, 11, titles[2]), textY);
+        return y - height;
+    }
+
+    private void drawStatementFooters(PDDocument document, PDFont regular, float left, float right) throws IOException {
+        int pageCount = document.getNumberOfPages();
+        float baseY = clampStatementMargin(pdfSettings.getMarginBottom());
+        String generated = LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy", Locale.US));
+        String footerText = pdfSettings.getFooterText() == null ? "" : pdfSettings.getFooterText().trim();
+        for (int i = 0; i < pageCount; i++) {
+            try (PDPageContentStream cs = new PDPageContentStream(document, document.getPage(i), PDPageContentStream.AppendMode.APPEND, true, true)) {
+                String pageText = "Page " + (i + 1) + " of " + pageCount;
+                drawPdfText(cs, regular, 9, STMT_GREY, pageText, right - pdfTextWidth(regular, 9, pageText), baseY);
+                if (pdfSettings.isShowGenerationDate()) {
+                    drawPdfText(cs, regular, 9, STMT_GREY, generated, right - pdfTextWidth(regular, 9, generated), baseY + 12);
+                }
+                if (!footerText.isBlank()) {
+                    drawPdfText(cs, regular, 9, STMT_GREY, fitPdfText(regular, 9, footerText, (right - left) * 0.6f), left, baseY);
+                }
+            }
         }
+    }
+
+    private float clampStatementMargin(float value) {
+        return Math.max(18f, Math.min(value, 120f));
+    }
+
+    private PDImageXObject loadStatementLogo(PDDocument document) {
+        try {
+            String path = pdfSettings.getLogoPath();
+            if (path != null && !path.isBlank() && new File(path).isFile()) {
+                return PDImageXObject.createFromFile(path, document);
+            }
+            String data = pdfSettings.getLogoData();
+            int comma = data == null ? -1 : data.indexOf(',');
+            if (data != null && data.startsWith("data:") && comma > 0) {
+                byte[] bytes = java.util.Base64.getDecoder().decode(data.substring(comma + 1));
+                return PDImageXObject.createFromByteArray(document, bytes, "logo");
+            }
+        } catch (Exception ignored) {
+            // A missing or unreadable logo should not stop the statement from being generated.
+        }
+        return null;
+    }
+
+    private void refreshEmbeddedLogo(PdfSettings settings) {
+        String path = settings.getLogoPath();
+        if (path == null || path.isBlank()) {
+            settings.setLogoData("");
+            return;
+        }
+        File file = new File(path);
+        if (!file.isFile()) {
+            return; // Logo was chosen on another computer; keep the shared copy.
+        }
+        try {
+            java.awt.image.BufferedImage source = javax.imageio.ImageIO.read(file);
+            if (source == null) {
+                return;
+            }
+            double scale = Math.min(1.0, 320.0 / Math.max(source.getWidth(), source.getHeight()));
+            int w = Math.max(1, (int) Math.round(source.getWidth() * scale));
+            int h = Math.max(1, (int) Math.round(source.getHeight() * scale));
+            java.awt.image.BufferedImage scaled = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = scaled.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.drawImage(source, 0, 0, w, h, null);
+            g.dispose();
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(scaled, "png", bytes);
+            settings.setLogoData("data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(bytes.toByteArray()));
+        } catch (IOException ignored) {
+            // Keep the previous shared logo if the file cannot be read.
+        }
+    }
+
+    private void drawPdfText(PDPageContentStream cs, PDFont font, float size, Color color, String text, float x, float y) throws IOException {
+        String safe = pdfSafeText(text);
+        if (safe.isEmpty()) {
+            return;
+        }
+        cs.beginText();
+        cs.setFont(font, size);
+        cs.setNonStrokingColor(color);
+        cs.newLineAtOffset(x, y);
+        cs.showText(safe);
+        cs.endText();
+    }
+
+    private void drawPdfBox(PDPageContentStream cs, float x, float y, float w, float h, Color fill) throws IOException {
+        if (fill != null) {
+            cs.setNonStrokingColor(fill);
+            cs.addRect(x, y, w, h);
+            cs.fill();
+        }
+        cs.setStrokingColor(STMT_BORDER);
+        cs.setLineWidth(0.75f);
+        cs.addRect(x, y, w, h);
         cs.stroke();
     }
 
-    private void drawStatementFooter(PDPageContentStream contentStream, float contentLeft, float contentWidth) throws IOException {
-        PDFont footerFont = getFont(pdfSettings.getFooterFont());
-        contentStream.setFont(footerFont, pdfSettings.getFooterSize());
-        contentStream.setNonStrokingColor(pdfSettings.getFooterColorAsColor());
-        if (!pdfSettings.getFooterText().isBlank()) {
-            drawCenteredText(contentStream, footerFont, pdfSettings.getFooterSize(), pdfSettings.getFooterText(), contentLeft, contentWidth, 50);
-        }
-        if (pdfSettings.isShowGenerationDate()) {
-            drawCenteredText(contentStream, footerFont, pdfSettings.getFooterSize(), "Generated on " + LocalDate.now().format(DateTimeFormatter.ofPattern("MM/dd/yyyy")), contentLeft, contentWidth, 30);
-        }
+    private float pdfTextWidth(PDFont font, float size, String text) throws IOException {
+        return font.getStringWidth(pdfSafeText(text)) / 1000f * size;
     }
 
+    private String fitPdfText(PDFont font, float size, String text, float maxWidth) throws IOException {
+        String safe = pdfSafeText(text);
+        if (pdfTextWidth(font, size, safe) <= maxWidth) {
+            return safe;
+        }
+        while (!safe.isEmpty() && pdfTextWidth(font, size, safe + "...") > maxWidth) {
+            safe = safe.substring(0, safe.length() - 1);
+        }
+        return safe.isEmpty() ? "" : safe.trim() + "...";
+    }
+
+    private List<String> wrapPdfText(PDFont font, float size, String text, float maxWidth) throws IOException {
+        List<String> lines = new ArrayList<>();
+        if (text == null) {
+            return lines;
+        }
+        for (String paragraph : text.replace("\r", "").split("\n")) {
+            StringBuilder current = new StringBuilder();
+            for (String word : pdfSafeText(paragraph).split(" ")) {
+                if (word.isEmpty()) {
+                    continue;
+                }
+                String candidate = current.length() == 0 ? word : current + " " + word;
+                if (pdfTextWidth(font, size, candidate) <= maxWidth) {
+                    current.setLength(0);
+                    current.append(candidate);
+                } else {
+                    if (current.length() > 0) {
+                        lines.add(current.toString());
+                    }
+                    current.setLength(0);
+                    current.append(fitPdfText(font, size, word, maxWidth));
+                }
+            }
+            if (current.length() > 0) {
+                lines.add(current.toString());
+            }
+        }
+        return lines;
+    }
+
+    private String pdfSafeText(String text) {
+        if (text == null) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder(text.length());
+        for (char c : text.toCharArray()) {
+            if (c == '\t' || c == '\r' || c == '\n') {
+                out.append(' ');
+            } else if (c == '\u2018' || c == '\u2019') {
+                out.append('\'');
+            } else if (c == '\u201C' || c == '\u201D') {
+                out.append('"');
+            } else if (c == '\u2013' || c == '\u2014') {
+                out.append('-');
+            } else if (c < 32 || (c >= 127 && c < 160) || c > 255) {
+                out.append('?');
+            } else {
+                out.append(c);
+            }
+        }
+        return out.toString();
+    }
+
+    private List<String> splitCompanyAddress(String address) {
+        List<String> lines = new ArrayList<>();
+        if (address == null || address.isBlank()) {
+            return lines;
+        }
+        String normalized = address.replace("\r", "");
+        if (normalized.contains("\n") || normalized.contains("|")) {
+            for (String part : normalized.split("[\\n|]")) {
+                if (!part.isBlank()) {
+                    lines.add(part.trim());
+                }
+            }
+            return lines;
+        }
+        int comma = normalized.indexOf(',');
+        if (comma > 0 && comma < normalized.length() - 1) {
+            lines.add(normalized.substring(0, comma).trim());
+            lines.add(normalized.substring(comma + 1).trim());
+        } else {
+            lines.add(normalized.trim());
+        }
+        return lines;
+    }
+
+    private String formatStatementPhone(String phone) {
+        if (phone == null) {
+            return "";
+        }
+        String digits = phone.replaceAll("\\D", "");
+        if (digits.length() == 11 && digits.startsWith("1")) {
+            digits = digits.substring(1);
+        }
+        if (digits.length() == 10) {
+            return "(" + digits.substring(0, 3) + ") " + digits.substring(3, 6) + "-" + digits.substring(6);
+        }
+        return phone.trim();
+    }
+
+    private String statementServiceDay(Customer customer) {
+        String day = customer.getServiceDay() == null ? "" : customer.getServiceDay().trim().toUpperCase(Locale.US);
+        if (day.isEmpty()) {
+            return "";
+        }
+        return customer.getRouteOrder() > 0 ? customer.getRouteOrder() + " " + day : day;
+    }
+
+    private String formatStatementAmount(BigDecimal amount) {
+        BigDecimal value = amount == null ? BigDecimal.ZERO : amount.setScale(2, java.math.RoundingMode.HALF_UP);
+        String text = new java.text.DecimalFormat("$#,##0.00", java.text.DecimalFormatSymbols.getInstance(Locale.US)).format(value.abs());
+        return value.signum() < 0 ? "(" + text + ")" : text;
+    }
     private void drawCenteredText(PDPageContentStream contentStream, PDFont font, float fontSize,
                                   String text, float contentLeft, float contentWidth, float y) throws IOException {
         contentStream.beginText();

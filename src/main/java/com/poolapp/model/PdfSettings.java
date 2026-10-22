@@ -59,6 +59,8 @@ public class PdfSettings {
 
     // Footer
     private String footerText = "Thank you for choosing our pool service!";
+    private String paymentInfo = ""; // Segments separated by "|" are spread across the payment bar
+    private String logoData = ""; // Embedded logo (data URL) shared with other devices and the web app
     private boolean showGenerationDate = true;
 
     // Page settings
@@ -158,6 +160,10 @@ public class PdfSettings {
 
     public String getFooterText() { return footerText; }
     public void setFooterText(String footerText) { this.footerText = footerText; }
+    public String getPaymentInfo() { return paymentInfo; }
+    public void setPaymentInfo(String paymentInfo) { this.paymentInfo = paymentInfo == null ? "" : paymentInfo; }
+    public String getLogoData() { return logoData; }
+    public void setLogoData(String logoData) { this.logoData = logoData == null ? "" : logoData; }
 
     public boolean isShowGenerationDate() { return showGenerationDate; }
     public void setShowGenerationDate(boolean showGenerationDate) { this.showGenerationDate = showGenerationDate; }

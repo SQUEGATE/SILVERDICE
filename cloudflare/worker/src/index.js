@@ -112,9 +112,11 @@ export default {
       }
       if (url.pathname === "/v1/settings" && request.method === "PUT") {
         requirePermission(session, "canEditPdf");
-        const body = await readJson(request);
+        const body = await readJson(request, 700 * 1024);
         const settingKey = requiredString(body.key, "key", 160);
-        if (typeof body.value !== "string" || body.value.length > 16000) throw httpError(400, "value must be a string no longer than 16000 characters");
+        const maxValueLength = settingKey === "logoData" ? 600000 : 16000;
+        if (typeof body.value !== "string" || body.value.length > maxValueLength) throw httpError(400, `value must be a string no longer than ${maxValueLength} characters`);
+        if (settingKey === "logoData" && body.value && !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(body.value)) throw httpError(400, "logoData must be a PNG or JPEG data URL");
         await turso(env, "INSERT INTO pdf_settings (company_id, setting_key, setting_value) VALUES (?, ?, ?) ON CONFLICT(company_id, setting_key) DO UPDATE SET setting_value = excluded.setting_value", requiredCompanyId(session), settingKey, body.value);
         return json({ saved: true }, 200, request);
       }
@@ -755,9 +757,9 @@ function decodeTursoValue(cell) {
   return cell.value;
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = 64 * 1024) {
   const contentLength = Number(request.headers.get("Content-Length") || 0);
-  if (contentLength > 64 * 1024) throw httpError(413, "Request body is too large");
+  if (contentLength > maxBytes) throw httpError(413, "Request body is too large");
   try {
     const body = await request.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error();

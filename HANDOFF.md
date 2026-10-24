@@ -130,7 +130,7 @@ Plus `allowedCustomerIds` and `allowedDays`. If either list is non-empty, the em
   - **Payments** (types classified as "debit", e.g. "Zelle Payment") are stored as **negative** amounts.
   - **Balance = sum of amounts.** Above $0 means the customer owes money.
 - Classification is by **keywords** (`recordTypeCreditKeywords` / `recordTypeDebitKeywords` in `pdf_settings`), editable via the **Keywords** button (desktop).
-- Records sort by date (parsed as MM/DD/YYYY), then charges before payments, then by ID.
+- Records are shown **newest to oldest** (screen and PDF): date (parsed as MM/DD/YYYY), then charges/payments, then ID, all reversed. The web app computes the running balance oldest-first, then reverses for display.
 
 ### 4.5 Monthly Statement (bulk billing)
 Choose a credit type. The app adds a record to **every Active customer** using their **amount charged**, dated the **last day of the current month**.

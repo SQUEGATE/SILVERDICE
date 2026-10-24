@@ -330,7 +330,7 @@ async function vStatement(){
   S.kw=null;await loadKw();var id=S.arg;
   var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api("/v1/customers/"+encodeURIComponent(id)+"/statements"),api("/v1/record-types")]);
   var c=res[0],recs=res[1].slice().sort(cmpRecords),types=res[2];
-  var run=0;recs.forEach(function(r){run+=r.amount;r.run=run});
+  var run=0;recs.forEach(function(r){run+=r.amount;r.run=run});recs.reverse();
   var edit=can("canEditStatements");
   app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc(c.first_name)+' '+esc(c.last_name)+' <span class="s">#'+esc(c.customer_id)+'</span></h2>'+
    '<div class="s">'+mapLink(c)+'</div><h2 class="'+(run>0?"pos":run<0?"neg":"")+'">Balance: '+money(run)+'</h2>'+

@@ -367,7 +367,8 @@ public class DatabaseManager {
         records.sort(java.util.Comparator
                 .comparing((StatementRecord r) -> parseRecordDate(r.getDate()))
                 .thenComparing(r -> r.getAmount().signum() >= 0 ? 0 : 1)
-                .thenComparingLong(StatementRecord::getId));
+                .thenComparingLong(StatementRecord::getId)
+                .reversed());
         return records;
     }
 

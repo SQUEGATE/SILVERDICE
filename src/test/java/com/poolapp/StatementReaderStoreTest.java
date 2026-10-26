@@ -102,6 +102,65 @@ public class StatementReaderStoreTest {
         assertEquals(2, ambiguous.get(0).candidateIds().size());
     }
 
+    @Test public void completeNamesMatchAnywhereWithinOneRecordInEitherOrder() {
+        List<String> texts = List.of(
+                "Zelle From Jane pool payment Paret-Swihl",
+                "Zel From Paret-Swihl household payment Jane",
+                "Zelle From Jane October payment ParetSwihl",
+                "Zel From ParetSwihl household payment Jane",
+                "Zelle From Jane one two three four five six seven eight nine ten eleven twelve thirteen Paret-Swihl",
+                "Zelle From Swihl household Jane payment Paret");
+        for (String text : texts) {
+            var row = store.preview(hash('a'), List.of(source("1:1", 1, 1, text, "9/8", "100.00", "deposit", "")),
+                    List.of(jane)).get(0);
+            assertEquals(text, "ready", row.status());
+            assertEquals(text, "c1", row.customerId());
+        }
+        Customer compound = new Customer("compound", "Ana Mar\u00eda", "De la Cruz", "", "", "", "Monday", BigDecimal.ZERO, "");
+        for (String text : List.of("Zelle Ana payment Mar\u00eda household De October la pool Cruz",
+                "Zel DeLaCruz unrelated words AnaMar\u00eda")) {
+            var row = store.preview(hash('a'), List.of(source("1:1", 1, 1, text, "9/8", "100.00", "deposit", "")),
+                    List.of(compound)).get(0);
+            assertEquals(text, "ready", row.status());
+            assertEquals(text, "compound", row.customerId());
+        }
+        assertTrue(database.getStatementRecords("c1").isEmpty());
+    }
+
+    @Test public void separatedPartialOrEmbeddedNamesNeverAutomaticallySelectCustomer() {
+        for (String text : List.of("Zelle Jan payment Paret-Swihl", "Zelle Janet payment Paret-Swihl",
+                "Zelle Jane payment Paret", "Zelle Jane payment Paret-Swih",
+                "Zelle Jane payment Paret-Swihlson", "Zelle XJane payment Paret-Swihl")) {
+            var row = store.preview(hash('a'), List.of(source("1:1", 1, 1, text, "9/8", "100.00", "deposit", "")),
+                    List.of(jane)).get(0);
+            assertEquals(text, "review", row.status());
+            assertEquals(text, "", row.customerId());
+        }
+        var rows = store.preview(hash('a'), List.of(
+                source("1:1", 1, 1, "Zelle Jane only", "9/8", "100.00", "deposit", ""),
+                source("1:2", 1, 2, "Zelle Paret-Swihl only", "9/8", "101.00", "deposit", "")), List.of(jane));
+        assertTrue(rows.stream().allMatch(row -> row.status().equals("review") && row.customerId().isEmpty()));
+    }
+
+    @Test public void separatedAmbiguousNamesStayUnselectedAndRepeatedWordsAreCounted() {
+        Customer sameName = new Customer("c3", "Jane", "Paret Swihl", "", "", "", "Monday", BigDecimal.ZERO, "");
+        for (String text : List.of("Zelle Jane pool payment Paret-Swihl", "Zel ParetSwihl unrelated words Jane")) {
+            var row = store.preview(hash('a'), List.of(source("1:1", 1, 1, text, "9/8", "100.00", "deposit", "")),
+                    List.of(jane, sameName)).get(0);
+            assertEquals("review", row.status());
+            assertEquals("", row.customerId());
+            assertEquals(List.of("c1", "c3"), row.candidateIds());
+        }
+        Customer repeated = new Customer("rose", "Rose", "Rose", "", "", "", "Monday", BigDecimal.ZERO, "");
+        var rows = store.preview(hash('a'), List.of(
+                source("1:1", 1, 1, "Zelle Rose only", "9/8", "100.00", "deposit", ""),
+                source("1:2", 1, 2, "Zelle Rose household payment Rose", "9/8", "101.00", "deposit", "")), List.of(repeated));
+        assertEquals("review", rows.get(0).status());
+        assertEquals("", rows.get(0).customerId());
+        assertEquals("ready", rows.get(1).status());
+        assertEquals("rose", rows.get(1).customerId());
+    }
+
     @Test public void importsNegativePaymentAndDurableAuditThenBlocksExactRetryAndRequiresFingerprintOverride() {
         String document = hash('d');
         StatementReaderStore.PreviewRow initial = store.preview(document,

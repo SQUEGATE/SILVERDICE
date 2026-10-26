@@ -129,7 +129,7 @@ public class VisitsPanel extends JPanel {
         JButton open = new JButton("Open Customer Visits");
         page.add(open, BorderLayout.SOUTH);
         find.addActionListener(e -> searchCustomers());
-        search.addActionListener(e -> searchCustomers());
+        search.addActionListener(e -> searchAcrossDays());
         day.addActionListener(e -> searchCustomers());
         open.addActionListener(e -> openSelectedCustomer());
         customerList.addListSelectionListener(e -> {
@@ -236,6 +236,15 @@ public class VisitsPanel extends JPanel {
             found.forEach(customers::addElement);
             status.setText(found.size() + " customer(s). Select a customer to open Visits.");
         });
+    }
+
+    private void searchAcrossDays() {
+        if (busy) return;
+        if (!"All".equals(day.getSelectedItem())) {
+            day.setSelectedItem("All");
+        } else {
+            searchCustomers();
+        }
     }
 
     private void openSelectedCustomer() {

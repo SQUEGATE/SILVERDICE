@@ -141,12 +141,8 @@ public class PoolAppFrame extends JFrame {
     private JButton chargedRefreshButton;
     private boolean statementWriteBusy;
     private final List<JComponent> statementWriteControls = new ArrayList<>();
-    private final JButton previousCustomerPage = new JButton("Previous 50");
-    private final JButton nextCustomerPage = new JButton("Next 50");
-    private final JLabel customerPageLabel = new JLabel(" ");
+    private final JLabel customerCountLabel = new JLabel(" ");
     private final JCheckBox reorderDay = new JCheckBox("Reorder entire day");
-    private int customerOffset;
-    private int customerTotal;
     private boolean customerLoading;
     private boolean reorderReady;
     private boolean exportBusy;
@@ -567,12 +563,8 @@ public class PoolAppFrame extends JFrame {
         JPanel customersBalancePanel = new JPanel(new FlowLayout(FlowLayout.LEADING));
         customersBalancePanel.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         customersBalancePanel.add(customerBalanceLabel);
-        customersBalancePanel.add(previousCustomerPage);
-        customersBalancePanel.add(customerPageLabel);
-        customersBalancePanel.add(nextCustomerPage);
+        customersBalancePanel.add(customerCountLabel);
         customersBalancePanel.add(reorderDay);
-        previousCustomerPage.addActionListener(e -> loadCustomerPage(Math.max(0, customerOffset - 50)));
-        nextCustomerPage.addActionListener(e -> loadCustomerPage(customerOffset + 50));
         reorderDay.setToolTipText("Select a single day and clear search to load the complete route for dragging.");
         reorderDay.addActionListener(e -> loadFilteredCustomers());
         tablePanel.add(customersBalancePanel, BorderLayout.SOUTH);
@@ -847,6 +839,13 @@ public class PoolAppFrame extends JFrame {
         clearButton.addActionListener(e -> clearForm());
         searchButton.addActionListener(e -> loadFilteredCustomers());
         customerSearchButton = searchButton;
+        searchField.addActionListener(e -> {
+            if (!"All".equals(dayFilterCombo.getSelectedItem())) {
+                dayFilterCombo.setSelectedIndex(0);
+            } else {
+                loadFilteredCustomers();
+            }
+        });
         clearFilterButton.addActionListener(e -> resetFilters());
         dayFilterCombo.addActionListener(e -> loadFilteredCustomers());
 
@@ -1187,10 +1186,10 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void loadFilteredCustomers() {
-        loadCustomerPage(0);
+        loadCustomerList();
     }
 
-    private void loadCustomerPage(int offset) {
+    private void loadCustomerList() {
         nextLoad("selectedCustomer");
         String search = searchField.getText().trim();
         String selectedDay = Objects.toString(dayFilterCombo.getSelectedItem(), "All");
@@ -1198,29 +1197,23 @@ public class PoolAppFrame extends JFrame {
         if (!reorder) reorderDay.setSelected(false);
         customerLoading = true;
         reorderReady = false;
-        previousCustomerPage.setEnabled(false);
-        nextCustomerPage.setEnabled(false);
-        customerPageLabel.setText(reorder ? "Loading entire route..." : "Loading customers...");
+        customerCountLabel.setText(reorder ? "Loading entire route..." : "Loading customers...");
         if (customerSearchButton != null) customerSearchButton.setEnabled(false);
         loadAsync("customers", () -> {
             if (reorder) {
                 return new com.poolapp.db.CustomerBrowserStore(dbManager).fullDay(selectedDay, employeeProfile);
             }
-            return new com.poolapp.db.CustomerBrowserStore(dbManager).page(search, selectedDay, offset, employeeProfile);
+            return new com.poolapp.db.CustomerBrowserStore(dbManager).all(search, selectedDay, employeeProfile);
         }, page -> {
             customerLoading = false;
-            customerOffset = offset;
-            customerTotal = page.total();
             reorderReady = reorder;
             if (customerSearchButton != null) customerSearchButton.setEnabled(true);
             loadCustomers(page.rows());
-            previousCustomerPage.setEnabled(!reorder && offset > 0);
-            nextCustomerPage.setEnabled(!reorder && offset + 50 < customerTotal);
-            customerPageLabel.setText(reorder ? "Entire day: " + customerTotal + " customers"
-                    : (customerTotal == 0 ? 0 : offset + 1) + "–" + Math.min(offset + 50, customerTotal) + " of " + customerTotal);
+            customerCountLabel.setText(reorder ? "Entire day: " + page.total() + " customers"
+                    : page.total() + " customer(s)");
         }, error -> {
             customerLoading = false;
-            customerPageLabel.setText("Unable to load customers.");
+            customerCountLabel.setText("Unable to load customers.");
             if (customerSearchButton != null) customerSearchButton.setEnabled(true);
             showLoadError(error);
         });

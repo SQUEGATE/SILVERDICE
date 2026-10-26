@@ -442,9 +442,10 @@ async function listCustomers(request, env, session) {
   const args = [requiredCompanyId(session)];
   sql += filters.sql;
   args.push(...filters.args);
-  if (url.searchParams.has("service_day")) {
+  const serviceDay = (url.searchParams.get("service_day") || "").trim();
+  if (serviceDay) {
     sql += " AND service_day = ?";
-    args.push(url.searchParams.get("service_day"));
+    args.push(serviceDay);
   }
   if (query) {
     sql += " AND (lower(first_name) LIKE ? OR lower(last_name) LIKE ? OR lower(address) LIKE ? OR lower(city) LIKE ? OR lower(state) LIKE ? OR lower(zip) LIKE ? OR lower(email) LIKE ? OR lower(customer_id) LIKE ? OR lower(phone) LIKE ? OR lower(first_name || ' ' || last_name) LIKE ?)";
@@ -595,27 +596,35 @@ function readerWords(value) {
 
 function readerTextTokens(text) {
   const words = readerWords(text);
-  const compact = new Set(), sorted = new Set();
+  const compact = new Set();
   for (let start = 0; start < words.length; start++) {
     for (let size = 1; size <= 12 && start + size <= words.length; size++) {
       const window = words.slice(start, start + size);
       compact.add(window.join(""));
-      sorted.add(window.slice().sort().join(" "));
     }
   }
-  return { words: new Set(words), compact, sorted };
+  return { words: new Set(words), counts: readerWordCounts(words), compact };
+}
+
+function readerWordCounts(words) {
+  const counts = new Map();
+  for (const word of words) counts.set(word, (counts.get(word) || 0) + 1);
+  return counts;
 }
 
 function readerNameTokens(customer) {
   const first = readerWords(customer.first_name), last = readerWords(customer.last_name);
   const name = [...first, ...last];
   return { valid: first.length > 0 && last.length > 0 && name.length <= 12, name,
-    sorted: name.slice().sort().join(" "), compact: [first.join("") + last.join(""), last.join("") + first.join("")] };
+    variants: [first, [first.join("")]].flatMap(given =>
+      [last, [last.join("")]].map(surname => readerWordCounts([...given, ...surname]))),
+    compact: [first.join("") + last.join(""), last.join("") + first.join("")] };
 }
 
 function readerMatch(text, name) {
   if (!name.valid) return { full: false, partial: false };
-  return { full: name.compact.some(value => text.compact.has(value)) || text.sorted.has(name.sorted),
+  return { full: name.compact.some(value => text.compact.has(value))
+      || name.variants.some(counts => [...counts].every(([word, count]) => (text.counts.get(word) || 0) >= count)),
     partial: name.name.some(word => text.words.has(word)) };
 }
 

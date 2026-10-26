@@ -97,6 +97,28 @@ async function fixture(run, { legacy = false } = {}) {
   } finally { globalThis.fetch = originalFetch; db.close(); }
 }
 
+test("customer lists treat omitted or blank day as all days for paged and desktop full-list callers", async () => {
+  await fixture(async ({ call, employee }) => {
+    for (const suffix of ["", "?service_day=", "?service_day=%20%20"]) {
+      const full = await call("/v1/customers" + suffix);
+      assert.equal(full.status, 200);
+      assert.equal(full.body.length, 4);
+    }
+    for (const day of ["", "&service_day=", "&service_day=%20"]) {
+      const page = await call("/v1/customers?limit=50&offset=0" + day);
+      assert.equal(page.status, 200);
+      assert.equal(page.body.total, 4);
+      assert.equal(page.body.rows.length, 4);
+    }
+    const scoped = await call("/v1/customers?limit=50&service_day=", { auth: employee });
+    assert.deepEqual(scoped.body.rows.map(c => c.customer_id), ["a", "c"]);
+    const selectedDay = await call("/v1/customers?limit=50&service_day=Monday");
+    assert.deepEqual(selectedDay.body.rows.map(c => c.customer_id).sort(), ["a", "d"]);
+    const searched = await call("/v1/customers?limit=50&q=Beta&service_day=");
+    assert.deepEqual(searched.body.rows.map(c => c.customer_id), ["b"]);
+  });
+});
+
 test("optimization: grouped balances include zeroes and enforce permissions, company and assigned ID/day scope", async () => {
   await fixture(async ({ call, employee, token }) => {
     assert.deepEqual((await call("/v1/balances", { auth: employee })).body,

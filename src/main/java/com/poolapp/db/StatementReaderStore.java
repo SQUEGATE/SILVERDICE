@@ -18,6 +18,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -220,37 +221,51 @@ public final class StatementReaderStore {
         return results;
     }
 
-    private record CustomerName(Customer customer, List<String> words, Set<String> compact, String sorted) { }
-    private record NameWindows(Set<String> words, Set<String> compact, Set<String> sorted) { }
+    private record CustomerName(Customer customer, List<String> words, Set<String> compact,
+                                List<Map<String, Integer>> variants) { }
+    private record NameWindows(Set<String> words, Set<String> compact, Map<String, Integer> counts) { }
 
     private static CustomerName prepareName(Customer customer) {
         List<String> firstWords = Arrays.stream(normalizeWords(customer.getFirstName())).filter(word -> !word.isBlank()).toList();
         List<String> lastWords = Arrays.stream(normalizeWords(customer.getLastName())).filter(word -> !word.isBlank()).toList();
-        if (firstWords.isEmpty() || lastWords.isEmpty()) return new CustomerName(customer, List.of(), Set.of(), "");
+        if (firstWords.isEmpty() || lastWords.isEmpty()) return new CustomerName(customer, List.of(), Set.of(), List.of());
         List<String> nameWords = new ArrayList<>(firstWords);
         nameWords.addAll(lastWords);
-        if (nameWords.size() > 12) return new CustomerName(customer, List.of(), Set.of(), "");
+        if (nameWords.size() > 12) return new CustomerName(customer, List.of(), Set.of(), List.of());
         Set<String> compactNames = new HashSet<>(List.of(String.join("", firstWords) + String.join("", lastWords),
                 String.join("", lastWords) + String.join("", firstWords)));
-        String sortedName = nameWords.stream().sorted().reduce((left, right) -> left + " " + right).orElse("");
-        return new CustomerName(customer, nameWords, compactNames, sortedName);
+        List<Map<String, Integer>> variants = new ArrayList<>();
+        for (List<String> first : List.of(firstWords, List.of(String.join("", firstWords)))) {
+            for (List<String> last : List.of(lastWords, List.of(String.join("", lastWords)))) {
+                List<String> words = new ArrayList<>(first);
+                words.addAll(last);
+                variants.add(wordCounts(words));
+            }
+        }
+        return new CustomerName(customer, nameWords, compactNames, variants);
+    }
+
+    private static Map<String, Integer> wordCounts(List<String> words) {
+        Map<String, Integer> counts = new HashMap<>();
+        for (String word : words) counts.merge(word, 1, Integer::sum);
+        return counts;
     }
 
     private static NameWindows prepareWindows(String text) {
         List<String> sourceWords = Arrays.stream(normalizeWords(text)).filter(word -> !word.isBlank()).toList();
-        Set<String> compact = new HashSet<>(), sorted = new HashSet<>();
+        Set<String> compact = new HashSet<>();
         for (int start = 0; start < sourceWords.size(); start++) {
             for (int size = 1; size <= 12 && start + size <= sourceWords.size(); size++) {
                 List<String> window = sourceWords.subList(start, start + size);
                 compact.add(String.join("", window));
-                sorted.add(window.stream().sorted().reduce((left, right) -> left + " " + right).orElse(""));
             }
         }
-        return new NameWindows(new HashSet<>(sourceWords), compact, sorted);
+        return new NameWindows(new HashSet<>(sourceWords), compact, wordCounts(sourceWords));
     }
 
     private static Match matchName(NameWindows source, CustomerName name) {
-        boolean full = !name.words().isEmpty() && (source.sorted().contains(name.sorted())
+        boolean full = !name.words().isEmpty() && (name.variants().stream().anyMatch(counts ->
+                counts.entrySet().stream().allMatch(entry -> source.counts().getOrDefault(entry.getKey(), 0) >= entry.getValue()))
                 || name.compact().stream().anyMatch(source.compact()::contains));
         boolean partial = name.words().stream().filter(word -> word.length() > 1).anyMatch(source.words()::contains);
         return new Match(full, partial);

@@ -162,9 +162,22 @@ test("reader: normalized bounded full names, partial and ambiguous review, stric
       [{ text: "JoseGarcia" }, "ready", "jose"],
       [{ text: "Mary O Neil" }, "ready", "punct"],
       [{ text: "María De Cruz Ana la" }, "ready", "day"],
+      [{ text: "Zelle From José payment for October García" }, "ready", "jose"],
+      [{ text: "Zel From García household pool payment José" }, "ready", "jose"],
+      [{ text: "Zelle From Ana October María pool De payment la household Cruz" }, "ready", "day"],
+      [{ text: "Zelle From DeLaCruz pool payment AnaMaría" }, "ready", "day"],
+      [{ text: "Zelle From Mary payment ONeil" }, "ready", "punct"],
+      [{ text: "Zelle From José one two three four five six seven eight nine ten eleven twelve thirteen García" }, "ready", "jose"],
       [{ text: "José" }, "review", ""],
       [{ text: "Alex Smith" }, "review", ""],
+      [{ text: "Zelle From Alex pool payment Smith" }, "review", ""],
+      [{ text: "Zelle From Smith unrelated words Alex" }, "review", ""],
       [{ text: "XJosé GarciaX" }, "review", ""],
+      [{ text: "Zelle From Jos pool payment García" }, "review", ""],
+      [{ text: "Zelle From José pool payment Gar" }, "review", ""],
+      [{ text: "Zelle From Joséph pool payment García" }, "review", ""],
+      [{ text: "Zelle From José pool payment Garcías" }, "review", ""],
+      [{ text: "Zelle From Ana María payment De la" }, "review", ""],
       [{ date_text: "02/29/2028" }, "ready", "jose"],
       [{ date_text: "02/29/2027" }, "ignored", ""],
       [{ date_text: "04/31" }, "ignored", ""],
@@ -202,6 +215,26 @@ test("reader: normalized bounded full names, partial and ambiguous review, stric
     const leap = await call(previewPath, { method: "POST", token, body: document([source({ date_text: "02/29" })]) });
     assert.equal(leap.body.rows[0].date, year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? `02/29/${year}` : "");
     assert.equal(db.prepare("SELECT COUNT(*) n FROM statement_records").get().n, before);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM reader_imports").get().n, 0);
+  });
+});
+
+test("reader: name evidence stays within one record and repeated name words need separate occurrences", async () => {
+  await fixture(async ({ call, login, db }) => {
+    const token = await login("one");
+    db.exec("INSERT INTO customers (company_id,customer_id,first_name,last_name,service_day) VALUES (1,'repeat','Rose','Rose','Monday')");
+    const result = await call(previewPath, { method: "POST", token, body: document([
+      source({ source_id: "1:1", line: 1, text: "Zelle from José only" }),
+      source({ source_id: "1:2", line: 2, text: "Zelle from García only" }),
+      source({ source_id: "1:3", line: 3, text: "Zelle from Rose only" }),
+      source({ source_id: "1:4", line: 4, text: "Zelle from Rose household payment Rose" }),
+      source({ source_id: "1:5", line: 5, text: "Zelle from Smith household payment Alex" })
+    ]) });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body.rows.map(row => [row.status, row.customer_id]), [
+      ["review", ""], ["review", ""], ["review", ""], ["ready", "repeat"], ["review", ""]
+    ]);
+    assert.deepEqual(result.body.rows[4].candidate_ids.slice().sort(), ["amb1", "amb2"]);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM reader_imports").get().n, 0);
   });
 });

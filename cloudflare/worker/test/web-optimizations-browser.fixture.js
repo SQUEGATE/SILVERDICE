@@ -42,14 +42,20 @@ async function runWebOptimizationBrowserChecks(page) {
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => { document.documentElement.style.fontSize = "24px"; go("customers"); });
-  await page.locator("#cunext").waitFor();
-  check(await page.locator("#lst tbody tr").count() === 50, "125 customers render only one 50-row page at large mobile text");
-  await page.locator("#cunext").click();
-  await page.waitForFunction(() => document.querySelector("#lst tbody tr")?.dataset.id === "51");
-  check(await page.locator("#lst tbody tr").count() === 50, "next customer page uses offset 50");
-  await page.locator("#q").fill("Customer 125");
-  await page.waitForFunction(() => document.querySelector("#lst tbody tr")?.dataset.id === "125");
-  check(await page.locator("#lst tbody tr").count() === 1, "customer search runs before pagination across all 125 records");
+  for (const view of ["customers", "statements", "visits", "quotes"]) {
+    await page.evaluate(view => go(view), view);
+    const list = view === "quotes" ? "#qlist" : "#lst";
+    const search = view === "quotes" ? "#qq" : "#q", day = view === "quotes" ? "#qd" : "#df";
+    await page.waitForFunction(selector => document.querySelectorAll(selector + " tbody tr").length === 125, list);
+    check(await page.locator(list + " tbody tr").count() === 125, view + " shows all 125 customers without paging");
+    check(await page.locator("#cunext").count() === 0, view + " has no customer Next page");
+    await page.locator(day).selectOption("Tuesday");
+    await page.waitForFunction(selector => document.querySelectorAll(selector + " tbody tr").length === 62, list);
+    await page.locator(search).fill("Customer 125");
+    await page.locator(search).press("Enter");
+    await page.waitForFunction(selector => document.querySelector(selector + " tbody tr")?.dataset.id === "125", list);
+    check(await page.locator(list + " tbody tr").count() === 1 && await page.locator(day).inputValue() === "", view + " Enter finds customer across days and resets day filter");
+  }
   await page.evaluate(() => go("statement", "1"));
   await page.locator("#stnext").waitFor();
   check(await page.locator(".record-table tbody tr").count() === 50, "statement ledger page bounded at 50 with full balance");

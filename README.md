@@ -4,11 +4,13 @@ This is a Java desktop app for managing pool service customers.
 
 ### Desktop browsing and statement exports
 
-Customers normally load in pages of 50, with search/day filters applied before pagination. Use **Previous 50** / **Next 50** to browse. Customer-details Previous/Next navigation still uses the complete accessible customer sequence.
+Customer lists show all accessible customers by default across Customers, Statements, Visits and Sales Quote. Type a customer name and press **Enter** to search across every day, even if a day filter was previously selected. Day filters remain optional; employee access restrictions still apply. Customer-details Previous/Next navigation uses the complete accessible customer sequence.
 
-To reorder a route, clear search, choose one service day, and enable **Reorder entire day**. This explicitly loads the complete accessible day and disables pagination; dragging is unavailable on ordinary partial pages, so saving an order cannot accidentally submit only 50 customers.
+To reorder a route, clear search and choose one service day. Route reordering uses the complete accessible day, never a truncated customer page.
 
 Statement PDF generation, email attachments, and SMS delivery run in the background with duplicate-action protection and visible completion/errors. Save-file dialogs remain on the UI thread. Exports always use the complete statement history, independent of the displayed statement page.
+
+Statement Reader can match complete first and last names anywhere in the same transaction record, in either order with intervening words. Ambiguous customer matches stay unselected for review. Incoming Zelle/Zel, date, amount and duplicate checks still apply.
 
 ## What it includes
 - Add and edit customer records

@@ -102,6 +102,14 @@ async function runStatementReaderBrowserChecks(page) {
   check((await page.locator("#sr-amount-0").inputValue()) === "100", "deposit column read without dollar sign; ending balance excluded");
   check((await page.locator("#sr-year").innerText()).includes("2026"), "server current-year notice shown");
   check(await page.locator('[data-row="0"] [data-field="selected"]').isChecked(), "only ready row selected by default");
+  await page.locator('[data-find="0"]').click();
+  await page.waitForFunction(() => document.querySelectorAll("#sr-matches [data-match]").length === 3);
+  check(await page.locator("#sr-matches [data-match]").count() === 3, "Reader customer picker initially displays all accessible customers");
+  await page.locator("#sr-search").fill("Avery");
+  await page.locator("#sr-search").press("Enter");
+  await page.waitForFunction(() => document.querySelectorAll("#sr-matches [data-match]").length === 1);
+  check((await page.locator("#sr-matches").innerText()).includes("Avery Demo"), "Reader customer picker Enter searches names");
+  await page.locator("#sr-close").click();
   check(!await page.locator('[data-row="1"] [data-field="selected"]').isChecked(), "suspected duplicate unchecked by default");
   check(!await page.locator("#sr-rows").innerText().then(text => text.includes("Zelle To")), "outgoing transfer hidden");
   check(await page.locator('[data-row="2"] [data-field="selected"]').isDisabled(), "review cannot select without valid customer");
@@ -109,6 +117,8 @@ async function runStatementReaderBrowserChecks(page) {
   await page.locator('[data-find="2"]').click();
   await page.getByRole("dialog", { name: "Find an accessible customer" }).waitFor();
   await page.locator("#sr-search").fill("Avery");
+  await page.locator("#sr-search").press("Enter");
+  await page.waitForFunction(() => document.querySelectorAll("#sr-matches [data-match]").length === 1 && document.getElementById("sr-matches").textContent.includes("Avery"));
   await page.locator("#sr-matches [data-match]").first().click();
   check(await page.locator("#sr-customer-2").inputValue() === "2", "shared accessible search picker assigns manually searched customer");
   check(!await page.locator('[data-row="2"] [data-field="selected"]').isChecked(), "manual customer search does not silently select a review row for import");

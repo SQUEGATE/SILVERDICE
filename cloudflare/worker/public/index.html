@@ -129,9 +129,9 @@ function cancelReadKey(key){if(S.readKeys){var c=S.readKeys.get(key);if(c)c.abor
 function pagePath(path,offset,extra){return path+"?limit=50&offset="+(offset||0)+(extra||"")}
 function pager(id,offset,total){return '<div class="row" aria-label="Record pages"><button class="b alt" id="'+id+'prev"'+(!offset?' disabled':'')+'>Previous</button><span role="status">'+(total?offset+1:0)+'–'+Math.min(offset+50,total)+' of '+total+'</span><button class="b alt" id="'+id+'next"'+(offset+50>=total?' disabled':'')+'>Next</button></div>'}
 function bindPager(id,offset,total,load){$(id+"prev").onclick=function(){if(offset)load(Math.max(0,offset-50))};$(id+"next").onclick=function(){if(offset+50<total)load(offset+50)}}
-async function allCustomers(extra){
+async function allCustomers(extra,options){
   var rows=[],offset=0,page;
-  do{page=await api(pagePath("/v1/customers",offset,extra));if(Array.isArray(page))return page;rows=rows.concat(page.rows);offset+=page.rows.length}while(page.rows.length&&offset<page.total);
+  do{page=await api(pagePath("/v1/customers",offset,extra),options);if(Array.isArray(page))return page;rows=rows.concat(page.rows);offset+=page.rows.length}while(page.rows.length&&offset<page.total);
   return rows;
 }
 function can(p){var a=S.account;if(!a)return false;if(a.role!=="EMPLOYEE")return true;return !!(a.permissions&&a.permissions[p])}
@@ -263,16 +263,13 @@ async function vStatementReader(){
     '<dialog id="sr-picker" aria-labelledby="sr-picker-title"><h3 id="sr-picker-title">Find an accessible customer</h3><label for="sr-search">Name, ID, address or phone</label><input id="sr-search" type="search" autocomplete="off"><div id="sr-matches" role="status" aria-live="polite"></div><button class="b alt" id="sr-close" type="button">Close</button></dialog><div id="sr-preview"></div></div>';
   var pickerRow=null,pickerSeq=0,pickerTimer;
   $("sr-close").onclick=function(){++pickerSeq;cancelReadKey("reader-search");$("sr-picker").close()};
-  $("sr-search").oninput=function(){
-    clearTimeout(pickerTimer);cancelReadKey("reader-search");var token=++pickerSeq,query=this.value.trim();$("sr-matches").textContent=query?"Searching…":"Type to search customers.";
-    if(!query)return;
-    pickerTimer=setTimeout(async function(){
-      if(!current()||token!==pickerSeq)return;
+  async function searchPicker(){
+    clearTimeout(pickerTimer);cancelReadKey("reader-search");var token=++pickerSeq,query=$("sr-search").value.trim();$("sr-matches").textContent="Loading customers…";
+      if(!current())return;
       try{
-        var page=await api(pagePath("/v1/customers",0,"&q="+encodeURIComponent(query)),{readKey:"reader-search"});
+        var found=await allCustomers("&q="+encodeURIComponent(query),{readKey:"reader-search"});
         if(!current()||token!==pickerSeq)return;
-        var found=Array.isArray(page)?page:page.rows;
-        $("sr-matches").innerHTML=found.map(function(c,i){return '<button type="button" class="b alt" data-match="'+i+'">'+esc(c.first_name+" "+c.last_name+" (#"+c.customer_id+")")+'</button>'}).join("")+(found.length?'<p>First 50 matches. Refine your search if needed.</p>':'<p>No accessible customers found.</p>');
+        $("sr-matches").innerHTML=found.map(function(c,i){return '<button type="button" class="b alt" data-match="'+i+'">'+esc(c.first_name+" "+c.last_name+" (#"+c.customer_id+")")+'</button>'}).join("")+(found.length?"":'<p>No accessible customers found.</p>');
         $("sr-matches").querySelectorAll("[data-match]").forEach(function(b){b.onclick=function(){
           if(!current()||busy||pickerRow==null)return;var c=found[Number(b.getAttribute("data-match"))],r=rows[pickerRow];
           if(!customers.some(function(x){return String(x.customer_id)===String(c.customer_id)}))customers.push(c);
@@ -280,8 +277,9 @@ async function vStatementReader(){
           ++pickerSeq;$("sr-picker").close();render();
         }});
       }catch(e){if(current()&&token===pickerSeq)$("sr-matches").textContent=e.message}
-    },180);
-  };
+  }
+  $("sr-search").oninput=function(){clearTimeout(pickerTimer);++pickerSeq;cancelReadKey("reader-search");$("sr-matches").textContent="Searching…";pickerTimer=setTimeout(searchPicker,180)};
+  $("sr-search").onkeydown=function(e){if(e.key==="Enter"){e.preventDefault();return searchPicker()}};
   function notice(){$("sr-year").textContent="Dates without a year use the current server year ("+year+"), not the statement year. Review and edit dates before importing."}
   notice();
   function valid(r){
@@ -329,7 +327,7 @@ async function vStatementReader(){
     };
     $("sr-import").onclick=importRows;
     $("sr-rows").querySelectorAll("[data-find]").forEach(function(b){b.onclick=function(){
-      if(busy)return;pickerRow=Number(b.getAttribute("data-find"));$("sr-search").value="";$("sr-matches").textContent="Type to search customers.";$("sr-picker").showModal();$("sr-search").focus();
+      if(busy)return;pickerRow=Number(b.getAttribute("data-find"));$("sr-search").value="";$("sr-picker").showModal();$("sr-search").focus();searchPicker();
     }});
     buttonState();
   }
@@ -443,24 +441,22 @@ function vCompany(){
 
 /* ---------- customers ---------- */
 async function vCustomers(){
-  var nav=S.nav,list=[],offset=0,total=0,seq=0,timer;
+  var nav=S.nav,list=[],seq=0,timer;
   var mode=S.view==="quotes"?"quote":S.view==="visits"?"visit":"",active=!!mode||(S.arg&&S.arg.pick);
   function $(id){return document.getElementById(mode==="quote"?({q:"qq",df:"qd",lst:"qlist"}[id]||id):id)}
   app.innerHTML='<div id="flash"></div><div class="card"><div class="row"><input id="'+(mode==="quote"?"qq":"q")+'" aria-label="Search customers" placeholder="Search name, address, city..."><select id="'+(mode==="quote"?"qd":"df")+'" aria-label="Service day"><option value="">All days</option>'+DAYS.map(function(d){return "<option>"+d+"</option>"}).join("")+'</select></div>'+
    (can("canEditCustomers")&&!active?'<button class="b ok" id="nc">+ New customer</button>':'')+'<p class="s" id="hint" style="display:none">Tap \u25B2\u25BC to set the route order for this day.</p><div id="'+(mode==="quote"?"qlist":"lst")+'"></div></div>';
-  async function draw(next){
-    offset=typeof next==="number"?next:0;var tok=++seq;
+  async function draw(){
+    var tok=++seq;
     var q=$("q").value.toLowerCase(),d=$("df").value;
     try{
-    var page=await api(pagePath("/v1/customers",offset,"&q="+encodeURIComponent(q)+"&service_day="+encodeURIComponent(d)),{readKey:"customer-list"});
+    var found=await allCustomers("&q="+encodeURIComponent(q)+(d?"&service_day="+encodeURIComponent(d):""),{readKey:"customer-list"});
     if(nav!==S.nav||tok!==seq)return;
-    list=Array.isArray(page)?page:page.rows;total=Array.isArray(page)?page.length:page.total;
+    list=found;
     var rows=list;
     var canDrag=!!d&&!q&&!active&&can("canEditCustomers");
-    if(canDrag){rows=await allCustomers("&service_day="+encodeURIComponent(d));if(nav!==S.nav||tok!==seq)return;list=rows}
     $("lst").innerHTML=rows.length?customerTable(rows,function(c){if(mode)return '<button class="b" '+(mode==="quote"?'data-qc':'data-vc')+'="'+esc(c.customer_id)+'">'+(mode==="quote"?"Quotes":"Visits")+'</button>';return (can("canViewStatements")?'<button class="b" data-st="'+esc(c.customer_id)+'">Statement</button>':'')+
       (!active&&(can("canViewCustomerDetails")||can("canEditCustomers"))?'<button class="b alt" data-cu="'+esc(c.customer_id)+'">Details</button>':'')},canDrag):'<p class="s">No customers found.</p>';
-    if(!canDrag){$("lst").innerHTML+=pager("cu",offset,total);bindPager("cu",offset,total,draw)}
     app.querySelectorAll("[data-st]").forEach(function(b){b.onclick=function(){go("statement",b.getAttribute("data-st"))}});
     app.querySelectorAll("[data-qc],[data-vc]").forEach(function(b){b.onclick=function(){var id=b.getAttribute(mode==="quote"?"data-qc":"data-vc");go(mode,mode==="quote"?{id:id}:id)}});
     app.querySelectorAll("[data-cu]").forEach(function(b){b.onclick=function(){go("customer",b.getAttribute("data-cu"))}});
@@ -498,7 +494,10 @@ async function vCustomers(){
       };
     });
   }
-  $("q").oninput=function(){clearTimeout(timer);++seq;cancelReadKey("customer-list");timer=setTimeout(function(){if(nav===S.nav)draw()},180)};$("df").onchange=function(){clearTimeout(timer);return draw()};await draw();
+  function search(){clearTimeout(timer);if($("q").value.trim())$("df").value="";return draw()}
+  $("q").oninput=function(){clearTimeout(timer);++seq;cancelReadKey("customer-list");timer=setTimeout(function(){if(nav===S.nav)search()},180)};
+  $("q").onkeydown=function(e){if(e.key==="Enter"){e.preventDefault();return search()}};
+  $("df").onchange=function(){clearTimeout(timer);return draw()};await draw();
   if($("nc"))$("nc").onclick=function(){go("customer","")};
 }
 function vPickCustomer(){S.arg={pick:true};return vCustomers()}

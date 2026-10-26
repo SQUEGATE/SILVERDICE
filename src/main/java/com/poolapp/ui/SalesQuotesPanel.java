@@ -101,7 +101,7 @@ public final class SalesQuotesPanel extends JPanel {
                 return label;
             }
         });
-        find.addActionListener(e -> searchCustomers()); search.addActionListener(e -> searchCustomers());
+        find.addActionListener(e -> searchCustomers()); search.addActionListener(e -> searchAcrossDays());
         day.addActionListener(e -> searchCustomers());
         open.addActionListener(e -> {
             if (!busy && customers.getSelectedValue() != null) loadCustomer(customers.getSelectedValue());
@@ -196,6 +196,15 @@ public final class SalesQuotesPanel extends JPanel {
             return result.stream().filter(accessible)
                     .filter(c -> "All".equals(selectedDay) || c.getServiceDay().equalsIgnoreCase(selectedDay)).toList();
         }, result -> { customerModel.clear(); result.forEach(customerModel::addElement); });
+    }
+
+    private void searchAcrossDays() {
+        if (busy) return;
+        if (!"All".equals(day.getSelectedItem())) {
+            day.setSelectedItem("All");
+        } else {
+            searchCustomers();
+        }
     }
 
     private record Loaded(SalesQuoteStore.Page quotes, List<String> types, Map<String, String> settings) { }

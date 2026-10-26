@@ -18,6 +18,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingWorker;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -47,6 +48,7 @@ public final class StatementReaderPanel extends JPanel {
     private final JLabel documentLabel = new JLabel("No statement loaded");
     private final JLabel status = new JLabel("Choose a searchable statement PDF to begin.");
     private final JComboBox<String> customerChoices = new JComboBox<>();
+    private final JTextField customerSearch = new JTextField(18);
     private final ReaderTableModel tableModel = new ReaderTableModel();
     private final JTable table = new JTable(tableModel);
     private final Map<String, String> customerIdsByDisplay = new HashMap<>();
@@ -67,6 +69,8 @@ public final class StatementReaderPanel extends JPanel {
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT));
         controls.add(upload);
         controls.add(documentLabel);
+        controls.add(new JLabel("Find customer (Enter):"));
+        controls.add(customerSearch);
         controls.add(importSelected);
         importSelected.setEnabled(false);
         importSelected.setVisible(canImport);
@@ -93,6 +97,7 @@ public final class StatementReaderPanel extends JPanel {
 
         upload.addActionListener(event -> choosePdf());
         importSelected.addActionListener(event -> importRows());
+        customerSearch.addActionListener(event -> filterCustomerChoices());
     }
 
     public void refresh() {
@@ -208,9 +213,20 @@ public final class StatementReaderPanel extends JPanel {
             customerIdsByDisplay.put(display, customer.getId());
             customerDisplayById.put(customer.getId(), display);
         }
+        customerSearch.setText("");
+        filterCustomerChoices();
+    }
+
+    private void filterCustomerChoices() {
+        if (table.isEditing()) table.getCellEditor().stopCellEditing();
+        String query = customerSearch.getText().trim().toLowerCase(java.util.Locale.ROOT);
         DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
         model.addElement("-- Select customer manually --");
-        customerDisplayById.values().forEach(model::addElement);
+        customers.stream()
+                .filter(customer -> customer.getFullName().toLowerCase(java.util.Locale.ROOT).contains(query))
+                .map(customer -> customerDisplayById.get(customer.getId()))
+                .filter(java.util.Objects::nonNull)
+                .forEach(model::addElement);
         customerChoices.setModel(model);
     }
 
@@ -244,7 +260,6 @@ public final class StatementReaderPanel extends JPanel {
         CustomerEditor() {
             super(customerChoices);
             choices = customerChoices;
-            choices.addItem("-- Select customer manually --");
         }
         @Override public Component getTableCellEditorComponent(JTable table, Object value, boolean selected, int row, int column) {
             choices.setSelectedItem(value == null || value.toString().isBlank()

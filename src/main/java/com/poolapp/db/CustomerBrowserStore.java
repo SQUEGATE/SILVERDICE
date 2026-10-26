@@ -10,7 +10,7 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Bounded browsing; full-day reorder and legacy exports deliberately use their existing full lists. */
+/** Customer browsing with optional paging; route reorder continues to use its complete day list. */
 public final class CustomerBrowserStore {
     private final DatabaseManager database;
     public CustomerBrowserStore(DatabaseManager database) { this.database = database; }
@@ -18,6 +18,10 @@ public final class CustomerBrowserStore {
 
     public Page page(String query, String day, int offset, EmployeeProfile employee) {
         return load(query, day, offset, employee, false);
+    }
+
+    public Page all(String query, String day, EmployeeProfile employee) {
+        return load(query, day, 0, employee, true);
     }
 
     public Page fullDay(String day, EmployeeProfile employee) {

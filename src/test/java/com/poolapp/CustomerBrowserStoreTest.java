@@ -38,10 +38,13 @@ public class CustomerBrowserStoreTest {
             assertThrows(IllegalArgumentException.class, () -> store.fullDay("All", null));
             assertEquals("c50", second.rows().get(0).getId());
             assertEquals(55, store.page("5550000000", "All", 0, null).total());
+            assertEquals(56, store.all("", "All", null).rows().size());
+            assertEquals(55, store.all("First", "All", null).rows().size());
             EmployeeProfile employee = new EmployeeProfile();
             employee.setAllowedCustomerIds(List.of("c54"));
             employee.setAllowedDays(List.of("Tuesday"));
             assertEquals(2, store.page("", "All", 0, employee).total());
+            assertEquals(2, store.all("", "All", employee).rows().size());
             assertEquals(1, store.page("", "Monday", 0, employee).total());
             assertEquals(56, database.getAllCustomersOrderedById().size());
             List<String> completeDay = database.getAllCustomers().stream().filter(c -> c.getServiceDay().equals("Monday"))
@@ -64,9 +67,12 @@ public class CustomerBrowserStoreTest {
         server.createContext("/", exchange -> {
             uri.set(exchange.getRequestURI().toString());
             auth.set(exchange.getRequestHeaders().getFirst("Authorization"));
-            byte[] body = new JSONObject().put("total", 101).put("rows", new JSONArray().put(new JSONObject()
-                    .put("customer_id", "c51").put("first_name", "First").put("service_day", "Monday")
-                    .put("amount_charged", "25.00").put("route_order", 51))).toString().getBytes(StandardCharsets.UTF_8);
+            JSONObject customer = new JSONObject().put("customer_id", "c51").put("first_name", "First")
+                    .put("service_day", "Monday").put("amount_charged", "25.00").put("route_order", 51);
+            String response = exchange.getRequestURI().getQuery().contains("limit=")
+                    ? new JSONObject().put("total", 101).put("rows", new JSONArray().put(customer)).toString()
+                    : new JSONArray().put(customer).toString();
+            byte[] body = response.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
             try (var out = exchange.getResponseBody()) { out.write(body); }
         });
@@ -78,6 +84,10 @@ public class CustomerBrowserStoreTest {
             assertEquals("Bearer synthetic", auth.get());
             assertEquals(101, page.total());
             assertEquals(51, page.rows().get(0).getRouteOrder());
+            var all = new CustomerBrowserStore(new DatabaseManager(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "synthetic", 1)).all("First Last", "All", null);
+            assertEquals("/v1/customers?q=First+Last", uri.get());
+            assertEquals(1, all.rows().size());
         } finally { server.stop(0); }
     }
 }

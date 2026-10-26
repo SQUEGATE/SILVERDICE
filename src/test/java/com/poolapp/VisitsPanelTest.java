@@ -1,6 +1,7 @@
 package com.poolapp;
 
 import com.poolapp.db.DatabaseManager;
+import com.poolapp.model.Customer;
 import com.poolapp.ui.VisitsPanel;
 import org.junit.Test;
 
@@ -12,6 +13,44 @@ import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class VisitsPanelTest {
+    @Test
+    public void customerListIsUnpagedAndEnterSearchesAcrossAllDays() throws Exception {
+        Path directory = Files.createDirectories(Path.of("visits-search-test-" + java.util.UUID.randomUUID()));
+        Path path = directory.resolve("visits.db");
+        try {
+            DatabaseManager database = new DatabaseManager(path);
+            for (int i = 0; i < 56; i++) {
+                database.addCustomer(new Customer("c" + i, "First", String.format("%03d", i), "", "", "",
+                        i % 2 == 0 ? "Monday" : "Tuesday", java.math.BigDecimal.ZERO, ""));
+            }
+            AtomicReference<VisitsPanel> holder = new AtomicReference<>();
+            SwingUtilities.invokeAndWait(() -> {
+                VisitsPanel panel = new VisitsPanel(database, c -> true);
+                holder.set(panel);
+                panel.refresh();
+            });
+            VisitsPanel panel = holder.get();
+            awaitIdle(panel);
+            DefaultListModel<?> customers = field(panel, "customers", DefaultListModel.class);
+            VisitsTest.check(customers.size() == 56, "Default customer list is not paged");
+            SwingUtilities.invokeAndWait(() -> field(panel, "day", JComboBox.class).setSelectedItem("Monday"));
+            awaitIdle(panel);
+            VisitsTest.check(customers.size() == 28, "Optional day filter remains available");
+            SwingUtilities.invokeAndWait(() -> {
+                field(panel, "search", JTextField.class).setText("First");
+                field(panel, "search", JTextField.class).postActionEvent();
+            });
+            awaitIdle(panel);
+            VisitsTest.check("All".equals(field(panel, "day", JComboBox.class).getSelectedItem()),
+                    "Enter resets the day filter");
+            VisitsTest.check(customers.size() == 56, "Enter searches all days without pagination");
+        } finally {
+            try (var files = Files.walk(directory)) {
+                for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(file);
+            }
+        }
+    }
+
     @Test
     public void filtersCustomersAndSavesAndEditsVisit() throws Exception {
         Path directory = Files.createDirectories(Path.of("visits-ui-test-" + java.util.UUID.randomUUID()));

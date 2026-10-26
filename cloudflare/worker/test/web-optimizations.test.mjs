@@ -155,3 +155,58 @@ test("PDF settings save as one atomic batch", async () => {
   assert.equal(writes[0].opts.body.settings.companyName, "Changed");
   assert.equal(writes[0].opts.body.settings.showGenerationDate, "true");
 });
+
+test("every customer tab displays the full list and Enter searches across all days", async () => {
+  for (const view of ["customers", "statements", "visits", "quotes"]) {
+    const { c, el } = fixture();
+    c.S.view = view;
+    const customers = Array.from({ length: 125 }, (_, i) => ({
+      customer_id: String(i + 1), first_name: "Demo", last_name: `Customer ${i + 1}`,
+      service_day: i % 2 ? "Tuesday" : "Monday", amount_charged: 10,
+    }));
+    const calls = [];
+    c.api = async path => {
+      calls.push(path);
+      const query = new URL(path, "http://fixture").searchParams;
+      const q = query.get("q") || "", day = query.get("service_day");
+      const matching = customers.filter(customer =>
+        (!q || `${customer.first_name} ${customer.last_name}`.toLowerCase().includes(q)) &&
+        (!day || customer.service_day === day));
+      const offset = Number(query.get("offset"));
+      return { rows: matching.slice(offset, offset + 50), total: matching.length };
+    };
+    await c.vCustomers();
+    const list = el(view === "quotes" ? "qlist" : "lst");
+    assert.equal((list.innerHTML.match(/<tr data-id=/g) || []).length, 125, view);
+    assert.doesNotMatch(list.innerHTML, /id="cu(?:prev|next)"/);
+    const search = el(view === "quotes" ? "qq" : "q"), day = el(view === "quotes" ? "qd" : "df");
+    day.value = "Tuesday";
+    search.value = "Customer 125";
+    let prevented = false;
+    await search.onkeydown({ key: "Enter", preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(day.value, "");
+    assert.equal((list.innerHTML.match(/<tr data-id=/g) || []).length, 1);
+    assert.match(list.innerHTML, /data-id="125"/);
+    assert.equal(new URL(calls.at(-1), "http://fixture").searchParams.has("service_day"), false);
+  }
+});
+
+test("Statement Reader customer picker Enter searches all matching customers beyond the first page", async () => {
+  const { c, el } = fixture();
+  c.S.view = "reader";
+  const calls = [];
+  c.api = async path => {
+    calls.push(path);
+    const offset = Number(new URL(path, "http://fixture").searchParams.get("offset"));
+    return { rows: Array.from({ length: Math.min(50, 125 - offset) }, (_, i) => ({
+      customer_id: String(offset + i + 1), first_name: "Demo", last_name: `Customer ${offset + i + 1}`,
+    })), total: 125 };
+  };
+  await c.vStatementReader();
+  el("sr-search").value = "Demo";
+  await el("sr-search").onkeydown({ key: "Enter", preventDefault() {} });
+  assert.equal((el("sr-matches").innerHTML.match(/data-match=/g) || []).length, 125);
+  assert.match(el("sr-matches").innerHTML, /Customer 125/);
+  assert.equal(calls.length, 3);
+});

@@ -93,6 +93,7 @@ Employee permission flags (stored as JSON in `accounts.permissions_json`, modele
 | `canEditStatements` | Add/delete records, Monthly Statement, record type changes |
 | `canAccessVisits` | Visits tab: search assigned customers, view/add/edit visits. Opt-in for employees; existing employees do not get it automatically. |
 | `canAccessSalesQuote` | Sales Quote tab: prepare/save/edit/delete quotes and export quotation PDFs for assigned customers. Off by default for employees. Conversion additionally requires `canEditStatements`. |
+| `canAccessStatementReader` | Statement Reader PDF extraction and payment preview for assigned customers. Off by default for employees. Import additionally requires `canEditStatements`; reader access alone cannot change balances. |
 | `canViewRevenueSummary` | Revenue Summary |
 | `canViewPdf` | View PDF settings and generate statements |
 | `canEditPdf` | Change PDF settings |
@@ -172,6 +173,19 @@ Lists Active customers with a balance above $0.00, highest first, with a total.
 - Quote data is shared through the API and included in company backups. Other devices see updates after reopening/reloading the customer's quotes, not by live push.
 - Limits: 1-200 lines, nonzero prices up to 999999999.99 in absolute value with at most two decimal places; notes and terms up to 16000 characters each. Quote create/update bodies allow up to 2 MiB. Combined company backup restore retains its separate 50 MiB cap.
 - Regression checks: run the canonical desktop `.\gradlew.bat test`, and from `cloudflare\worker` run `node --test test\quotes.sqlite.test.js test\quotes-web.test.js`. These cover stored quotes, numbering, permissions, conversion/retries/rollback, API contracts, PDF content/pagination, and form behavior.
+
+### Statement Reader (desktop and web)
+- Upload a **text/selectable PDF**, review the detected rows, and explicitly confirm which payments to import. The original PDF is parsed locally on the device; the API receives extracted transaction rows, not the PDF file. Scanned/image-only PDFs require a selectable-text version; there is no OCR service.
+- For a table-style bank statement, the reader uses column positions to distinguish **Deposits/Additions** from **Withdrawals/Subtractions** and **Ending daily balance**. A deposit need not have a dollar sign. Never use the ending balance as the payment amount.
+- Use the **posting date at the start of the transaction row**, not a different date embedded in its description. A date with only month/day uses the current year, even if the PDF's statement period is older. Full dates retain their year; invalid dates must be corrected before import.
+- Match accessible customers by normalized full name: ignore case, accents, punctuation/spacing, and first/last-name order. Partial names or multiple matching customers require explicit selection in the preview. No guessing or automatic writes.
+- The preview shows the original PDF row/page context, customer, date, amount, and warnings. Review uncertain matches and select the intended rows. Withdrawals, invalid rows, and already imported entries are not automatic payment candidates.
+- Confirmed amounts are stored as **negative `Zelle Payment`** statement entries to reduce the customer's balance, independent of configurable statement type keywords.
+- Suspected existing payments for the same customer/date/amount are unchecked by default and need an explicit duplicate override. A previously imported PDF row or bank reference cannot be imported again merely by enabling that override.
+- Import history is a separate audit ledger so reloading/retrying does not double-charge or double-credit the ledger. Import errors are displayed; a preview alone does not alter balances. Only selected confirmed rows are written.
+- Employee access requires **Statement Reader**; importing also requires **Edit Statement Data**. Customer/day assignments remain enforced by the API. Other devices see new payments after reloading the statement.
+- Browser parsing uses pinned, self-hosted PDF.js 6.4.299; neither the PDF nor its contents are sent to a third-party PDF service. `npm.cmd run deploy` and `npm.cmd run dev` prepare the parser/worker/license assets automatically. If invoking Wrangler directly, run `npm.cmd run pdf-assets` first.
+- Regression checks: canonical desktop `.\gradlew.bat test`; API `node --test test\reader.sqlite.test.js`; browser extraction/UI contracts `npm.cmd run test:statement-reader-web`. Browser replay instructions are in `cloudflare/worker/test/statement-reader-browser.fixture.js`; use synthetic fixtures, never import a real bank statement just to test.
 
 ### 4.7 Revenue Summary
 Sum of `amount_charged` for non-inactive customers, grouped by service day, with a grand total.
@@ -287,6 +301,7 @@ Package root: `src/main/java/com/poolapp/`
 | `DatabaseManager.java` | **Per-company data access.** Every public method (customers, statements, record types, PDF settings, revenue, reorder, backup) has two branches: **remote** (calls the Worker through `CompManagerApiClient`) and **local** (JDBC against a SQLite file). Local mode creates and migrates tables in `initializeDatabase` and `addColumnIfMissing`. Statement records are sorted by `parseRecordDate` (MM/DD/YYYY). |
 | `MasterDatabaseManager.java` | **Accounts and companies.** Login (`authenticateMaster/Company/Employee`, which call `/v1/auth/login` in cloud mode), company CRUD, employee CRUD, and creating `DatabaseManager`s for a company or for an employee preview. Local mode keeps a `master.db`. |
 | `SalesQuoteStore.java` | Quotation persistence and once-only conversion to statement records, using local SQLite or the authenticated API client exposed by `DatabaseManager.getApiClient()`. |
+| `StatementReaderStore.java` | Payment preview/matching and duplicate-protected imports, via authenticated cloud endpoints or local SQLite. The import audit is committed alongside the new statement entries. |
 | `CompManagerApiClient.java` | Minimal HTTP JSON client (GET/POST/PUT/DELETE with Bearer token). Turns API `{error}` responses into exceptions. |
 | `AppApiConfiguration.java` | Resolves the API URL. Precedence: env `COMP_MANAGER_API_URL`, then system property `comp.manager.api.url`, then `config.properties` (packaged), `./config.properties`, and `%USERPROFILE%\.compmanager\config.properties`. `getWebAppUrl()` is used for the phone link. |
 | `TursoHttpClient.java` | Direct Turso HTTP client, used **only** by the migrator. |
@@ -309,6 +324,7 @@ Package root: `src/main/java/com/poolapp/`
 | `service/EmailService.java` | Opens a new Outlook message (classic `outlook.exe` or new `olk.exe`) with the PDF attached. SMTP settings in `config.properties` are legacy. |
 | `service/SmsService.java` | Opens the Windows `sms:` handler, or falls back to Google Messages for Web, with a text summary (no attachment). |
 | `service/SalesQuotePdf.java` | PDFBox quotation export based on the supplied sample, including the company logo/header, quote/customer details, line table, totals, advance-payment terms, and payment instructions. |
+| `service/StatementPdfReader.java` | Local PDFBox text/position extraction for Statement Reader. Separates transaction columns so deposits cannot be confused with withdrawals or balances. |
 | `update/UpdateChecker.java` | On startup, checks GitHub Releases of `update.repo` (`SQUEGATE/SILVERDICE`) and offers to open the download if a newer version exists. Skipped when not running from a packaged jar. |
 
 ---
@@ -353,6 +369,8 @@ Package root: `src/main/java/com/poolapp/`
 | `GET/POST /v1/customers/:id/quotes` | sales quote | List a customer's saved quotations or create a numbered quote. |
 | `PUT/DELETE /v1/customers/:id/quotes/:quoteId` | sales quote | Edit/delete an unconverted quote; converted quotes are locked. |
 | `POST /v1/customers/:id/quotes/:quoteId/convert` | sales quote + edit statements (company accounts allowed) | Atomically copy quote lines to the statement once and lock the quotation. |
+| `POST /v1/statement-reader/preview` | statement reader | Validate extracted PDF rows, find accessible customer matches, normalize posting dates and deposit amounts, and flag duplicates. No statement records are written. |
+| `POST /v1/statement-reader/import` | statement reader + edit statements (company accounts allowed) | Confirm selected payment rows, create negative Zelle Payment entries, and record duplicate-protection audit identities atomically. |
 | `DELETE /v1/statements/:id` | edit statements | Delete a record. |
 | `GET /v1/record-types`, `POST`/`PUT`/`DELETE` | view statements or sales quote for GET; edit statements for writes | Manage types (rename updates existing records). Quotation access alone never grants type editing. |
 | `GET /v1/statement-types` | view statements | Distinct types in use. |
@@ -417,6 +435,7 @@ Script sections, in order:
 | `customer_visits` | (`company_id`, `visit_id`) | customer_id, visited_at (UTC ISO timestamp), ph, chlo, stb, nullable alk/cal, notes, photo_data (PNG/JPEG data URL or empty string). Created/migrated automatically for existing databases, preserving saved visits when ALK/CAL become nullable. Local company SQLite uses visit_id as its primary key. |
 | `sales_quotes` | (`company_id`, `quote_id`) | quote_number, customer_id, quote_date (MM/DD/YYYY), notes, terms, lines_json, converted_at (NULL until converted), created_at, updated_at. |
 | `sales_quote_sequences` | `company_id` | next_id, a durable company-specific high watermark so quote numbers are not reused after deletion. |
+| `reader_imports` | (`company_id`, `document_hash`, `source_id`) | customer_id, record_id, record_date, negative amount, normalized bank reference (nullable), source_text, imported_at. A unique nonempty reference index prevents importing the same bank payment from another PDF. Audit survives individual payment deletion; explicit customer/company deletion clears its audit. |
 | `record_types` | (`company_id`, `type_name`) | — |
 | `pdf_settings` | (`company_id`, `setting_key`) | setting_value. Keys include companyName, companyAddress, companyPhone, companyEmail, footerText, showGenerationDate, paymentInfo, logoPath, logoData, showLogo, logoWidth, logoHeight, fonts, colors, margins, offsets, pageSize, landscape, recordTypeCreditKeywords, recordTypeDebitKeywords. |
 

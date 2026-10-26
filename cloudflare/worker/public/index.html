@@ -59,6 +59,7 @@ td.r,th.r{text-align:right}.scroll{overflow-x:auto}
 @media(min-width:62em){#drawer{display:block;position:fixed;right:auto;width:15rem;background:none;inset:0 auto 0 0;top:4rem}
  #drawer nav{width:15rem}#menuBtn{display:none}body.authed main,body.authed #quick{margin-left:16rem;max-width:none}}
 button.b{max-width:100%}.card{overflow-wrap:anywhere}
+.reader-row{border:1px solid var(--line);border-radius:10px;padding:12px;margin:12px 0;min-width:0}.reader-row pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.875rem;background:var(--bg);padding:8px;border-radius:6px}.reader-row input[type=checkbox]{width:auto;min-width:1.2rem;min-height:1.2rem}button:disabled{opacity:.55;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -70,7 +71,7 @@ button.b{max-width:100%}.card{overflow-wrap:anywhere}
 <script>
 "use strict";
 var DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-var PERMS=[["canViewCustomerDetails","View customer details"],["canViewCustomers","View customers"],["canViewStatements","View statements"],["canViewRevenueSummary","View revenue summary"],["canViewPdf","View PDF settings"],["canEditCustomers","Edit customers"],["canEditStatements","Edit statements"],["canEditPdf","Edit PDF settings"],["canAccessVisits","Access visits"],["canAccessSalesQuote","Access Sales Quote"]];
+var PERMS=[["canViewCustomerDetails","View customer details"],["canViewCustomers","View customers"],["canViewStatements","View statements"],["canViewRevenueSummary","View revenue summary"],["canViewPdf","View PDF settings"],["canEditCustomers","Edit customers"],["canEditStatements","Edit statements"],["canEditPdf","Edit PDF settings"],["canAccessVisits","Access visits"],["canAccessSalesQuote","Access Sales Quote"],["canAccessStatementReader","Access Statement Reader"]];
 var DEF_CREDIT="payment, paid, credit, refund, discount, adjustment, rebate, deposit, return, transfer in, check, cheque";
 var DEF_DEBIT="cash, bill, charge, service, invoice, fee, debit, purchase, due, owed, repair, labor, parts, materials";
 var S={token:localStorage.getItem("cm.token")||"",account:JSON.parse(localStorage.getItem("cm.account")||"null"),view:"",arg:null,kw:null,master:false};
@@ -135,6 +136,7 @@ var VIEWS=[
  {id:"customers",label:"Customers",perm:function(){return can("canViewCustomers")||can("canViewCustomerDetails")}},
  {id:"visits",label:"Visits",perm:function(){return can("canAccessVisits")}},
  {id:"quotes",label:"Sales Quote",perm:function(){return can("canAccessSalesQuote")}},
+ {id:"reader",label:"Statement Reader",perm:function(){return can("canAccessStatementReader")}},
  {id:"statements",label:"Statements",perm:function(){return can("canViewStatements")}},
  {id:"monthly",label:"Monthly Statement",perm:function(){return can("canEditStatements")&&can("canViewStatements")}},
  {id:"charged",label:"Charged Summary",perm:function(){return can("canViewStatements")}},
@@ -191,16 +193,126 @@ function backToMaster(){
 }
 function go(view,arg){
   clearTimers();S.nav=(S.nav||0)+1;
+  if(view==="reader"&&!can("canAccessStatementReader")){
+    S.view="";S.arg=null;app.innerHTML='<div class="err">Statement Reader access is not permitted.</div>';return;
+  }
   if((view==="quotes"||view==="quote")&&!can("canAccessSalesQuote")){
     S.view="";S.arg=null;app.innerHTML='<div class="err">Sales Quote access is not permitted.</div>';return;
   }
   if((view==="visits"||view==="visit")&&!can("canAccessVisits"))view="customers";
   S.view=view;S.arg=arg||null;window.scrollTo(0,0);
-  var fn={quotes:vQuotes,quote:vQuote,visits:vVisits,visit:vVisit,companies:vCompanies,customers:vCustomers,customer:vCustomer,statements:vPickCustomer,statement:vStatement,monthly:vMonthly,charged:vCharged,revenue:vRevenue,types:vTypes,pdf:vPdf,employees:vEmployees,employee:vEmployee,backup:vBackup,company:vCompany}[view];
+  var fn={reader:vStatementReader,quotes:vQuotes,quote:vQuote,visits:vVisits,visit:vVisit,companies:vCompanies,customers:vCustomers,customer:vCustomer,statements:vPickCustomer,statement:vStatement,monthly:vMonthly,charged:vCharged,revenue:vRevenue,types:vTypes,pdf:vPdf,employees:vEmployees,employee:vEmployee,backup:vBackup,company:vCompany}[view];
   var v=VIEWS.filter(function(x){return x.id===(view==="quote"?"quotes":view==="visit"?"visits":view)})[0];
   $("title").textContent=(S.account&&S.account.companyName&&!S.master?S.account.companyName+" \u2022 ":"")+(v?v.label:(view==="companies"?"Companies":"Comp Manager"));
   app.innerHTML='<div id="flash"></div><div class="card">Loading...</div>';
   Promise.resolve().then(fn).catch(function(e){app.innerHTML='<div class="err">'+esc(e.message)+'</div>'});
+}
+
+/* ---------- local statement reader ---------- */
+async function vStatementReader(){
+  if(!can("canAccessStatementReader"))throw new Error("Statement Reader access is not permitted.");
+  var nav=S.nav,upload=0,busy=false,customers=[],rows=[],rawRows=[],hash="",year=new Date().getFullYear();
+  function current(){return nav===S.nav&&S.view==="reader"&&can("canAccessStatementReader")}
+  function editable(){return can("canEditStatements")&&can("canAccessStatementReader")}
+  app.innerHTML='<div id="flash" role="status" aria-live="polite"></div><div class="card"><h2>Statement Reader</h2>'+
+    '<p>The PDF is read locally on this device; the original file is never uploaded. Only extracted transaction lines are sent to your company API for matching and duplicate checks.</p>'+
+    '<p>Use a selectable-text PDF (no OCR), up to 25 MB, 100 pages and 1,000 transactions. Choose the bank <b>posting date</b>, not a date inside the description.</p>'+
+    '<p id="sr-year"></p><label for="sr-file">Bank statement PDF</label><input id="sr-file" type="file" accept=".pdf,application/pdf">'+
+    '<p id="sr-progress" role="status" aria-live="polite"></p><p id="sr-rights">'+(editable()?'Import creates <b>Zelle Payment</b> records as negative amounts. You must confirm the selected rows first.':'Preview only: importing also requires Edit statements permission.')+'</p>'+
+    '<div id="sr-preview"></div></div>';
+  function notice(){$("sr-year").textContent="Dates without a year use the current server year ("+year+"), not the statement year. Review and edit dates before importing."}
+  notice();
+  function valid(r){
+    return !!parseDate(r.date)&&/^\d+(?:\.\d{1,2})?$/.test(String(r.amount))&&Number(r.amount)>0&&Number(r.amount)<=999999999.99&&
+      customers.some(function(c){return String(c.customer_id)===String(r.customer_id)});
+  }
+  function locked(r){return ["imported","ignored","skipped"].indexOf(r.status)>=0}
+  function canOverride(r){return r.status==="duplicate"&&!/\b(?:source|reference|already|exact|previously)\b/i.test(r.reason||"")}
+  function eligible(r){return !locked(r)&&valid(r)&&(r.status!=="duplicate"||(canOverride(r)&&r.override_duplicate))}
+  function buttonState(){
+    var b=$("sr-import");if(!b)return;
+    var count=rows.filter(function(r){return r.selected&&eligible(r)}).length;
+    b.textContent=busy?"Importing…":"Confirm import ("+count+")";b.disabled=busy||!editable()||!count;
+  }
+  function render(){
+    if(!current())return;
+    notice();
+    var counts={};rows.forEach(function(r){counts[r.status]=(counts[r.status]||0)+1});
+    $("sr-preview").innerHTML='<h3>Preview — '+rows.length+' rows</h3><p id="sr-counts">'+Object.keys(counts).map(function(k){return esc(k)+": "+counts[k]}).join(" · ")+'</p>'+
+      '<p>Only ready rows are selected automatically. Review rows need a valid posting date, customer and positive deposit amount. Duplicates require a separate explicit override; already-imported source/reference rows can never be overridden.</p>'+
+      '<div id="sr-rows">'+rows.map(function(r,i){
+        var raw=rawRows.find(function(x){return x.source_id===r.source_id})||{},disable=locked(r)?" disabled":"";
+        var candidates=(r.candidate_ids||[]).map(String);
+        return '<section class="reader-row" data-row="'+i+'"><h3>Page '+esc(r.page)+' · Line '+esc(r.line)+' — <span data-status>'+esc(r.status)+'</span></h3>'+
+          '<p data-reason>'+esc(r.reason||"")+'</p><p class="s">Source posting date: '+esc(raw.date_text||"—")+' · Deposit: '+esc(raw.deposit_text||"not confidently identified")+' · Direction: '+esc(raw.direction||"unknown")+'</p>'+
+          '<details><summary>Original PDF transaction line</summary><pre>'+esc(raw.text||r.text)+'</pre></details>'+
+          '<label for="sr-date-'+i+'">Posting date (MM/DD/YYYY)</label><input id="sr-date-'+i+'" data-field="date" value="'+esc(r.date)+'" placeholder="MM/DD/YYYY"'+disable+'>'+
+          '<label for="sr-customer-'+i+'">Customer'+(candidates.length?' — suggested matches marked *':'')+'</label><select id="sr-customer-'+i+'" data-field="customer_id"'+disable+'><option value="">Choose customer…</option>'+
+          customers.map(function(c){return '<option value="'+esc(c.customer_id)+'"'+(String(c.customer_id)===String(r.customer_id)?' selected':'')+'>'+esc((candidates.indexOf(String(c.customer_id))>=0?"* ":"")+c.first_name+" "+c.last_name+" (#"+c.customer_id+")")+'</option>'}).join("")+'</select>'+
+          '<label for="sr-amount-'+i+'">Deposit amount (positive)</label><input id="sr-amount-'+i+'" data-field="amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="'+esc(r.amount==null?"":r.amount)+'"'+disable+'>'+
+          (canOverride(r)?'<label class="chk"><input data-field="override_duplicate" type="checkbox"'+(r.override_duplicate?' checked':'')+'> Override suspected same date/customer/amount duplicate (not an already-imported row/reference)</label>':'')+
+          '<label class="chk"><input data-field="selected" type="checkbox"'+(r.selected?' checked':'')+(!eligible(r)?' disabled':'')+'> Select for import</label><p data-validation class="s">'+(!locked(r)&&!valid(r)?'Choose a valid date, accessible customer and positive amount.':'')+'</p></section>';
+      }).join("")+'</div><button class="b ok" id="sr-import">Confirm import</button><div id="sr-result" role="status" aria-live="polite"></div>';
+    $("sr-rows").oninput=function(e){
+      var el=e.target,section=el.closest("[data-row]"),field=el.getAttribute("data-field");
+      if(!section||!field||busy)return;
+      var r=rows[Number(section.getAttribute("data-row"))];
+      if(locked(r))return;
+      if(field==="selected")r.selected=el.checked;
+      else if(field==="override_duplicate"){r.override_duplicate=el.checked;r.selected=false}
+      else {r[field]=el.value;if(r.status==="duplicate"){r.override_duplicate=false;var cb=section.querySelector('[data-field="override_duplicate"]');if(cb)cb.checked=false}}
+      if(!eligible(r))r.selected=false;
+      var select=section.querySelector('[data-field="selected"]');select.disabled=!eligible(r);select.checked=!!r.selected;
+      section.querySelector("[data-validation]").textContent=!valid(r)?"Choose a valid date, accessible customer and positive amount.":"";
+      buttonState();
+    };
+    $("sr-import").onclick=importRows;
+    buttonState();
+  }
+  async function importRows(){
+    if(busy||!current()||!editable())return;
+    var selected=rows.filter(function(r){return r.selected&&eligible(r)});
+    if(!selected.length)return;
+    var overrides=selected.filter(function(r){return r.override_duplicate}).length;
+    if(!confirm("Import "+selected.length+" selected deposits as negative Zelle Payment records?"+(overrides?"\nExplicitly override "+overrides+" suspected duplicate(s). Already-imported rows/references will still be rejected.":"")))return;
+    busy=true;buttonState();$("sr-file").disabled=true;flash("","");
+    $("sr-rows").querySelectorAll("input,select").forEach(function(e){e.disabled=true});
+    try{
+      var result=await api("/v1/statement-reader/import",{method:"POST",body:{document_hash:hash,rows:selected.map(function(r){
+        return {source_id:r.source_id,page:r.page,line:r.line,text:r.text,date:r.date,amount:Number(r.amount),customer_id:r.customer_id,reference:r.reference||"",override_duplicate:!!r.override_duplicate};
+      })}});
+      if(!current())return;
+      (result.rows||[]).forEach(function(out){
+        var r=rows.find(function(x){return x.source_id===out.source_id});if(!r)return;
+        r.status=out.status;r.reason=out.reason||"";r.record_id=out.record_id;r.selected=false;r.override_duplicate=false;
+      });
+      busy=false;render();$("sr-result").textContent="Imported: "+result.imported+" · Skipped: "+result.skipped+". Results are retained below. Re-uploading the same PDF is still checked against server import history.";
+    }catch(e){if(current()){busy=false;render();flash("err",e.message)}}
+    finally{busy=false;if(current()){$("sr-file").disabled=false;buttonState()}}
+  }
+  $("sr-file").onchange=async function(){
+    if(busy||!current())return;
+    var file=this.files[0],sequence=++upload;rows=[];rawRows=[];hash="";$("sr-preview").innerHTML="";flash("","");
+    if(!file){$("sr-progress").textContent="";return}
+    function fresh(){return current()&&sequence===upload}
+    $("sr-progress").textContent="Reading PDF locally…";
+    try{
+      var module=await import("/statement-reader.mjs");
+      var parsed=await module.parseStatementPdf(file,{isCurrent:fresh});
+      if(!fresh())return;
+      hash=parsed.document_hash;rawRows=parsed.rows;
+      if(!rawRows.length){$("sr-progress").textContent="No transaction rows found. No rows were sent or imported.";return}
+      $("sr-progress").textContent="Matching extracted transaction rows…";
+      var preview=await api("/v1/statement-reader/preview",{method:"POST",body:{document_hash:hash,rows:rawRows}});
+      if(!fresh())return;
+      year=preview.year;rows=preview.rows.map(function(r){return Object.assign({},r,{selected:r.status==="ready",override_duplicate:false})});
+      $("sr-progress").textContent="PDF parsed locally. Review every selected row before confirming.";
+      render();
+    }catch(e){if(fresh()){$("sr-progress").textContent="";flash("err",e.message)}}
+  };
+  $("sr-file").disabled=true;
+  try{customers=await api("/v1/customers");if(current())$("sr-file").disabled=false}
+  catch(e){if(current())flash("err","Could not load accessible customers: "+e.message)}
 }
 
 /* ---------- login ---------- */

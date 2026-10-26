@@ -126,9 +126,14 @@ public final class TursoDataMigrator {
         try (ResultSet columns = master.getMetaData().getColumns(null, null, "employees", "can_access_sales_quote")) {
             hasSalesQuotePermission = columns.next();
         }
+        boolean hasReaderPermission;
+        try (ResultSet columns = master.getMetaData().getColumns(null, null, "employees", "can_access_statement_reader")) {
+            hasReaderPermission = columns.next();
+        }
         try (PreparedStatement query = master.prepareStatement("SELECT employee_id, first_name, last_name, phone, email, username, password, can_view_customer_details, can_view_customers, can_view_statements, can_view_revenue_summary, can_view_pdf, can_edit_pdf, can_edit_customers, can_edit_statements, allowed_customer_ids, allowed_days"
                 + (hasVisitsPermission ? ", can_access_visits" : ", 0 AS can_access_visits")
                 + (hasSalesQuotePermission ? ", can_access_sales_quote" : ", 0 AS can_access_sales_quote")
+                + (hasReaderPermission ? ", can_access_statement_reader" : ", 0 AS can_access_statement_reader")
                 + " FROM employees WHERE company_id = ?")) {
             query.setLong(1, company.id);
             try (ResultSet rows = query.executeQuery()) {
@@ -139,6 +144,7 @@ public final class TursoDataMigrator {
                             .put("canViewStatements", rows.getInt("can_view_statements") == 1)
                             .put("canAccessVisits", rows.getInt("can_access_visits") == 1)
                             .put("canAccessSalesQuote", rows.getInt("can_access_sales_quote") == 1)
+                            .put("canAccessStatementReader", rows.getInt("can_access_statement_reader") == 1)
                             .put("canViewRevenueSummary", rows.getInt("can_view_revenue_summary") == 1)
                             .put("canViewPdf", rows.getInt("can_view_pdf") == 1)
                             .put("canEditPdf", rows.getInt("can_edit_pdf") == 1)
@@ -213,6 +219,7 @@ public final class TursoDataMigrator {
                 }
             }
             migrateSalesQuotes(turso, companyId, company);
+            migrateReaderImports(turso, companyId, company);
         }
         System.out.println("Migrated company " + companyId + " from " + databasePath.getFileName());
     }
@@ -222,6 +229,7 @@ public final class TursoDataMigrator {
         try (ResultSet tables = company.getMetaData().getTables(null, null, "sales_quotes", null)) {
             if (!tables.next()) return;
         }
+
         long nextId = 1;
         try (PreparedStatement query = company.prepareStatement("SELECT * FROM sales_quotes");
              ResultSet rows = query.executeQuery()) {
@@ -254,6 +262,26 @@ public final class TursoDataMigrator {
         turso.execute("INSERT INTO sales_quote_sequences(company_id, next_id) VALUES (?, ?)"
                         + " ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)",
                 companyId, nextId);
+    }
+
+    private static void migrateReaderImports(TursoHttpClient turso, long companyId, Connection company)
+            throws SQLException, IOException, InterruptedException {
+        try (ResultSet tables = company.getMetaData().getTables(null, null, "reader_imports", null)) {
+            if (!tables.next()) return;
+        }
+        try (PreparedStatement query = company.prepareStatement("SELECT * FROM reader_imports");
+             ResultSet rows = query.executeQuery()) {
+            while (rows.next()) {
+                turso.execute("INSERT INTO reader_imports(company_id, document_hash, source_id, customer_id,"
+                                + " record_id, record_date, amount, reference, source_text, imported_at)"
+                                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                + " ON CONFLICT(company_id, document_hash, source_id) DO NOTHING",
+                        companyId, rows.getString("document_hash"), rows.getString("source_id"),
+                        rows.getString("customer_id"), rows.getLong("record_id"), rows.getString("record_date"),
+                        rows.getDouble("amount"), rows.getString("reference"),
+                        rows.getString("source_text"), rows.getString("imported_at"));
+            }
+        }
     }
 
     private static Path locateCompanyDatabase(String databaseFile, Path masterDirectory) {

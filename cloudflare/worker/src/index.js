@@ -20,6 +20,12 @@ export default {
       }
 
       const session = await authenticateRequest(request, env);
+      if (url.pathname === "/v1/statement-reader/preview" && request.method === "POST") {
+        return await previewReader(request, env, session);
+      }
+      if (url.pathname === "/v1/statement-reader/import" && request.method === "POST") {
+        return await importReader(request, env, session);
+      }
       if (url.pathname === "/v1/admin/companies" && request.method === "GET") {
         requireMaster(session);
         const query = (url.searchParams.get("q") || "").trim().toLowerCase();
@@ -273,6 +279,7 @@ async function saveCompany(request, env) {
 }
 
 async function deleteCompany(request, env, companyId) {
+  await turso(env, "DELETE FROM reader_imports WHERE company_id = ?", companyId);
   await turso(env, "DELETE FROM accounts WHERE company_id = ?", companyId);
   await turso(env, "DELETE FROM sales_quotes WHERE company_id = ?", companyId);
   await turso(env, "DELETE FROM sales_quote_sequences WHERE company_id = ?", companyId);
@@ -357,7 +364,8 @@ function employeeResponse(row) {
 function normalizeEmployeePermissions(value) {
   const permissions = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   return { ...permissions, canAccessVisits: permissions.canAccessVisits === true,
-    canAccessSalesQuote: permissions.canAccessSalesQuote === true };
+    canAccessSalesQuote: permissions.canAccessSalesQuote === true,
+    canAccessStatementReader: permissions.canAccessStatementReader === true };
 }
 
 async function login(request, env) {
@@ -394,7 +402,7 @@ async function login(request, env) {
 }
 
 async function listCustomers(request, env, session) {
-  requirePermission(session, "canViewCustomers", "canViewCustomerDetails", "canAccessVisits", "canAccessSalesQuote");
+  requirePermission(session, "canViewCustomers", "canViewCustomerDetails", "canAccessVisits", "canAccessSalesQuote", "canAccessStatementReader");
   const url = new URL(request.url);
   const query = (url.searchParams.get("q") || "").trim().toLowerCase();
   const orderById = url.searchParams.get("order") === "id";
@@ -444,9 +452,179 @@ async function placeInRoute(env, companyId, day, customerId, desired) {
 }
 
 async function getCustomer(request, env, session, customerId) {
-  requirePermission(session, "canViewCustomerDetails", "canViewCustomers", "canAccessVisits", "canAccessSalesQuote");
+  requirePermission(session, "canViewCustomerDetails", "canViewCustomers", "canAccessVisits", "canAccessSalesQuote", "canAccessStatementReader");
   const customer = await findAccessibleCustomer(env, session, customerId);
   return json(customer, 200, request);
+}
+
+function readerString(value, key, max, empty = true) {
+  if (typeof value !== "string" || value.length > max || (!empty && !value.trim())) {
+    throw httpError(400, `Invalid ${key}`);
+  }
+  return value;
+}
+
+function readerReference(value) {
+  const reference = readerString(value, "reference", 160).trim().toUpperCase();
+  // Only bank identifiers, never freeform payer names. Empty references are not identities.
+  if (reference && (!/\d/.test(reference) || !/^[A-Z0-9 ._:/#-]+$/.test(reference))) {
+    throw httpError(400, "reference must be an empty string or a bank identifier containing a digit");
+  }
+  return reference;
+}
+
+function readerDate(value, year, full = false) {
+  if (typeof value !== "string") return "";
+  const match = /^(\d{2})\/(\d{2})(?:\/(\d{4}))?$/.exec(value);
+  if (!match || (full && !match[3])) return "";
+  const result = `${match[1]}/${match[2]}/${match[3] || year}`;
+  try { return quoteDate(result); } catch { return ""; }
+}
+
+function readerMoney(value) {
+  if (typeof value !== "string" || !/^\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(value)) return null;
+  const amount = Number(value.replace(/[$,]/g, ""));
+  return amount > 0 && amount <= 999999999.99 ? amount : null;
+}
+
+function readerAmount(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 999999999.99
+    && Math.round(value * 100) / 100 === value;
+}
+
+async function readerBody(request, importing) {
+  const body = await readJson(request, 4 * 1024 * 1024);
+  if (Object.keys(body).some(key => !["document_hash", "rows"].includes(key))
+      || !/^[a-f0-9]{64}$/.test(body.document_hash) || typeof body.document_hash !== "string"
+      || !Array.isArray(body.rows) || body.rows.length > 1000) throw httpError(400, "Invalid reader document");
+  const ids = new Set();
+  const positions = new Set();
+  for (const row of body.rows) {
+    const keys = ["source_id", "page", "line", "text", "reference",
+      ...(importing ? ["date", "amount", "customer_id", "override_duplicate"] : ["date_text", "deposit_text", "direction"])];
+    if (!row || typeof row !== "object" || Object.keys(row).some(key => !keys.includes(key))) throw httpError(400, "Invalid reader row");
+    readerString(row.source_id, "source_id", 128, false);
+    readerString(row.text, "text", 4000);
+    if (!Number.isSafeInteger(row.page) || row.page < 1 || !Number.isSafeInteger(row.line) || row.line < 1
+        || ids.has(row.source_id) || positions.has(`${row.page}:${row.line}`)) throw httpError(400, "Invalid or duplicate source position");
+    ids.add(row.source_id);
+    positions.add(`${row.page}:${row.line}`);
+    row.reference = readerReference(row.reference);
+    if (importing) {
+      readerString(row.customer_id, "customer_id", 80, false);
+      if (!readerDate(row.date, 0, true) || !readerAmount(row.amount)
+          || typeof row.override_duplicate !== "boolean") throw httpError(400, "Invalid selected payment");
+    } else {
+      readerString(row.date_text, "date_text", 32);
+      readerString(row.deposit_text, "deposit_text", 80);
+      if (!["deposit", "withdrawal", "unknown"].includes(row.direction)) throw httpError(400, "Invalid direction");
+    }
+  }
+  return body;
+}
+
+function readerWords(value) {
+  return value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+}
+
+function readerMatch(text, customer) {
+  const words = readerWords(text);
+  const first = readerWords(customer.first_name), last = readerWords(customer.last_name);
+  const name = [...first, ...last];
+  if (!first.length || !last.length || name.length > 12) return { full: false, partial: false };
+  const sorted = name.slice().sort().join(" ");
+  const compact = [first.join("") + last.join(""), last.join("") + first.join("")];
+  let full = false;
+  for (let start = 0; start < words.length && !full; start++) {
+    for (let size = 1; size <= 12 && start + size <= words.length; size++) {
+      const window = words.slice(start, start + size);
+      if (compact.includes(window.join("")) || window.slice().sort().join(" ") === sorted) { full = true; break; }
+    }
+  }
+  return { full, partial: name.some(word => words.includes(word)) };
+}
+
+async function previewReader(request, env, session) {
+  requirePermission(session, "canAccessStatementReader");
+  const body = await readerBody(request, false);
+  const companyId = requiredCompanyId(session), filters = customerAccessSql(session);
+  const customers = await turso(env, "SELECT customer_id, first_name, last_name FROM customers WHERE company_id = ?" + filters.sql,
+    companyId, ...filters.args);
+  const payments = await turso(env, "SELECT customer_id, record_date, amount FROM statement_records WHERE company_id = ? AND amount < 0 AND customer_id IN (SELECT customer_id FROM customers WHERE company_id = ?" + filters.sql + ")",
+    companyId, companyId, ...filters.args);
+  const audit = await turso(env, "SELECT document_hash, source_id, reference FROM reader_imports WHERE company_id = ?", companyId);
+  const year = new Date().getUTCFullYear();
+  const fingerprints = new Map();
+  const rows = body.rows.map(row => {
+    const date = readerDate(row.date_text, year), amount = readerMoney(row.deposit_text);
+    const result = { source_id: row.source_id, page: row.page, line: row.line, text: row.text,
+      date, amount, customer_id: "", candidate_ids: [], status: "ignored", reason: "Not a dated deposit", reference: row.reference };
+    if (audit.some(item => (item.document_hash === body.document_hash && item.source_id === row.source_id)
+        || (row.reference && item.reference?.toUpperCase() === row.reference))) {
+      return { ...result, status: "imported", reason: "Source or bank reference already imported" };
+    }
+    if (row.direction !== "deposit" || !date || amount === null) return result;
+    const matches = customers.map(customer => ({ customer, ...readerMatch(row.text, customer) }));
+    const full = matches.filter(match => match.full);
+    result.candidate_ids = matches.filter(match => match.full || match.partial).map(match => String(match.customer.customer_id));
+    result.status = "review";
+    result.reason = full.length > 1 ? "Ambiguous full name" : "Partial or unmatched name";
+    if (full.length !== 1) return result;
+    result.customer_id = String(full[0].customer.customer_id);
+    result.candidate_ids = [result.customer_id];
+    result.status = "ready";
+    result.reason = "Unique full name";
+    const fingerprint = JSON.stringify([result.customer_id, date, amount]);
+    if (payments.some(payment => String(payment.customer_id) === result.customer_id && payment.record_date === date
+        && Math.round(-Number(payment.amount) * 100) === Math.round(amount * 100))) {
+      result.status = "duplicate";
+      result.reason = "Existing payment fingerprint";
+    }
+    if (!fingerprints.has(fingerprint)) fingerprints.set(fingerprint, []);
+    fingerprints.get(fingerprint).push(result);
+    return result;
+  });
+  for (const group of fingerprints.values()) if (group.length > 1) {
+    for (const row of group) { row.status = "duplicate"; row.reason = "Repeated deposit fingerprint in document"; }
+  }
+  return json({ rows, year }, 200, request);
+}
+
+async function importReader(request, env, session) {
+  requirePermission(session, "canAccessStatementReader");
+  requirePermission(session, "canEditStatements");
+  if (session.preview) throw httpError(403, "Preview sessions cannot import payments");
+  const body = await readerBody(request, true), companyId = requiredCompanyId(session);
+  for (const id of new Set(body.rows.map(row => row.customer_id))) await findAccessibleCustomer(env, session, id);
+  if (!body.rows.length) return json({ imported: 0, skipped: 0, rows: [] }, 200, request);
+  const statements = [], filters = customerAccessSql(session);
+  const now = new Date().toISOString();
+  for (const row of body.rows) {
+    const amount = -Math.round(row.amount * 100) / 100;
+    statements.push({
+      sql: `INSERT INTO reader_imports (company_id, document_hash, source_id, customer_id, record_id, record_date, amount, reference, source_text, imported_at)
+        SELECT ?, ?, ?, ?, (SELECT MAX(id) + 1 FROM (SELECT COALESCE(MAX(record_id),0) AS id FROM statement_records WHERE company_id = ? UNION ALL SELECT COALESCE(MAX(record_id),0) FROM reader_imports WHERE company_id = ?)), ?, ?, NULLIF(?, ''), ?, ?
+        WHERE EXISTS (SELECT 1 FROM customers WHERE company_id = ? AND customer_id = ?${filters.sql})
+        AND NOT EXISTS (SELECT 1 FROM reader_imports WHERE company_id = ? AND ((document_hash = ? AND source_id = ?) OR (? <> '' AND reference = ? COLLATE NOCASE)))
+        AND (? = 1 OR NOT EXISTS (SELECT 1 FROM statement_records WHERE company_id = ? AND customer_id = ? AND record_date = ? AND amount = ?))
+        RETURNING record_id`,
+      args: [companyId, body.document_hash, row.source_id, row.customer_id, companyId, companyId, row.date, amount, row.reference, row.text, now,
+        companyId, row.customer_id, ...filters.args, companyId, body.document_hash, row.source_id, row.reference, row.reference,
+        row.override_duplicate ? 1 : 0, companyId, row.customer_id, row.date, amount]
+    });
+    statements.push({
+      sql: "INSERT INTO statement_records (company_id, record_id, customer_id, record_date, type, amount) SELECT company_id, record_id, customer_id, record_date, 'Zelle Payment', amount FROM reader_imports WHERE company_id = ? AND document_hash = ? AND source_id = ? AND changes() = 1",
+      args: [companyId, body.document_hash, row.source_id]
+    });
+  }
+  let results;
+  try { results = await tursoTransaction(env, statements); }
+  catch { throw httpError(409, "Import transaction failed; retry the same document and source IDs safely"); }
+  const rows = body.rows.map((row, index) => results[index * 2].length
+    ? { source_id: row.source_id, status: "imported", reason: "Payment imported", record_id: results[index * 2][0].record_id }
+    : { source_id: row.source_id, status: "skipped", reason: "Duplicate source, bank reference, payment fingerprint, or customer no longer accessible" });
+  const imported = rows.filter(row => row.status === "imported").length;
+  return json({ imported, skipped: rows.length - imported, rows }, 200, request);
 }
 
 const QUOTE_COLUMNS = "quote_id, quote_number, customer_id, quote_date, notes, terms, lines_json, converted_at, created_at, updated_at";
@@ -666,6 +844,7 @@ async function reorderCustomers(request, env, session) {
 async function deleteCustomer(request, env, session, customerId) {
   requirePermission(session, "canEditCustomers");
   await findAccessibleCustomer(env, session, customerId);
+  await turso(env, "DELETE FROM reader_imports WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
   await turso(env, "DELETE FROM sales_quotes WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
   await turso(env, "DELETE FROM customer_visits WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
   await turso(env, "DELETE FROM statement_records WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
@@ -831,6 +1010,7 @@ const BACKUP_TABLES = {
   customers: ["customer_id", "first_name", "last_name", "address", "city", "state", "zip", "phone", "email", "service_day", "amount_charged", "notes", "starting_date", "status", "route_order"],
   customer_visits: ["visit_id", "customer_id", "visited_at", "ph", "chlo", "stb", "alk", "cal", "notes", "photo_data"],
   statement_records: ["record_id", "customer_id", "record_date", "type", "amount"],
+  reader_imports: ["document_hash", "source_id", "customer_id", "record_id", "record_date", "amount", "reference", "source_text", "imported_at"],
   sales_quotes: QUOTE_COLUMNS.split(", "),
   sales_quote_sequences: ["next_id"],
   record_types: ["type_name"],
@@ -926,16 +1106,46 @@ async function restoreCompanyBackup(request, env, companyId) {
   if (!backup || backup.format !== "comp-manager-backup" || backup.version !== 1) throw httpError(400, "This is not a Comp Manager cloud backup");
   if (Number(backup.company_id) !== companyId) throw httpError(400, "This backup belongs to a different company");
   for (const table of Object.keys(BACKUP_TABLES)) {
-    if (["customer_visits", "sales_quotes", "sales_quote_sequences"].includes(table) && backup[table] === undefined) backup[table] = [];
+    if (["customer_visits", "sales_quotes", "sales_quote_sequences", "reader_imports"].includes(table) && backup[table] === undefined) backup[table] = [];
     if (!Array.isArray(backup[table])) throw httpError(400, `Backup is missing ${table}`);
   }
   const customerIds = new Set(backup.customers.map(row => String(row.customer_id)));
   validateBackupVisits(backup.customer_visits, customerIds);
   validateBackupQuotes(backup, customerIds);
+  const auditIds = new Set(), auditRefs = new Set();
+  for (const row of backup.reader_imports) {
+    if (!row || typeof row.document_hash !== "string" || !/^[a-f0-9]{64}$/.test(row.document_hash)
+        || !Number.isSafeInteger(row.record_id) || row.record_id < 1
+        || !readerDate(row.record_date, 0, true) || !readerAmount(-row.amount)
+        || typeof row.amount !== "number" || !Number.isFinite(Date.parse(row.imported_at))
+        || new Date(row.imported_at).toISOString() !== row.imported_at) throw httpError(400, "Invalid reader audit");
+    readerString(row.source_id, "audit source_id", 128, false);
+    readerString(row.customer_id, "audit customer_id", 80, false);
+    readerString(row.source_text, "audit source_text", 4000);
+    row.reference = readerReference(row.reference === null ? "" : row.reference) || null;
+    const key = `${row.document_hash}:${row.source_id}`;
+    if (auditIds.has(key) || (row.reference && auditRefs.has(row.reference))) throw httpError(400, "Duplicate reader audit identity");
+    auditIds.add(key);
+    if (row.reference) auditRefs.add(row.reference);
+  }
   for (const row of backup.statement_records) {
     if (!customerIds.has(String(row.customer_id))) throw httpError(400, "Backup has statements for unknown customers");
   }
   const statements = [];
+  // Restore is an audit UNION, never a replacement. Historical record IDs need not
+  // exist in the restored statements. Tombstones for omitted customers also survive;
+  // explicit customer/company deletion is the privacy cleanup boundary.
+  for (const row of backup.reader_imports) {
+    const columns = BACKUP_TABLES.reader_imports;
+    statements.push({
+      sql: `INSERT INTO reader_imports (company_id, ${columns.join(", ")}) VALUES (${Array(columns.length + 1).fill("?").join(",")})
+        ON CONFLICT(company_id, document_hash, source_id) DO UPDATE SET amount =
+        CASE WHEN reader_imports.customer_id = excluded.customer_id AND reader_imports.record_date = excluded.record_date
+          AND reader_imports.amount = excluded.amount AND COALESCE(reader_imports.reference,'') = COALESCE(excluded.reference,'')
+          AND reader_imports.source_text = excluded.source_text THEN reader_imports.amount ELSE 0 END`,
+      args: [companyId, ...columns.map(column => row[column])]
+    });
+  }
   // Preserve the live high watermark even when replacing data with an older backup.
   statements.push({ sql: "INSERT INTO sales_quote_sequences (company_id, next_id) SELECT ?, COALESCE(MAX(quote_id), 0) + 1 FROM sales_quotes WHERE company_id = ? ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)", args: [companyId, companyId] });
   for (const table of ["sales_quotes", "customer_visits", "statement_records", "customers", "record_types", "pdf_settings"]) {
@@ -950,7 +1160,8 @@ async function restoreCompanyBackup(request, env, companyId) {
     const nextId = backup.sales_quotes.reduce((next, row) => Math.max(next, row.quote_id + 1), backup.sales_quote_sequences[0]?.next_id || 1);
     statements.push({ sql: "INSERT INTO sales_quote_sequences (company_id, next_id) VALUES (?, ?) ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)", args: [companyId, nextId] });
   }
-  await tursoTransaction(env, statements);
+  try { await tursoTransaction(env, statements); }
+  catch { throw httpError(409, "Restore transaction failed; conflicting reader audit identities cannot be replaced"); }
   return { restored: true, customers: backup.customers.length, statements: backup.statement_records.length, visits: backup.customer_visits.length, quotes: backup.sales_quotes.length };
 }
 
@@ -1029,10 +1240,14 @@ async function turso(env, sql, ...args) {
     }
     await migrateVisits(env);
     await migrateQuotes(env);
+    await tursoCore(env, READER_TABLE_SQL);
+    await tursoCore(env, "CREATE UNIQUE INDEX IF NOT EXISTS reader_imports_reference_idx ON reader_imports(company_id, reference COLLATE NOCASE) WHERE reference IS NOT NULL AND reference <> ''");
   })().catch(error => { schemaReady = undefined; throw error; });
   await schemaReady;
   return tursoCore(env, sql, ...args);
 }
+
+const READER_TABLE_SQL = "CREATE TABLE IF NOT EXISTS reader_imports (company_id INTEGER NOT NULL, document_hash TEXT NOT NULL, source_id TEXT NOT NULL, customer_id TEXT NOT NULL, record_id INTEGER NOT NULL CHECK (record_id > 0), record_date TEXT NOT NULL, amount REAL NOT NULL CHECK (amount < 0 AND amount >= -999999999.99), reference TEXT, source_text TEXT NOT NULL, imported_at TEXT NOT NULL, PRIMARY KEY (company_id, document_hash, source_id), FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE)";
 
 async function tursoCore(env, sql, ...args) {
   const configuredUrl = env.SILVERDICE_URL || env.TURSO_HTTP_URL;

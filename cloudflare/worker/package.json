@@ -4,9 +4,16 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "pdf-assets": "node scripts/copy-pdfjs.mjs",
+    "predev": "npm run pdf-assets",
     "dev": "wrangler dev",
+    "predeploy": "npm run pdf-assets",
     "deploy": "wrangler deploy",
+    "test:statement-reader-web": "node --test test/statement-reader-web.test.mjs test/statement-reader-fixture.test.mjs",
     "types": "wrangler types"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.4.299"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

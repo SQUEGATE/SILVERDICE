@@ -64,6 +64,25 @@ CREATE TABLE IF NOT EXISTS statement_records (
 CREATE INDEX IF NOT EXISTS statement_records_customer_idx
     ON statement_records(company_id, customer_id, record_id);
 
+-- Audit identities deliberately have no statement FK: deleting a payment must not permit reimport.
+CREATE TABLE IF NOT EXISTS reader_imports (
+    company_id INTEGER NOT NULL,
+    document_hash TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    customer_id TEXT NOT NULL,
+    record_id INTEGER NOT NULL CHECK (record_id > 0),
+    record_date TEXT NOT NULL,
+    amount REAL NOT NULL CHECK (amount < 0 AND amount >= -999999999.99),
+    reference TEXT,
+    source_text TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    PRIMARY KEY (company_id, document_hash, source_id),
+    FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS reader_imports_reference_idx
+    ON reader_imports(company_id, reference COLLATE NOCASE)
+    WHERE reference IS NOT NULL AND reference <> '';
+
 CREATE TABLE IF NOT EXISTS customer_visits (
     company_id INTEGER NOT NULL,
     visit_id INTEGER NOT NULL,

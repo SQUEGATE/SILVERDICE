@@ -64,12 +64,59 @@ CREATE TABLE IF NOT EXISTS statement_records (
 CREATE INDEX IF NOT EXISTS statement_records_customer_idx
     ON statement_records(company_id, customer_id, record_id);
 
+CREATE TABLE IF NOT EXISTS customer_visits (
+    company_id INTEGER NOT NULL,
+    visit_id INTEGER NOT NULL,
+    customer_id TEXT NOT NULL,
+    visited_at TEXT NOT NULL,
+    ph TEXT NOT NULL CHECK (ph IN ('7.0', '7.2', '7.4', '7.6', '7.8', '8.0')),
+    chlo TEXT NOT NULL CHECK (chlo IN ('1-2', '2-4', '3-6', '5-10', '7.5-15', '10-20')),
+    stb TEXT NOT NULL CHECK (stb IN ('100', '90', '80', '70', '60', '50', '40', '30')),
+    alk INTEGER CHECK (alk IS NULL OR (typeof(alk) = 'integer' AND alk BETWEEN 1 AND 2147483647)),
+    cal INTEGER CHECK (cal IS NULL OR (typeof(cal) = 'integer' AND cal BETWEEN 1 AND 2147483647)),
+    notes TEXT NOT NULL DEFAULT '' CHECK (length(notes) <= 16000),
+    photo_data TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (company_id, visit_id),
+    FOREIGN KEY (company_id, customer_id)
+        REFERENCES customers(company_id, customer_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS customer_visits_customer_idx
+    ON customer_visits(company_id, customer_id, visited_at);
+
 CREATE TABLE IF NOT EXISTS record_types (
     company_id INTEGER NOT NULL,
     type_name TEXT NOT NULL,
     PRIMARY KEY (company_id, type_name),
     FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS sales_quote_sequences (
+    company_id INTEGER PRIMARY KEY,
+    next_id INTEGER NOT NULL CHECK (next_id > 0),
+    FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS sales_quotes (
+    company_id INTEGER NOT NULL,
+    quote_id INTEGER NOT NULL CHECK (quote_id > 0),
+    quote_number TEXT NOT NULL,
+    customer_id TEXT NOT NULL,
+    quote_date TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    terms TEXT NOT NULL DEFAULT '',
+    lines_json TEXT NOT NULL CHECK (json_valid(lines_json)),
+    converted_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (company_id, quote_id),
+    UNIQUE (company_id, quote_number),
+    FOREIGN KEY (company_id, customer_id)
+        REFERENCES customers(company_id, customer_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS sales_quotes_customer_idx
+    ON sales_quotes(company_id, customer_id, quote_id);
 
 CREATE TABLE IF NOT EXISTS pdf_settings (
     company_id INTEGER NOT NULL,

@@ -106,7 +106,7 @@ export default {
         return await createCustomer(request, env, session);
       }
       if (url.pathname === "/v1/settings" && request.method === "GET") {
-        requirePermission(session, "canViewPdf");
+        requirePermission(session, "canViewPdf", "canAccessSalesQuote");
         const rows = await turso(env, "SELECT setting_key, setting_value FROM pdf_settings WHERE company_id = ? ORDER BY setting_key", requiredCompanyId(session));
         return json(Object.fromEntries(rows.map(row => [row.setting_key, row.setting_value])), 200, request);
       }
@@ -121,7 +121,7 @@ export default {
         return json({ saved: true }, 200, request);
       }
       if (url.pathname === "/v1/record-types" && request.method === "GET") {
-        requirePermission(session, "canViewStatements");
+        requirePermission(session, "canViewStatements", "canAccessSalesQuote");
         const rows = await turso(env, "SELECT type_name FROM record_types WHERE company_id = ? ORDER BY type_name", requiredCompanyId(session));
         return json(rows.map(row => row.type_name), 200, request);
       }
@@ -183,6 +183,34 @@ export default {
       if (url.pathname === "/v1/backup/restore" && request.method === "POST") {
         requireCompanyManager(session, requiredCompanyId(session));
         return json(await restoreCompanyBackup(request, env, requiredCompanyId(session)), 200, request);
+      }
+      const quotesMatch = url.pathname.match(/^\/v1\/customers\/([^/]+)\/quotes(?:\/(\d+)(\/convert)?)?$/);
+      if (quotesMatch) {
+        return await handleQuotes(request, env, session, decodeURIComponent(quotesMatch[1]),
+          quotesMatch[2] === undefined ? null : Number(quotesMatch[2]), Boolean(quotesMatch[3]));
+      }
+      const visitsMatch = url.pathname.match(/^\/v1\/customers\/([^/]+)\/visits$/);
+      if (visitsMatch && request.method === "GET") {
+        return await listVisits(request, env, session, decodeURIComponent(visitsMatch[1]));
+      }
+      if (visitsMatch && request.method === "POST") {
+        return await createVisit(request, env, session, decodeURIComponent(visitsMatch[1]));
+      }
+      const visitMatch = url.pathname.match(/^\/v1\/customers\/([^/]+)\/visits\/(\d+)$/);
+      if (visitMatch && request.method === "PUT") {
+        return await updateVisit(request, env, session, decodeURIComponent(visitMatch[1]), Number(visitMatch[2]));
+      }
+      if (visitMatch && request.method === "DELETE") {
+        requirePermission(session, "canAccessVisits");
+        const customerId = decodeURIComponent(visitMatch[1]);
+        await findAccessibleCustomer(env, session, customerId);
+        const visitId = Number(visitMatch[2]);
+        if (!Number.isSafeInteger(visitId) || visitId < 1) throw httpError(404, "Visit not found");
+        const rows = await turso(env,
+          "DELETE FROM customer_visits WHERE company_id = ? AND customer_id = ? AND visit_id = ? RETURNING visit_id",
+          requiredCompanyId(session), customerId, visitId);
+        if (!rows.length) throw httpError(404, "Visit not found");
+        return json({ deleted: true }, 200, request);
       }
       const customerMatch = url.pathname.match(/^\/v1\/customers\/([^/]+)$/);
       if (customerMatch && request.method === "GET") {
@@ -246,6 +274,9 @@ async function saveCompany(request, env) {
 
 async function deleteCompany(request, env, companyId) {
   await turso(env, "DELETE FROM accounts WHERE company_id = ?", companyId);
+  await turso(env, "DELETE FROM sales_quotes WHERE company_id = ?", companyId);
+  await turso(env, "DELETE FROM sales_quote_sequences WHERE company_id = ?", companyId);
+  await turso(env, "DELETE FROM customer_visits WHERE company_id = ?", companyId);
   await turso(env, "DELETE FROM statement_records WHERE company_id = ?", companyId);
   await turso(env, "DELETE FROM customers WHERE company_id = ?", companyId);
   await turso(env, "DELETE FROM record_types WHERE company_id = ?", companyId);
@@ -272,7 +303,7 @@ async function createEmployeePreview(request, env, companySession, employeeId) {
     lastName: employee.last_name,
     phone: employee.phone,
     email: employee.email,
-    permissions: parseJsonArrayOrObject(employee.permissions_json, {}),
+    permissions: normalizeEmployeePermissions(parseJsonArrayOrObject(employee.permissions_json, {})),
     allowedCustomerIds: parseJsonArrayOrObject(employee.allowed_customer_ids_json, []),
     allowedDays: parseJsonArrayOrObject(employee.allowed_days_json, []),
     preview: true,
@@ -286,7 +317,7 @@ async function saveEmployee(request, env, companyId) {
   const username = requiredString(body.username, "username", 128);
   const firstName = requiredString(body.first_name, "first_name", 120);
   const lastName = requiredString(body.last_name, "last_name", 120);
-  const permissions = body.permissions && typeof body.permissions === "object" ? body.permissions : {};
+  const permissions = normalizeEmployeePermissions(body.permissions);
   const allowedCustomerIds = Array.isArray(body.allowed_customer_ids) ? body.allowed_customer_ids : [];
   const allowedDays = Array.isArray(body.allowed_days) ? body.allowed_days : [];
   const employeeId = Number(body.employee_id || 0);
@@ -317,10 +348,16 @@ function employeeResponse(row) {
     phone: row.phone,
     email: row.email,
     username: row.username,
-    permissions: parseJsonArrayOrObject(row.permissions_json, {}),
+    permissions: normalizeEmployeePermissions(parseJsonArrayOrObject(row.permissions_json, {})),
     allowed_customer_ids: parseJsonArrayOrObject(row.allowed_customer_ids_json, []),
     allowed_days: parseJsonArrayOrObject(row.allowed_days_json, [])
   };
+}
+
+function normalizeEmployeePermissions(value) {
+  const permissions = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return { ...permissions, canAccessVisits: permissions.canAccessVisits === true,
+    canAccessSalesQuote: permissions.canAccessSalesQuote === true };
 }
 
 async function login(request, env) {
@@ -346,7 +383,9 @@ async function login(request, env) {
     lastName: account.last_name,
     phone: account.phone,
     email: account.email,
-    permissions: parseJsonArrayOrObject(account.permissions_json, {}),
+    permissions: account.role === "EMPLOYEE"
+      ? normalizeEmployeePermissions(parseJsonArrayOrObject(account.permissions_json, {}))
+      : parseJsonArrayOrObject(account.permissions_json, {}),
     allowedCustomerIds: parseJsonArrayOrObject(account.allowed_customer_ids_json, []),
     allowedDays: parseJsonArrayOrObject(account.allowed_days_json, []),
     exp: Math.floor(Date.now() / 1000) + ttl
@@ -355,7 +394,7 @@ async function login(request, env) {
 }
 
 async function listCustomers(request, env, session) {
-  requirePermission(session, "canViewCustomers", "canViewCustomerDetails");
+  requirePermission(session, "canViewCustomers", "canViewCustomerDetails", "canAccessVisits", "canAccessSalesQuote");
   const url = new URL(request.url);
   const query = (url.searchParams.get("q") || "").trim().toLowerCase();
   const orderById = url.searchParams.get("order") === "id";
@@ -405,9 +444,162 @@ async function placeInRoute(env, companyId, day, customerId, desired) {
 }
 
 async function getCustomer(request, env, session, customerId) {
-  requirePermission(session, "canViewCustomerDetails", "canViewCustomers");
+  requirePermission(session, "canViewCustomerDetails", "canViewCustomers", "canAccessVisits", "canAccessSalesQuote");
   const customer = await findAccessibleCustomer(env, session, customerId);
   return json(customer, 200, request);
+}
+
+const QUOTE_COLUMNS = "quote_id, quote_number, customer_id, quote_date, notes, terms, lines_json, converted_at, created_at, updated_at";
+
+function quoteResponse(row) {
+  const { lines_json, ...quote } = row;
+  return { ...quote, lines: JSON.parse(lines_json) };
+}
+
+function quoteNumber(id) {
+  return `SQ-${String(id).padStart(6, "0")}`;
+}
+
+function quoteDate(value) {
+  const match = typeof value === "string" && /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  const date = match && new Date(`${match[3]}-${match[1]}-${match[2]}T00:00:00.000Z`);
+  if (!date || !Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1
+      || date.getUTCMonth() + 1 !== Number(match[1]) || date.getUTCDate() !== Number(match[2])) {
+    throw httpError(400, "Quote dates must be valid MM/DD/YYYY dates");
+  }
+  return value;
+}
+
+function quoteText(value, name, limit) {
+  if (typeof value !== "string" || value.length > limit) throw httpError(400, `${name} must be a string of at most ${limit} characters`);
+  return value;
+}
+
+function validateQuote(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)
+      || Object.keys(body).some(key => !["quote_date", "notes", "terms", "lines"].includes(key))) {
+    throw httpError(400, "Invalid quote fields");
+  }
+  const quote_date = quoteDate(body.quote_date);
+  const notes = quoteText(body.notes, "notes", 16000);
+  const terms = quoteText(body.terms, "terms", 16000);
+  if (!Array.isArray(body.lines) || body.lines.length < 1 || body.lines.length > 200) throw httpError(400, "A quote requires 1 to 200 lines");
+  let totalCents = 0;
+  const lines = body.lines.map(line => {
+    if (!line || typeof line !== "object" || Array.isArray(line)
+        || Object.keys(line).some(key => !["date", "type", "description", "amount"].includes(key))) throw httpError(400, "Invalid quote line");
+    const date = quoteDate(line.date);
+    const type = requiredString(line.type, "type", 128);
+    const description = quoteText(line.description, "description", 2000);
+    const amount = line.amount;
+    const cents = Math.round(amount * 100);
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount === 0
+        || Math.abs(amount) > 999999999.99 || Math.abs(amount * 100 - cents) > 0.00002
+        || Number(amount.toFixed(2)) !== amount) throw httpError(400, "Quote amounts must be nonzero money with at most 2 decimals and magnitude at most 999999999.99");
+    totalCents += cents;
+    return { date, type, description, amount: cents / 100 };
+  });
+  if (!Number.isSafeInteger(totalCents)) throw httpError(400, "Quote total is too large");
+  return { quote_date, notes, terms, lines };
+}
+
+async function handleQuotes(request, env, session, customerId, quoteId, convert) {
+  requirePermission(session, "canAccessSalesQuote");
+  if (convert) requirePermission(session, "canEditStatements");
+  await findAccessibleCustomer(env, session, customerId);
+  const companyId = requiredCompanyId(session);
+  const scope = [companyId, customerId, quoteId];
+  if (quoteId === null && request.method === "GET") {
+    const rows = await turso(env, `SELECT ${QUOTE_COLUMNS} FROM sales_quotes WHERE company_id = ? AND customer_id = ? ORDER BY quote_id DESC`, companyId, customerId);
+    return json(rows.map(quoteResponse), 200, request);
+  }
+  if (quoteId === null && request.method === "POST") {
+    const quote = validateQuote(await readJson(request, 2 * 1024 * 1024));
+    const now = new Date().toISOString();
+    const results = await tursoTransaction(env, [
+      { sql: "INSERT INTO sales_quote_sequences (company_id, next_id) VALUES (?, 2) ON CONFLICT(company_id) DO UPDATE SET next_id = next_id + 1", args: [companyId] },
+      { sql: `INSERT INTO sales_quotes (company_id, quote_id, quote_number, customer_id, quote_date, notes, terms, lines_json, created_at, updated_at)
+          SELECT ?, next_id - 1, printf('SQ-%06d', next_id - 1), ?, ?, ?, ?, ?, ?, ? FROM sales_quote_sequences WHERE company_id = ? RETURNING ${QUOTE_COLUMNS}`,
+        args: [companyId, customerId, quote.quote_date, quote.notes, quote.terms, JSON.stringify(quote.lines), now, now, companyId] }
+    ]);
+    return json(quoteResponse(results[1][0]), 201, request);
+  }
+  if (!Number.isSafeInteger(quoteId) || quoteId < 1) throw httpError(404, "Quote not found");
+  const existing = await turso(env, `SELECT ${QUOTE_COLUMNS} FROM sales_quotes WHERE company_id = ? AND customer_id = ? AND quote_id = ?`, ...scope);
+  if (!existing.length) throw httpError(404, "Quote not found");
+  if (existing[0].converted_at !== null) throw httpError(409, "Converted quotes are read-only");
+  if (convert && request.method === "POST") {
+    const now = new Date().toISOString();
+    const access = customerAccessSql(session);
+    // Read the saved lines and claim the conversion within one serialized transaction.
+    const results = await tursoTransaction(env, [
+      { sql: `WITH base AS MATERIALIZED (SELECT COALESCE(MAX(record_id), 0) AS last_id FROM statement_records WHERE company_id = ?)
+          INSERT INTO statement_records (company_id, record_id, customer_id, record_date, type, amount)
+          SELECT q.company_id, base.last_id + CAST(line.key AS INTEGER) + 1,
+            q.customer_id, json_extract(line.value, '$.date'),
+            CASE WHEN json_extract(line.value, '$.description') = '' OR json_extract(line.value, '$.description') = json_extract(line.value, '$.type')
+              THEN json_extract(line.value, '$.type')
+              ELSE json_extract(line.value, '$.type') || ': ' || json_extract(line.value, '$.description') END,
+            json_extract(line.value, '$.amount')
+          FROM sales_quotes q, json_each(q.lines_json) line, base
+          WHERE q.company_id = ? AND q.customer_id = ? AND q.quote_id = ? AND q.converted_at IS NULL
+            AND EXISTS (SELECT 1 FROM customers WHERE company_id = q.company_id AND customer_id = q.customer_id${access.sql})`,
+        args: [companyId, ...scope, ...access.args] },
+      { sql: `UPDATE sales_quotes SET converted_at = ?, updated_at = ? WHERE company_id = ? AND customer_id = ? AND quote_id = ? AND converted_at IS NULL AND changes() > 0 RETURNING ${QUOTE_COLUMNS}`,
+        args: [now, now, ...scope] }
+    ]);
+    if (!results[1].length) throw httpError(409, "Quote is already converted or no longer accessible");
+    return json(quoteResponse(results[1][0]), 200, request);
+  }
+  if (!convert && request.method === "PUT") {
+    const quote = validateQuote(await readJson(request, 2 * 1024 * 1024));
+    const rows = await turso(env, `UPDATE sales_quotes SET quote_date = ?, notes = ?, terms = ?, lines_json = ?, updated_at = ? WHERE company_id = ? AND customer_id = ? AND quote_id = ? AND converted_at IS NULL RETURNING ${QUOTE_COLUMNS}`,
+      quote.quote_date, quote.notes, quote.terms, JSON.stringify(quote.lines), new Date().toISOString(), ...scope);
+    if (!rows.length) throw httpError(409, "Converted quotes are read-only");
+    return json(quoteResponse(rows[0]), 200, request);
+  }
+  if (!convert && request.method === "DELETE") {
+    const rows = await turso(env, "DELETE FROM sales_quotes WHERE company_id = ? AND customer_id = ? AND quote_id = ? AND converted_at IS NULL RETURNING quote_id", ...scope);
+    if (!rows.length) throw httpError(409, "Converted quotes are read-only");
+    return json({ deleted: true }, 200, request);
+  }
+  throw httpError(405, "Method not allowed");
+}
+
+async function listVisits(request, env, session, customerId) {
+  requirePermission(session, "canAccessVisits");
+  await findAccessibleCustomer(env, session, customerId);
+  const rows = await turso(env,
+    "SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data FROM customer_visits WHERE company_id = ? AND customer_id = ? ORDER BY visited_at DESC, visit_id DESC",
+    requiredCompanyId(session), customerId);
+  return json(rows, 200, request);
+}
+
+async function createVisit(request, env, session, customerId) {
+  requirePermission(session, "canAccessVisits");
+  await findAccessibleCustomer(env, session, customerId);
+  const visit = validateVisit(await readJson(request, 700 * 1024));
+  const companyId = requiredCompanyId(session);
+  const rows = await turso(env,
+    "INSERT INTO customer_visits (company_id, visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data) VALUES (?, (SELECT COALESCE(MAX(visit_id), 0) + 1 FROM customer_visits WHERE company_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data",
+    companyId, companyId, customerId, new Date().toISOString(), visit.ph, visit.chlo, visit.stb, visit.alk, visit.cal, visit.notes, visit.photo_data);
+  if (!rows.length) throw new Error("Turso did not return the new visit");
+  return json(rows[0], 201, request);
+}
+
+async function updateVisit(request, env, session, customerId, visitId) {
+  requirePermission(session, "canAccessVisits");
+  await findAccessibleCustomer(env, session, customerId);
+  if (!Number.isSafeInteger(visitId) || visitId < 1) throw httpError(404, "Visit not found");
+  const body = await readJson(request, 700 * 1024);
+  const visit = validateVisit(body);
+  const rows = await turso(env,
+    "UPDATE customer_visits SET ph = ?, chlo = ?, stb = ?, alk = ?, cal = ?, notes = ?, photo_data = COALESCE(?, photo_data) WHERE company_id = ? AND customer_id = ? AND visit_id = ? RETURNING visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data",
+    visit.ph, visit.chlo, visit.stb, visit.alk, visit.cal, visit.notes,
+    body.photo_data === undefined ? null : visit.photo_data,
+    requiredCompanyId(session), customerId, visitId);
+  if (!rows.length) throw httpError(404, "Visit not found");
+  return json(rows[0], 200, request);
 }
 
 async function createCustomer(request, env, session) {
@@ -474,6 +666,8 @@ async function reorderCustomers(request, env, session) {
 async function deleteCustomer(request, env, session, customerId) {
   requirePermission(session, "canEditCustomers");
   await findAccessibleCustomer(env, session, customerId);
+  await turso(env, "DELETE FROM sales_quotes WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
+  await turso(env, "DELETE FROM customer_visits WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
   await turso(env, "DELETE FROM statement_records WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
   await turso(env, "DELETE FROM customers WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
   return json({ deleted: true }, 200, request);
@@ -635,10 +829,64 @@ async function hashPassword(password) {
 
 const BACKUP_TABLES = {
   customers: ["customer_id", "first_name", "last_name", "address", "city", "state", "zip", "phone", "email", "service_day", "amount_charged", "notes", "starting_date", "status", "route_order"],
+  customer_visits: ["visit_id", "customer_id", "visited_at", "ph", "chlo", "stb", "alk", "cal", "notes", "photo_data"],
   statement_records: ["record_id", "customer_id", "record_date", "type", "amount"],
+  sales_quotes: QUOTE_COLUMNS.split(", "),
+  sales_quote_sequences: ["next_id"],
   record_types: ["type_name"],
   pdf_settings: ["setting_key", "setting_value"]
 };
+
+const VISIT_ENUMS = {
+  ph: ["7.0", "7.2", "7.4", "7.6", "7.8", "8.0"],
+  chlo: ["1-2", "2-4", "3-6", "5-10", "7.5-15", "10-20"],
+  stb: ["100", "90", "80", "70", "60", "50", "40", "30"]
+};
+
+function validateVisit(body) {
+  for (const [field, values] of Object.entries(VISIT_ENUMS)) {
+    if (typeof body[field] !== "string" || !values.includes(body[field])) {
+      throw httpError(400, `${field} must be one of the allowed values`);
+    }
+  }
+  for (const field of ["alk", "cal"]) {
+    if (body[field] == null || (typeof body[field] === "string" && !body[field].trim())) continue;
+    if (!Number.isSafeInteger(body[field]) || body[field] < 1 || body[field] > 2147483647) {
+      throw httpError(400, `${field} must be a positive whole number no greater than 2147483647`);
+    }
+  }
+  if (typeof body.notes !== "string" || body.notes.length > 16000) {
+    throw httpError(400, "notes must be a string no longer than 16000 characters");
+  }
+  const photo = body.photo_data === undefined ? "" : body.photo_data;
+  if (typeof photo !== "string" || photo.length > 600000
+      || (photo && !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(photo))) {
+    throw httpError(400, "photo_data must be a PNG or JPEG data URL no longer than 600000 characters, or an empty string");
+  }
+  return {
+    ph: body.ph, chlo: body.chlo, stb: body.stb,
+    alk: typeof body.alk === "number" ? body.alk : null,
+    cal: typeof body.cal === "number" ? body.cal : null,
+    notes: body.notes, photo_data: photo
+  };
+}
+
+function validateBackupVisits(visits, customerIds) {
+  const visitIds = new Set();
+  for (const row of visits) {
+    if (!row || typeof row !== "object" || Array.isArray(row)
+        || !Number.isSafeInteger(row.visit_id) || row.visit_id < 1
+        || !customerIds.has(String(row.customer_id))
+        || typeof row.visited_at !== "string"
+        || !Number.isFinite(Date.parse(row.visited_at))
+        || new Date(row.visited_at).toISOString() !== row.visited_at) {
+      throw httpError(400, "Backup has an invalid visit");
+    }
+    if (visitIds.has(row.visit_id)) throw httpError(400, "Backup has duplicate visit IDs");
+    visitIds.add(row.visit_id);
+    Object.assign(row, validateVisit(row));
+  }
+}
 
 async function exportCompanyBackup(env, companyId) {
   const backup = { format: "comp-manager-backup", version: 1, company_id: companyId, created_at: new Date().toISOString() };
@@ -646,6 +894,28 @@ async function exportCompanyBackup(env, companyId) {
     backup[table] = await turso(env, `SELECT ${columns.join(", ")} FROM ${table} WHERE company_id = ?`, companyId);
   }
   return backup;
+}
+
+function validateBackupQuotes(backup, customerIds) {
+  const ids = new Set();
+  for (const row of backup.sales_quotes) {
+    if (!row || !Number.isSafeInteger(row.quote_id) || row.quote_id < 1 || row.quote_id >= Number.MAX_SAFE_INTEGER
+        || ids.has(row.quote_id) || row.quote_number !== quoteNumber(row.quote_id)
+        || typeof row.customer_id !== "string" || !customerIds.has(row.customer_id)) throw httpError(400, "Backup has invalid or duplicate quote IDs");
+    ids.add(row.quote_id);
+    let lines;
+    try { lines = JSON.parse(row.lines_json); } catch { throw httpError(400, "Backup has invalid quote lines"); }
+    const quote = validateQuote({ quote_date: row.quote_date, notes: row.notes, terms: row.terms, lines });
+    row.lines_json = JSON.stringify(quote.lines);
+    const validIso = value => typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+    if (!validIso(row.created_at) || !validIso(row.updated_at) || row.updated_at < row.created_at
+        || (row.converted_at !== null && (!validIso(row.converted_at) || row.converted_at < row.created_at || row.converted_at > row.updated_at))) {
+      throw httpError(400, "Backup has invalid quote conversion state or timestamps");
+    }
+  }
+  if (backup.sales_quote_sequences.length > 1 || backup.sales_quote_sequences.some(row =>
+    !row || !Number.isSafeInteger(row.next_id) || row.next_id < 1
+      || [...ids].some(id => id >= row.next_id))) throw httpError(400, "Backup has an invalid quote sequence");
 }
 
 async function restoreCompanyBackup(request, env, companyId) {
@@ -656,25 +926,32 @@ async function restoreCompanyBackup(request, env, companyId) {
   if (!backup || backup.format !== "comp-manager-backup" || backup.version !== 1) throw httpError(400, "This is not a Comp Manager cloud backup");
   if (Number(backup.company_id) !== companyId) throw httpError(400, "This backup belongs to a different company");
   for (const table of Object.keys(BACKUP_TABLES)) {
+    if (["customer_visits", "sales_quotes", "sales_quote_sequences"].includes(table) && backup[table] === undefined) backup[table] = [];
     if (!Array.isArray(backup[table])) throw httpError(400, `Backup is missing ${table}`);
   }
   const customerIds = new Set(backup.customers.map(row => String(row.customer_id)));
+  validateBackupVisits(backup.customer_visits, customerIds);
+  validateBackupQuotes(backup, customerIds);
   for (const row of backup.statement_records) {
     if (!customerIds.has(String(row.customer_id))) throw httpError(400, "Backup has statements for unknown customers");
   }
   const statements = [];
-  for (const table of ["statement_records", "customers", "record_types", "pdf_settings"]) {
+  // Preserve the live high watermark even when replacing data with an older backup.
+  statements.push({ sql: "INSERT INTO sales_quote_sequences (company_id, next_id) SELECT ?, COALESCE(MAX(quote_id), 0) + 1 FROM sales_quotes WHERE company_id = ? ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)", args: [companyId, companyId] });
+  for (const table of ["sales_quotes", "customer_visits", "statement_records", "customers", "record_types", "pdf_settings"]) {
     statements.push({ sql: `DELETE FROM ${table} WHERE company_id = ?`, args: [companyId] });
   }
-  for (const table of ["customers", "statement_records", "record_types", "pdf_settings"]) {
+  for (const table of ["customers", "statement_records", "customer_visits", "sales_quotes", "record_types", "pdf_settings"]) {
     const columns = BACKUP_TABLES[table];
     const sql = `INSERT INTO ${table} (company_id, ${columns.join(", ")}) VALUES (${["?", ...columns.map(() => "?")].join(", ")})`;
     for (const row of backup[table]) {
-      statements.push({ sql, args: [companyId, ...columns.map(column => row[column] ?? (column === "status" ? "Active" : column.endsWith("amount") || column === "amount_charged" || column === "route_order" ? 0 : ""))] });
+      statements.push({ sql, args: [companyId, ...columns.map(column => row[column] ?? (column === "converted_at" || (table === "customer_visits" && ["alk", "cal"].includes(column)) ? null : column === "status" ? "Active" : column.endsWith("amount") || column === "amount_charged" || column === "route_order" ? 0 : ""))] });
     }
+    const nextId = backup.sales_quotes.reduce((next, row) => Math.max(next, row.quote_id + 1), backup.sales_quote_sequences[0]?.next_id || 1);
+    statements.push({ sql: "INSERT INTO sales_quote_sequences (company_id, next_id) VALUES (?, ?) ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)", args: [companyId, nextId] });
   }
   await tursoTransaction(env, statements);
-  return { restored: true, customers: backup.customers.length, statements: backup.statement_records.length };
+  return { restored: true, customers: backup.customers.length, statements: backup.statement_records.length, visits: backup.customer_visits.length, quotes: backup.sales_quotes.length };
 }
 
 async function tursoTransaction(env, statements) {
@@ -683,7 +960,7 @@ async function tursoTransaction(env, statements) {
     .replace(/^(libsql|turso):\/\//, "https://")
     .replace(/\/$/, "");
   const token = requiredSecret(env.SILVERDICE_AUTH_TOKEN || env.TURSO_AUTH_TOKEN, "SILVERDICE_AUTH_TOKEN");
-  const steps = [{ stmt: { sql: "BEGIN" } }];
+  const steps = [{ stmt: { sql: "BEGIN IMMEDIATE" } }];
   for (const statement of statements) {
     steps.push({
       stmt: { sql: statement.sql, args: statement.args.map(toTursoArg) },
@@ -702,9 +979,44 @@ async function tursoTransaction(env, statements) {
   const payload = await response.json();
   const result = payload.results?.[0]?.response?.result;
   if (!result || result.step_errors?.[commitIndex] || !result.step_results?.[commitIndex]) {
-    throw new Error("Restore failed and was rolled back");
+    throw new Error("Database transaction failed and was rolled back");
   }
+  return result.step_results.slice(1, commitIndex).map(query =>
+    (query?.rows || []).map(row => Object.fromEntries(query.cols.map((column, index) => [column.name, decodeTursoValue(row[index])]))));
 }
+const QUOTES_TABLE_SQL = "CREATE TABLE IF NOT EXISTS sales_quotes (company_id INTEGER NOT NULL, quote_id INTEGER NOT NULL CHECK (quote_id > 0), quote_number TEXT NOT NULL, customer_id TEXT NOT NULL, quote_date TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', terms TEXT NOT NULL DEFAULT '', lines_json TEXT NOT NULL CHECK (json_valid(lines_json)), converted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (company_id, quote_id), UNIQUE (company_id, quote_number), FOREIGN KEY (company_id, customer_id) REFERENCES customers(company_id, customer_id) ON DELETE CASCADE)";
+
+async function migrateQuotes(env) {
+  await tursoCore(env, "CREATE TABLE IF NOT EXISTS sales_quote_sequences (company_id INTEGER PRIMARY KEY, next_id INTEGER NOT NULL CHECK (next_id > 0), FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE)");
+  await tursoCore(env, QUOTES_TABLE_SQL);
+  await tursoCore(env, "CREATE INDEX IF NOT EXISTS sales_quotes_customer_idx ON sales_quotes(company_id, customer_id, quote_id)");
+  await tursoCore(env, "INSERT INTO sales_quote_sequences (company_id, next_id) SELECT company_id, MAX(quote_id) + 1 FROM sales_quotes WHERE 1 GROUP BY company_id ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)");
+}
+const VISITS_TABLE_SQL = "CREATE TABLE IF NOT EXISTS customer_visits (company_id INTEGER NOT NULL, visit_id INTEGER NOT NULL, customer_id TEXT NOT NULL, visited_at TEXT NOT NULL, ph TEXT NOT NULL CHECK (ph IN ('7.0','7.2','7.4','7.6','7.8','8.0')), chlo TEXT NOT NULL CHECK (chlo IN ('1-2','2-4','3-6','5-10','7.5-15','10-20')), stb TEXT NOT NULL CHECK (stb IN ('100','90','80','70','60','50','40','30')), alk INTEGER CHECK (alk IS NULL OR (typeof(alk) = 'integer' AND alk BETWEEN 1 AND 2147483647)), cal INTEGER CHECK (cal IS NULL OR (typeof(cal) = 'integer' AND cal BETWEEN 1 AND 2147483647)), notes TEXT NOT NULL DEFAULT '' CHECK (length(notes) <= 16000), photo_data TEXT NOT NULL DEFAULT '', PRIMARY KEY (company_id, visit_id), FOREIGN KEY (company_id, customer_id) REFERENCES customers(company_id, customer_id) ON DELETE CASCADE)";
+
+async function migrateVisits(env) {
+  await tursoCore(env, VISITS_TABLE_SQL);
+  const columns = await tursoCore(env, "PRAGMA table_info(customer_visits)");
+  if (columns.some(column => ["alk", "cal"].includes(column.name) && Number(column.notnull) === 1)) {
+    const indexes = await tursoCore(env, "SELECT sql FROM sqlite_master WHERE type IN ('index', 'trigger') AND tbl_name = 'customer_visits' AND sql IS NOT NULL");
+    const names = ["company_id", ...BACKUP_TABLES.customer_visits];
+    const photoExists = columns.some(column => column.name === "photo_data");
+    await tursoTransaction(env, [
+      { sql: VISITS_TABLE_SQL.replace("customer_visits (", "customer_visits_migrating ("), args: [] },
+      {
+        sql: `INSERT INTO customer_visits_migrating (${names.join(", ")}) SELECT ${names.map(name => name === "photo_data" && !photoExists ? "''" : name).join(", ")} FROM customer_visits`,
+        args: []
+      },
+      { sql: "DROP TABLE customer_visits", args: [] },
+      { sql: "ALTER TABLE customer_visits_migrating RENAME TO customer_visits", args: [] },
+      ...indexes.map(index => ({ sql: index.sql, args: [] }))
+    ]);
+  } else if (columns.length && !columns.some(column => column.name === "photo_data")) {
+    await tursoCore(env, "ALTER TABLE customer_visits ADD COLUMN photo_data TEXT NOT NULL DEFAULT ''");
+  }
+  await tursoCore(env, "CREATE INDEX IF NOT EXISTS customer_visits_customer_idx ON customer_visits(company_id, customer_id, visited_at)");
+}
+
 let schemaReady;
 async function turso(env, sql, ...args) {
   schemaReady ??= (async () => {
@@ -715,7 +1027,9 @@ async function turso(env, sql, ...args) {
     ]) {
       try { await tursoCore(env, ddl); } catch { /* column already exists */ }
     }
-  })();
+    await migrateVisits(env);
+    await migrateQuotes(env);
+  })().catch(error => { schemaReady = undefined; throw error; });
   await schemaReady;
   return tursoCore(env, sql, ...args);
 }
@@ -760,8 +1074,10 @@ function decodeTursoValue(cell) {
 async function readJson(request, maxBytes = 64 * 1024) {
   const contentLength = Number(request.headers.get("Content-Length") || 0);
   if (contentLength > maxBytes) throw httpError(413, "Request body is too large");
+  const text = await request.text();
+  if (new TextEncoder().encode(text).length > maxBytes) throw httpError(413, "Request body is too large");
   try {
-    const body = await request.json();
+    const body = JSON.parse(text);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error();
     return body;
   } catch {

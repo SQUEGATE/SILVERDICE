@@ -44,6 +44,16 @@ td.r,th.r{text-align:right}.scroll{overflow-x:auto}
 #drawer .nv button.go{flex:1;text-align:left;background:none;border:0;padding:14px 4px;font-size:1.0625rem}
 #drawer .nv button.star{background:none;border:0;font-size:1.375rem;color:#f59e0b;padding:8px}
 .hide{display:none}
+.vs{margin:14px 0;padding:10px;border:1px solid var(--line);border-radius:10px}
+.vh{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px}
+.vl{font-weight:700}.vo{font-size:1.25rem;font-weight:700;color:var(--brand);overflow-wrap:anywhere}
+.vs input[type=range]{padding:0;border:0;margin:10px 0;height:2rem}
+.vt{display:grid;grid-template-columns:repeat(auto-fit,minmax(3.6rem,1fr));gap:4px}
+.vt button{border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:6px 2px;font-size:0.8125rem;min-width:0;overflow-wrap:anywhere;color:var(--ink)}
+.vt button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+.vrec{font-weight:400;color:var(--mute)}
+.vphoto img{display:block;max-width:100%;max-height:60vh;border-radius:8px;border:1px solid var(--line)}.vphoto:empty{display:none}
+.vnow{font-size:1.125rem;font-weight:700;overflow-wrap:anywhere}
 #printarea{display:none}
 @media print{body>*:not(#printarea){display:none!important}#printarea{display:block}}
 @media(min-width:62em){#drawer{display:block;position:fixed;right:auto;width:15rem;background:none;inset:0 auto 0 0;top:4rem}
@@ -60,7 +70,7 @@ button.b{max-width:100%}.card{overflow-wrap:anywhere}
 <script>
 "use strict";
 var DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-var PERMS=[["canViewCustomerDetails","View customer details"],["canViewCustomers","View customers"],["canViewStatements","View statements"],["canViewRevenueSummary","View revenue summary"],["canViewPdf","View PDF settings"],["canEditCustomers","Edit customers"],["canEditStatements","Edit statements"],["canEditPdf","Edit PDF settings"]];
+var PERMS=[["canViewCustomerDetails","View customer details"],["canViewCustomers","View customers"],["canViewStatements","View statements"],["canViewRevenueSummary","View revenue summary"],["canViewPdf","View PDF settings"],["canEditCustomers","Edit customers"],["canEditStatements","Edit statements"],["canEditPdf","Edit PDF settings"],["canAccessVisits","Access visits"],["canAccessSalesQuote","Access Sales Quote"]];
 var DEF_CREDIT="payment, paid, credit, refund, discount, adjustment, rebate, deposit, return, transfer in, check, cheque";
 var DEF_DEBIT="cash, bill, charge, service, invoice, fee, debit, purchase, due, owed, repair, labor, parts, materials";
 var S={token:localStorage.getItem("cm.token")||"",account:JSON.parse(localStorage.getItem("cm.account")||"null"),view:"",arg:null,kw:null,master:false};
@@ -123,6 +133,8 @@ function isCredit(type){
 /* ---------- favorites ---------- */
 var VIEWS=[
  {id:"customers",label:"Customers",perm:function(){return can("canViewCustomers")||can("canViewCustomerDetails")}},
+ {id:"visits",label:"Visits",perm:function(){return can("canAccessVisits")}},
+ {id:"quotes",label:"Sales Quote",perm:function(){return can("canAccessSalesQuote")}},
  {id:"statements",label:"Statements",perm:function(){return can("canViewStatements")}},
  {id:"monthly",label:"Monthly Statement",perm:function(){return can("canEditStatements")&&can("canViewStatements")}},
  {id:"charged",label:"Charged Summary",perm:function(){return can("canViewStatements")}},
@@ -170,16 +182,22 @@ document.addEventListener("click",function(e){
 $("menuBtn").onclick=function(){$("drawer").classList.toggle("open")};
 $("logout").onclick=function(){signOut()};
 
-function signOut(){S.token="";S.account=null;S.kw=null;S.master=false;localStorage.removeItem("cm.token");localStorage.removeItem("cm.account");localStorage.removeItem("cm.master");renderChrome();showLogin()}
+function clearTimers(){(S.timers||[]).forEach(function(t){clearInterval(t)});S.timers=[]}
+function signOut(){clearTimers();S.nav=(S.nav||0)+1;S.token="";S.account=null;S.kw=null;S.master=false;localStorage.removeItem("cm.token");localStorage.removeItem("cm.account");localStorage.removeItem("cm.master");renderChrome();showLogin()}
 function backToMaster(){
   var m=JSON.parse(localStorage.getItem("cm.master")||"null");if(!m)return signOut();
   S.token=m.token;S.account=m.account;S.master=true;S.kw=null;localStorage.setItem("cm.token",S.token);localStorage.setItem("cm.account",JSON.stringify(S.account));
   renderChrome();go("companies");
 }
 function go(view,arg){
+  clearTimers();S.nav=(S.nav||0)+1;
+  if((view==="quotes"||view==="quote")&&!can("canAccessSalesQuote")){
+    S.view="";S.arg=null;app.innerHTML='<div class="err">Sales Quote access is not permitted.</div>';return;
+  }
+  if((view==="visits"||view==="visit")&&!can("canAccessVisits"))view="customers";
   S.view=view;S.arg=arg||null;window.scrollTo(0,0);
-  var fn={companies:vCompanies,customers:vCustomers,customer:vCustomer,statements:vPickCustomer,statement:vStatement,monthly:vMonthly,charged:vCharged,revenue:vRevenue,types:vTypes,pdf:vPdf,employees:vEmployees,employee:vEmployee,backup:vBackup,company:vCompany}[view];
-  var v=VIEWS.filter(function(x){return x.id===view})[0];
+  var fn={quotes:vQuotes,quote:vQuote,visits:vVisits,visit:vVisit,companies:vCompanies,customers:vCustomers,customer:vCustomer,statements:vPickCustomer,statement:vStatement,monthly:vMonthly,charged:vCharged,revenue:vRevenue,types:vTypes,pdf:vPdf,employees:vEmployees,employee:vEmployee,backup:vBackup,company:vCompany}[view];
+  var v=VIEWS.filter(function(x){return x.id===(view==="quote"?"quotes":view==="visit"?"visits":view)})[0];
   $("title").textContent=(S.account&&S.account.companyName&&!S.master?S.account.companyName+" \u2022 ":"")+(v?v.label:(view==="companies"?"Companies":"Comp Manager"));
   app.innerHTML='<div id="flash"></div><div class="card">Loading...</div>';
   Promise.resolve().then(fn).catch(function(e){app.innerHTML='<div class="err">'+esc(e.message)+'</div>'});
@@ -419,6 +437,130 @@ function printStatement(c,recs,bal){
   else Promise.all(imgs.map(function(im){return im.decode?im.decode().catch(function(){}):new Promise(function(r){if(im.complete)r();else{im.onload=im.onerror=r}})})).then(go2);
   setTimeout(restore,60000);
 }
+/* ---------- sales quotations (independent of statement balance) ---------- */
+function quoteTerms(c){
+  return "Hi "+[c.first_name,c.last_name].filter(Boolean).join(" ")+",\n\n"+
+    "I hope you're doing well! I wanted to let you know that in order to move forward with your order, we kindly require payment in advance for the items requested. This helps us ensure timely processing and secure the necessary materials for your service.\n\n"+
+    "Once payment is received, we’ll begin preparing everything right away and keep you updated throughout the process.\n\n"+
+    "If you have any questions or need assistance with payment options, please feel free to reach out.\n\n"+
+    "Thank you for your understanding and continued trust in our service!";
+}
+function quoteValidate(q){
+  if(!parseDate(q.quote_date))throw new Error("Quote date must be a valid MM/DD/YYYY date.");
+  if(typeof q.notes!=="string"||q.notes.length>16000||typeof q.terms!=="string"||q.terms.length>16000)throw new Error("Notes and terms must be at most 16000 characters.");
+  if(!Array.isArray(q.lines)||!q.lines.length||q.lines.length>200)throw new Error("Enter between 1 and 200 lines.");
+  return {quote_date:q.quote_date,notes:q.notes,terms:q.terms,lines:q.lines.map(function(l,i){
+    if(!parseDate(l.date))throw new Error("Line "+(i+1)+": use a valid MM/DD/YYYY date.");
+    if(!String(l.type||"").trim())throw new Error("Line "+(i+1)+": choose a record type.");
+    var raw=String(l.amount).trim();
+    if(!/^-?\d+(\.\d{1,2})?$/.test(raw)||!Number(raw)||Math.abs(Number(raw))>999999999.99)throw new Error("Line "+(i+1)+": enter a nonzero amount up to 999999999.99, with at most 2 decimals.");
+    return {date:l.date,type:l.type,description:String(l.description||""),amount:isCredit(l.type)?Math.abs(Number(raw)):-Math.abs(Number(raw))};
+  })};
+}
+async function vQuotes(){
+  if(!can("canAccessSalesQuote"))throw new Error("Sales Quote access is not permitted.");
+  var nav=S.nav,list=await api("/v1/customers");if(nav!==S.nav)return;
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>Sales Quote — Customers</h2><label for="qq">Search customers</label><input id="qq" type="search"><label for="qd">Service day</label><select id="qd"><option value="">All days</option>'+DAYS.map(function(d){return '<option>'+d+'</option>'}).join("")+'</select><div id="qlist"></div></div>';
+  function draw(){
+    var q=$("qq").value.trim().toLowerCase(),d=$("qd").value;
+    var rows=list.filter(function(c){return (!d||c.service_day===d)&&(!q||[c.customer_id,c.first_name,c.last_name,c.address,c.city,c.phone].join(" ").toLowerCase().indexOf(q)>=0)});
+    $("qlist").innerHTML=rows.length?rows.map(function(c){return '<div class="item"><div class="t"><b>'+esc(c.first_name)+' '+esc(c.last_name)+'</b><span class="s">#'+esc(c.customer_id)+' · '+esc(c.service_day)+' · '+esc(c.address)+'</span></div><button class="b" data-qc="'+esc(c.customer_id)+'">Quotes</button></div>'}).join(""):'<p>No customers found.</p>';
+    app.querySelectorAll("[data-qc]").forEach(function(b){b.onclick=function(){go("quote",{id:b.getAttribute("data-qc")})}});
+  }
+  $("qq").oninput=draw;$("qd").onchange=draw;draw();
+}
+async function vQuote(){
+  if(!can("canAccessSalesQuote"))throw new Error("Sales Quote access is not permitted.");
+  var nav=S.nav,arg=S.arg||{},id=arg.id,path="/v1/customers/"+encodeURIComponent(id)+"/quotes";
+  var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api(path),api("/v1/record-types"),api("/v1/settings")]);if(nav!==S.nav)return;
+  var c=res[0],quotes=res[1],types=res[2],settings=res[3],busy=false;
+  // Quote-only employees also receive settings for the shared type classification and PDF.
+  S.kw={credit:kwList(settings.recordTypeCreditKeywords||DEF_CREDIT),debit:kwList(settings.recordTypeDebitKeywords||DEF_DEBIT),settings:settings};
+  var saved=quotes.filter(function(q){return String(q.quote_id)===String(arg.qid)})[0]||null;
+  var q=saved?JSON.parse(JSON.stringify(saved)):{quote_date:fmtDate(new Date()),notes:"",terms:quoteTerms(c),lines:[{date:fmtDate(new Date()),type:types[0]||"",description:"",amount:""}]};
+  var locked=!!q.converted_at,dirty=!saved;
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc(c.first_name)+' '+esc(c.last_name)+' — Sales Quote</h2><button class="b alt" id="qback">Customers</button><button class="b" id="qnew">New quote</button><div id="qsaved">'+
+    (quotes.length?quotes.map(function(r){return '<div class="item"><div class="t"><b>'+esc(r.quote_number)+'</b><span class="s">'+esc(r.quote_date)+(r.converted_at?' · Converted — locked':'')+'</span></div><button class="b alt" data-qid="'+esc(r.quote_id)+'">View / Edit</button></div>'}).join(""):'<p>No saved quotes.</p>')+'</div></div>'+
+    '<div class="card"><h2>'+esc(saved?q.quote_number:"New quote — number assigned on save")+'</h2><p>'+(locked?'Converted to Statement — this quote is locked.':'Quotes do not affect the statement balance. Save before PDF or conversion.')+'</p>'+
+    '<fieldset id="qfields" style="border:0;padding:0;min-width:0"'+(locked?' disabled':'')+'><label for="qdate">Quote date</label><input id="qdate" value="'+esc(q.quote_date)+'"><label for="qnotes">Notes</label><textarea id="qnotes" maxlength="16000" rows="3">'+esc(q.notes)+'</textarea><div id="qlines"></div><button class="b alt" id="qadd">Add line</button></fieldset>'+
+    '<p id="qtotal"></p><p id="qstate" role="status"></p>'+(!locked?'<button class="b" id="qsave">Save quote</button>':'')+'<button class="b alt" id="qpdf">PDF / Print</button>'+
+    (saved&&!locked?'<button class="b bad" id="qdelete">Delete quote</button>'+(can("canEditStatements")?'<button class="b ok" id="qconvert">Convert to Statement</button>':''):'')+'</div>';
+  $("qback").onclick=function(){go("quotes")};$("qnew").onclick=function(){go("quote",{id:id})};
+  app.querySelectorAll("[data-qid]").forEach(function(b){b.onclick=function(){go("quote",{id:id,qid:b.getAttribute("data-qid")})}});
+  function status(){
+    $("qstate").textContent=busy?"Saving…":locked?"Converted quote — read-only.":dirty?"Save quote first: PDF and conversion require the saved, numbered version.":"Saved quote — PDF and conversion use this version.";
+    $("qpdf").disabled=!saved||dirty||busy;
+    if($("qconvert"))$("qconvert").disabled=dirty||busy;
+    if($("qsave"))$("qsave").disabled=busy;
+    if($("qdelete"))$("qdelete").disabled=busy;
+    $("qfields").disabled=locked||busy;
+    $("qadd").disabled=q.lines.length>=200;
+    function signed(l){return saved&&!dirty?Number(l.amount):(isCredit(l.type)?1:-1)*Math.abs(Number(l.amount)||0)}
+    $("qtotal").textContent="Total (statement signs): "+money(q.lines.reduce(function(s,l){return s+signed(l)},0));
+    q.lines.forEach(function(l,i){var el=$("qlsign"+i);if(el)el.textContent=(isCredit(l.type)?"CREDIT (+)":"DEBIT (−)")+" · Saved/current amount: "+money(signed(l))});
+  }
+  function changed(){dirty=true;status()}
+  function drawLines(){
+    $("qlines").innerHTML=q.lines.map(function(l,i){
+      var opts=types.slice();if(l.type&&opts.indexOf(l.type)<0)opts.push(l.type);
+      return '<div class="card" style="border:1px solid var(--line)"><b>Line '+(i+1)+'</b><div class="row"><div><label for="qld'+i+'">Date</label><input id="qld'+i+'" data-qi="'+i+'" data-qkey="date" value="'+esc(l.date)+'"></div><div><label for="qlt'+i+'">Type</label><select id="qlt'+i+'" data-qi="'+i+'" data-qkey="type"><option value="">Choose type</option>'+opts.map(function(t){return '<option value="'+esc(t)+'"'+(t===l.type?' selected':'')+'>'+esc(t)+' — '+(isCredit(t)?"CREDIT (+)":"DEBIT (−)")+'</option>'}).join("")+'</select></div></div><p id="qlsign'+i+'"></p>'+
+        '<label for="qls'+i+'">Description</label><textarea id="qls'+i+'" data-qi="'+i+'" data-qkey="description" rows="2">'+esc(l.description)+'</textarea><label for="qla'+i+'">Amount (sign determined by type)</label><input id="qla'+i+'" data-qi="'+i+'" data-qkey="amount" type="number" step="0.01" inputmode="decimal" value="'+esc(l.amount===""?"":Math.abs(Number(l.amount)))+'"><button class="b bad" data-qremove="'+i+'">Remove line '+(i+1)+'</button></div>';
+    }).join("");
+    q.lines.forEach(function(l,i){dateInput($("qld"+i))});
+    app.querySelectorAll("[data-qi]").forEach(function(el){el.addEventListener("input",function(){q.lines[Number(el.getAttribute("data-qi"))][el.getAttribute("data-qkey")]=el.value;changed()})});
+    app.querySelectorAll("[data-qremove]").forEach(function(b){b.onclick=function(){q.lines.splice(Number(b.getAttribute("data-qremove")),1);changed();drawLines()}});
+    status();
+  }
+  dateInput($("qdate"));$("qdate").addEventListener("input",function(){q.quote_date=this.value;changed()});
+  $("qnotes").oninput=function(){q.notes=this.value;changed()};
+  $("qadd").onclick=function(){if(q.lines.length>=200)return;q.lines.push({date:q.quote_date,type:types[0]||"",description:"",amount:""});changed();drawLines()};
+  async function mutate(method,suffix,body){
+    if(busy||locked||!can("canAccessSalesQuote"))return;
+    busy=true;status();flash("","");
+    try{
+      var r=await api(path+(saved?"/"+encodeURIComponent(saved.quote_id):"")+(suffix||""),{method:method,body:body});
+      if(nav===S.nav)go("quote",{id:id,qid:r.quote_id});
+    }catch(e){if(nav===S.nav)flash("err",e.message)}
+    finally{busy=false;if(nav===S.nav)status()}
+  }
+  if($("qsave"))$("qsave").onclick=function(){try{var body=quoteValidate(q);mutate(saved?"PUT":"POST","",body)}catch(e){flash("err",e.message)}};
+  if($("qdelete"))$("qdelete").onclick=function(){if(confirm("Delete quote "+saved.quote_number+"? This cannot be undone."))mutate("DELETE","")};
+  if($("qconvert"))$("qconvert").onclick=function(){
+    if(!saved||dirty||!can("canEditStatements"))return;
+    if(confirm("Convert "+saved.quote_number+" to Statement? This adds its lines to the statement exactly once and permanently locks the quote."))mutate("POST","/convert");
+  };
+  $("qpdf").onclick=function(){if(saved&&!dirty)printQuote(c,saved,settings)};
+  drawLines();
+}
+function printQuote(c,q,st){
+  var name=[c.first_name,c.last_name].filter(Boolean).join(" "),addr=[c.city,c.state,c.zip].filter(Boolean).join(" ");
+  var logo=String(st.showLogo)!=="false"&&/^data:image\/(png|jpeg);base64,/.test(st.logoData||"")?'<img alt="Company logo" src="'+esc(st.logoData)+'">':"";
+  var total=q.lines.reduce(function(s,l){return s+Number(l.amount)},0);
+  $("printarea").innerHTML='<style>@page{size:letter;margin:.5in}@media print{body{background:#fff}}#printarea{background:#fff}'+
+    '#printarea .sq{font:10pt/1.5 Arial,sans-serif;color:#666;print-color-adjust:exact;-webkit-print-color-adjust:exact}'+
+    '#printarea .sq-top{display:flex;justify-content:space-between;gap:20pt;break-inside:avoid}#printarea .sq-top img{max-width:120pt;max-height:85pt;object-fit:contain}'+
+    '#printarea .sq-company{font-size:19pt;font-weight:bold}#printarea .sq h1{font-size:20pt;color:#25649c;text-align:center;margin:10pt 0 16pt}'+
+    '#printarea .sq-box{border:1px solid #ddd;padding:12pt;margin:8pt 0;white-space:pre-wrap;overflow-wrap:anywhere}'+
+    '#printarea .sq-notes{white-space:pre-wrap;overflow-wrap:anywhere;margin:10pt 0 20pt}'+
+    '#printarea .sq table{table-layout:fixed;width:100%;border-collapse:separate;border-spacing:0 4pt}#printarea .sq th,#printarea .sq td{border:0;border-top:1px solid #ddd;border-bottom:1px solid #ddd;padding:6pt;font-size:9pt;overflow-wrap:anywhere}#printarea .sq tr>:first-child{border-left:1px solid #ddd}#printarea .sq tr>:last-child{border-right:1px solid #ddd}'+
+    '#printarea .sq thead{display:table-header-group}#printarea .sq tr{break-inside:avoid;page-break-inside:avoid}#printarea .sq tbody tr:nth-child(even){background:#f2f2f2}'+
+    '#printarea .sq .sq-price{text-align:right;width:20%}#printarea .sq .sq-date{width:17%}#printarea .sq-total{text-align:right;font-weight:bold;border:1px solid #ddd;padding:6pt;break-inside:avoid}'+
+    '#printarea .sq-terms p{white-space:pre-wrap;overflow-wrap:anywhere;orphans:3;widows:3}#printarea .sq-pay{margin-top:8pt;white-space:pre-wrap;overflow-wrap:anywhere}'+
+    '</style><section class="sq"><div class="sq-top"><div><div class="sq-company">'+esc(st.companyName||S.account.companyName||"")+'</div>'+
+    stmtAddr(st.companyAddress).map(esc).join("<br>")+'<br>'+esc(stmtPhone(st.companyPhone))+'</div>'+logo+'</div><h1>SALES QUOTATION</h1>'+
+    '<div>Quote number: '+esc(q.quote_number)+' · Date: '+esc(q.quote_date)+'</div><div class="sq-box"><b>'+esc(name)+'</b><br>'+esc(c.address)+'<br>'+esc(addr)+'</div>'+
+    '<div class="sq-notes">Notes: '+esc(q.notes)+'</div><table><thead><tr><th class="sq-date">Date</th><th>Description</th><th class="sq-price">Price</th></tr></thead><tbody>'+
+    q.lines.map(function(l){return '<tr><td>'+esc(l.date)+'</td><td style="white-space:pre-wrap">'+esc(l.description||l.type)+'</td><td class="sq-price">'+money(l.amount)+'</td></tr>'}).join("")+
+    '</tbody></table><div class="sq-total">Total: '+money(total)+'</div><div class="sq-box sq-terms">'+String(q.terms||"").split(/\n\n/).map(function(p){return '<p>'+esc(p)+'</p>'}).join("")+'</div>'+
+    '<div class="sq-pay">Forms of Payment:<br>'+esc(st.paymentInfo||"").replace(/\|/g,"<br>")+'</div></section>';
+  var base=([c.last_name,c.first_name].filter(Boolean).join("_")+"_SALES_QUOTATION_"+q.quote_number).toUpperCase().replace(/[^A-Z0-9_-]/g,"_");
+  var old=document.title,restored=false;
+  function restore(){if(restored)return;restored=true;document.title=old;window.removeEventListener("afterprint",restore)}
+  window.addEventListener("afterprint",restore);document.title=base;
+  var imgs=[].slice.call($("printarea").querySelectorAll("img"));
+  Promise.all(imgs.map(function(im){return im.decode?im.decode().catch(function(){}):new Promise(function(r){if(im.complete)r();else im.onload=im.onerror=r})})).then(function(){window.print()}).catch(restore);
+  setTimeout(restore,60000);
+}
 /* ---------- monthly statement ---------- */
 async function vMonthly(){
   await loadKw();
@@ -524,6 +666,183 @@ function vEmployee(){
   if(e.employee_id)$("dl").onclick=async function(){if(!confirm("Delete this employee?"))return;try{await api("/v1/admin/employees/"+e.employee_id,{method:"DELETE"});go("employees")}catch(x){flash("err",x.message)}};
 }
 
+/* ---------- visits ---------- */
+var V_PH=["7.0","7.2","7.4","7.6","7.8","8.0"],V_CHLO=["1-2","2-4","3-6","5-10","7.5-15","10-20"],V_STB=["100","90","80","70","60","50","40","30"];
+var V_MAX_INT=2147483647,V_MAX_NOTES=16000,V_MAX_PHOTO=600000,V_PHOTO_DIM=1280;
+var V_PHOTO_RE=/^data:image\/(png|jpeg);base64,[A-Za-z0-9+\/]+={0,2}$/;
+function visitPhotoError(s){
+  if(s==null||s==="")return "";
+  if(typeof s!=="string"||!V_PHOTO_RE.test(s))return "Photo must be a PNG or JPEG image.";
+  if(s.length>V_MAX_PHOTO)return "Photo is too large (limit "+V_MAX_PHOTO+" characters).";
+  return "";
+}
+function visitScale(w,h,max){var r=Math.min(1,max/Math.max(w,h));return {w:Math.max(1,Math.round(w*r)),h:Math.max(1,Math.round(h*r))}}
+/* encode(w,h,quality) returns a data URL; shrinks quality, then dimensions, until it fits */
+function visitFitPhoto(w,h,encode){
+  var dim=visitScale(w,h,V_PHOTO_DIM);
+  for(var step=0;step<8;step++){
+    for(var q=0.85;q>=0.3;q-=0.15){
+      var out=encode(dim.w,dim.h,q);
+      if(typeof out==="string"&&out.length<=V_MAX_PHOTO)return {data:out};
+    }
+    dim={w:Math.max(1,Math.round(dim.w*0.75)),h:Math.max(1,Math.round(dim.h*0.75))};
+  }
+  return {error:"Could not shrink the photo under the size limit. Try a different photo."};
+}
+function visitInt(raw,name,optional){
+  var s=String(raw==null?"":raw).trim();
+  if(!s){return optional?{value:null}:{error:name+" is required."}}
+  if(!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s))return {error:name+" must be a number."};
+  if(s.charAt(0)==="-")return {error:name+" cannot be negative."};
+  if(/[.eE]/.test(s))return {error:name+" must be a whole number with no decimals."};
+  if(!/^\d+$/.test(s))return {error:name+" must contain digits only."};
+  var d=s.replace(/^0+/,"");
+  if(!d)return {error:name+" must be greater than zero."};
+  if(d.length>10||Number(d)>V_MAX_INT)return {error:name+" must be at most "+V_MAX_INT+"."};
+  return {value:Number(d)};
+}
+function visitValidate(f){
+  var a=visitInt(f.alk,"ALK",true);if(a.error)return a;
+  var c=visitInt(f.cal,"CAL",true);if(c.error)return c;
+  var pe=visitPhotoError(f.photo_data);if(pe)return {error:pe};
+  var n=String(f.notes==null?"":f.notes);
+  if(n.length>V_MAX_NOTES)return {error:"Notes must be "+V_MAX_NOTES+" characters or fewer."};
+  if(V_PH.indexOf(f.ph)<0||V_CHLO.indexOf(f.chlo)<0||V_STB.indexOf(f.stb)<0)return {error:"Choose a valid PH, CHLO and STB."};
+  return {body:{ph:f.ph,chlo:f.chlo,stb:f.stb,alk:a.value,cal:c.value,notes:n,photo_data:f.photo_data||""}};
+}
+var V_DEFAULT={ph:"7.4",chlo:"3-6",stb:"50"};
+function visitRowError(v){
+  if(!v||typeof v!=="object")return "Saved visit is invalid.";
+  if(V_PH.indexOf(v.ph)<0)return "Saved visit has an invalid PH reading ("+v.ph+").";
+  if(V_CHLO.indexOf(v.chlo)<0)return "Saved visit has an invalid CHLO reading ("+v.chlo+").";
+  if(V_STB.indexOf(v.stb)<0)return "Saved visit has an invalid STB reading ("+v.stb+").";
+  var a=visitInt(v.alk,"Saved ALK",true);if(a.error)return a.error;
+  var c=visitInt(v.cal,"Saved CAL",true);if(c.error)return c.error;
+  var pe=visitPhotoError(v.photo_data);if(pe)return "Saved visit photo is invalid. "+pe;
+  if(v.notes!=null&&typeof v.notes!=="string")return "Saved visit has invalid notes.";
+  return "";
+}
+function visitSort(list){
+  return list.slice().sort(function(a,b){var ta=Date.parse(a.visited_at)||0,tb=Date.parse(b.visited_at)||0;return tb-ta||Number(b.visit_id)-Number(a.visit_id)});
+}
+function visitReadPhoto(file){
+  return new Promise(function(resolve,reject){
+    var url=URL.createObjectURL(file),img=new Image();
+    img.onload=function(){
+      URL.revokeObjectURL(url);
+      var w=img.naturalWidth,h=img.naturalHeight;
+      if(!w||!h)return reject(new Error("Could not read that image."));
+      var cv=document.createElement("canvas"),ctx=cv.getContext("2d");
+      var r=visitFitPhoto(w,h,function(cw,ch,q){cv.width=cw;cv.height=ch;ctx.fillStyle="#fff";ctx.fillRect(0,0,cw,ch);ctx.drawImage(img,0,0,cw,ch);return cv.toDataURL("image/jpeg",q)});
+      if(r.error)return reject(new Error(r.error));
+      resolve(r.data);
+    };
+    img.onerror=function(){URL.revokeObjectURL(url);reject(new Error("Could not read that image. Choose a PNG or JPEG photo."))};
+    img.src=url;
+  });
+}
+function visitStamp(iso){var d=new Date(iso);if(isNaN(d))return String(iso||"");return fmtDate(d)+" "+d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}
+async function vVisits(){
+  var list=await api("/v1/customers");
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>Visits</h2><div class="row"><input id="q" placeholder="Search customers..."><select id="df"><option value="">All days</option>'+DAYS.map(function(d){return "<option>"+d+"</option>"}).join("")+'</select></div><div id="lst"></div></div>';
+  function draw(){
+    var q=$("q").value.toLowerCase(),d=$("df").value;
+    var rows=list.filter(function(c){return (!d||c.service_day===d)&&(!q||(c.customer_id+" "+c.first_name+" "+c.last_name+" "+c.address+" "+c.city+" "+c.phone).toLowerCase().indexOf(q)>=0)});
+    $("lst").innerHTML=rows.length?rows.map(function(c){return '<div class="item"><div class="t"><b>'+esc(c.first_name)+' '+esc(c.last_name)+'</b><span class="s">#'+esc(c.customer_id)+' \u2022 '+esc(c.service_day)+' \u2022 '+esc([c.address,c.city].filter(Boolean).join(", "))+'</span></div><button class="b" data-vc="'+esc(c.customer_id)+'">Visits</button></div>'}).join(""):'<p class="s">No customers found.</p>';
+    app.querySelectorAll("[data-vc]").forEach(function(b){b.onclick=function(){go("visit",b.getAttribute("data-vc"))}});
+  }
+  $("q").oninput=draw;$("df").onchange=draw;draw();
+}
+function visitSlider(key,label,choices){
+  return '<div class="vs"><div class="vh"><label class="vl" for="v_'+key+'" style="margin:0;color:inherit;font-size:1rem">'+label+'</label><output class="vo" id="vo_'+key+'" for="v_'+key+'"></output></div>'+
+   '<input type="range" id="v_'+key+'" min="0" max="'+(choices.length-1)+'" step="1" value="0">'+
+   '<div class="vt">'+choices.map(function(c,i){return '<button type="button" data-k="'+key+'" data-i="'+i+'">'+esc(c)+'</button>'}).join("")+'</div></div>';
+}
+async function vVisit(){
+  var nav=S.nav,id=S.arg;
+  var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api("/v1/customers/"+encodeURIComponent(id)+"/visits")]);
+  if(nav!==S.nav)return;
+  var cust=res[0],visits=visitSort(Array.isArray(res[1])?res[1]:[]),sel="",saving=false,photo="",reading=false,readTok=0;
+  var SL={ph:V_PH,chlo:V_CHLO,stb:V_STB};
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc((cust.first_name+" "+cust.last_name).trim()||("Customer #"+id))+'</h2><div class="s">#'+esc(cust.customer_id||id)+'</div>'+
+   '<label>Current date and time</label><div class="vnow" id="vnow"></div>'+
+   '<label for="vsel">Past visits</label><select id="vsel"></select><div class="s" id="vsaved" style="margin-top:6px"></div>'+
+   visitSlider("ph","PH",V_PH)+visitSlider("chlo","CHLO",V_CHLO)+
+   visitSlider("stb",'STB <span class="vrec">(recommended 50-100)</span>',V_STB)+
+   '<div class="row"><div><label for="v_alk">ALK <span class="vrec">(optional, recommended 70-120)</span></label><input id="v_alk" inputmode="numeric" autocomplete="off"></div>'+
+   '<div><label for="v_cal">CAL <span class="vrec">(optional, recommended 250-500)</span></label><input id="v_cal" inputmode="numeric" autocomplete="off"></div></div>'+
+   '<label for="v_notes">Notes</label><textarea id="v_notes" rows="5" maxlength="'+V_MAX_NOTES+'"></textarea>'+
+   '<label>Photo (optional, one per visit)</label><div id="vphoto" class="vphoto"></div><div id="vpmsg" class="s" role="status"></div>'+
+   '<div class="row"><button class="b alt" type="button" id="vcam">Take Photo</button><button class="b alt" type="button" id="vup">Upload Photo</button><button class="b bad" type="button" id="vrm">Remove Photo</button></div>'+
+   '<input type="file" id="v_cam" class="hide" accept="image/*" capture="environment"><input type="file" id="v_file" class="hide" accept="image/*">'+
+   '<button class="b" id="vsv">Save visit</button><button class="b bad" id="vdel">Delete Visit</button><button class="b alt" id="vbk">Back</button></div>';
+  function tick(){var e=$("vnow");if(e){var n=new Date();e.textContent=fmtDate(n)+" "+n.toLocaleTimeString([],{hour:"numeric",minute:"2-digit",second:"2-digit"})}}
+  tick();S.timers.push(setInterval(tick,1000));
+  function setSlider(k,i){
+    var el=$("v_"+k);el.value=i;$("vo_"+k).textContent=SL[k][i];
+    app.querySelectorAll('[data-k="'+k+'"]').forEach(function(b){var on=b.getAttribute("data-i")===String(i);b.classList.toggle("on",on);b.setAttribute("aria-pressed",on)});
+  }
+  function busy(){return saving||reading}
+  function syncBusy(){$("vsv").disabled=busy();$("vdel").disabled=busy()||!sel;$("vsel").disabled=busy();$("vcam").disabled=saving;$("vup").disabled=saving;$("vrm").disabled=busy()||!photo}
+  function showPhoto(){$("vphoto").innerHTML=photo?'<img alt="Visit photo" src="'+photo+'">':"";$("vup").textContent=photo?"Replace Photo":"Upload Photo";$("vcam").textContent=photo?"Retake Photo":"Take Photo";syncBusy()}
+  async function chosen(inp){
+    var f=inp.files&&inp.files[0];inp.value="";if(!f||saving)return;
+    var tok=++readTok;reading=true;$("vpmsg").textContent="Reading photo...";flash("","");syncBusy();
+    try{var d=await visitReadPhoto(f);if(tok!==readTok||nav!==S.nav)return;photo=d;$("vpmsg").textContent="Photo ready."}
+    catch(e){if(tok===readTok&&nav===S.nav){$("vpmsg").textContent="";flash("err",e.message)}}
+    finally{if(tok===readTok&&nav===S.nav){reading=false;showPhoto()}}
+  }
+  function pick(k,val){setSlider(k,SL[k].indexOf(String(val)))}
+  function fill(v){
+    var d=v||V_DEFAULT;pick("ph",d.ph);pick("chlo",d.chlo);pick("stb",d.stb);
+    $("v_alk").value=v&&v.alk!=null?v.alk:"";$("v_cal").value=v&&v.cal!=null?v.cal:"";photo=v&&v.photo_data?v.photo_data:"";$("vpmsg").textContent="";showPhoto();$("v_notes").value=v?(v.notes||""):"";
+    $("vsaved").textContent=v?"Originally saved: "+visitStamp(v.visited_at):"New visit: the date and time are recorded when you save.";
+  }
+  function opts(){
+    $("vsel").innerHTML='<option value="">New Visit</option>'+visits.map(function(v){return '<option value="'+esc(v.visit_id)+'">'+esc(visitStamp(v.visited_at))+'</option>'}).join("");
+    $("vsel").value=sel;
+  }
+  function byId(v){return visits.filter(function(x){return String(x.visit_id)===String(v)})[0]||null}
+  Object.keys(SL).forEach(function(k){$("v_"+k).oninput=function(){setSlider(k,Number($("v_"+k).value))}});
+  app.querySelectorAll("[data-k]").forEach(function(b){b.onclick=function(){setSlider(b.getAttribute("data-k"),Number(b.getAttribute("data-i")))}});
+  $("vsel").onchange=function(){
+    if(busy()){$("vsel").value=sel;return}
+    var next=$("vsel").value,row=next?byId(next):null,bad=row?visitRowError(row):"";
+    if(bad){$("vsel").value=sel;return flash("err",bad)}
+    sel=next;flash("","");fill(row)};
+  $("vcam").onclick=function(){$("v_cam").click()};$("vup").onclick=function(){$("v_file").click()};
+  $("v_cam").onchange=function(){chosen($("v_cam"))};$("v_file").onchange=function(){chosen($("v_file"))};
+  $("vrm").onclick=function(){if(busy())return;photo="";$("vpmsg").textContent="Photo removed (save to apply).";showPhoto()};
+  $("vbk").onclick=function(){go("visits")};
+  $("vdel").onclick=async function(){
+    if(busy()||!sel)return;
+    if(!confirm("Permanently delete this visit and its photo? This cannot be undone."))return;
+    var deleting=sel;saving=true;syncBusy();flash("","");
+    try{
+      await api("/v1/customers/"+encodeURIComponent(id)+"/visits/"+encodeURIComponent(deleting),{method:"DELETE"});
+      if(nav!==S.nav)return;
+      visits=visits.filter(function(v){return String(v.visit_id)!==deleting});
+      sel="";opts();fill(null);flash("msg","Visit deleted.");
+    }catch(e){if(nav===S.nav)flash("err",e.message)}
+    finally{saving=false;if(nav===S.nav)syncBusy()}
+  };
+  $("vsv").onclick=async function(){
+    if(busy())return;
+    var r=visitValidate({photo_data:photo,ph:V_PH[$("v_ph").value],chlo:V_CHLO[$("v_chlo").value],stb:V_STB[$("v_stb").value],alk:$("v_alk").value,cal:$("v_cal").value,notes:$("v_notes").value});
+    if(r.error)return flash("err",r.error);
+    saving=true;syncBusy();flash("","");
+    var base="/v1/customers/"+encodeURIComponent(id)+"/visits";
+    try{
+      var row=sel?await api(base+"/"+encodeURIComponent(sel),{method:"PUT",body:r.body}):await api(base,{method:"POST",body:r.body});
+      if(nav!==S.nav)return;
+      var badRow=visitRowError(row);if(badRow)throw new Error("Visit was saved but the server returned an invalid record. "+badRow);
+      visits=visitSort(visits.filter(function(v){return String(v.visit_id)!==String(row.visit_id)}).concat([row]));
+      sel=String(row.visit_id);opts();fill(row);flash("msg","Visit saved.");
+    }catch(e){if(nav===S.nav)flash("err",e.message)}
+    finally{saving=false;if(nav===S.nav)syncBusy()}
+  };
+  opts();fill(null);
+}
 /* ---------- backup ---------- */
 function vBackup(){
   app.innerHTML='<div id="flash"></div><div class="card"><h2>Backup / Restore</h2><p class="s">Backup copies only this company\'s data. Restore replaces this company\'s data with the backup file; other companies are not touched.</p>'+

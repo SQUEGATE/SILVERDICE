@@ -118,7 +118,18 @@ public final class TursoDataMigrator {
                         + "ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash, role = 'COMPANY', company_id = excluded.company_id, phone = excluded.phone, email = excluded.email",
                 company.username, hashPassword(company.password), company.id, safe(company.phone), safe(company.email));
 
-        try (PreparedStatement query = master.prepareStatement("SELECT employee_id, first_name, last_name, phone, email, username, password, can_view_customer_details, can_view_customers, can_view_statements, can_view_revenue_summary, can_view_pdf, can_edit_pdf, can_edit_customers, can_edit_statements, allowed_customer_ids, allowed_days FROM employees WHERE company_id = ?")) {
+        boolean hasVisitsPermission;
+        try (ResultSet columns = master.getMetaData().getColumns(null, null, "employees", "can_access_visits")) {
+            hasVisitsPermission = columns.next();
+        }
+        boolean hasSalesQuotePermission;
+        try (ResultSet columns = master.getMetaData().getColumns(null, null, "employees", "can_access_sales_quote")) {
+            hasSalesQuotePermission = columns.next();
+        }
+        try (PreparedStatement query = master.prepareStatement("SELECT employee_id, first_name, last_name, phone, email, username, password, can_view_customer_details, can_view_customers, can_view_statements, can_view_revenue_summary, can_view_pdf, can_edit_pdf, can_edit_customers, can_edit_statements, allowed_customer_ids, allowed_days"
+                + (hasVisitsPermission ? ", can_access_visits" : ", 0 AS can_access_visits")
+                + (hasSalesQuotePermission ? ", can_access_sales_quote" : ", 0 AS can_access_sales_quote")
+                + " FROM employees WHERE company_id = ?")) {
             query.setLong(1, company.id);
             try (ResultSet rows = query.executeQuery()) {
                 while (rows.next()) {
@@ -126,6 +137,8 @@ public final class TursoDataMigrator {
                             .put("canViewCustomerDetails", rows.getInt("can_view_customer_details") == 1)
                             .put("canViewCustomers", rows.getInt("can_view_customers") == 1)
                             .put("canViewStatements", rows.getInt("can_view_statements") == 1)
+                            .put("canAccessVisits", rows.getInt("can_access_visits") == 1)
+                            .put("canAccessSalesQuote", rows.getInt("can_access_sales_quote") == 1)
                             .put("canViewRevenueSummary", rows.getInt("can_view_revenue_summary") == 1)
                             .put("canViewPdf", rows.getInt("can_view_pdf") == 1)
                             .put("canEditPdf", rows.getInt("can_edit_pdf") == 1)
@@ -164,6 +177,30 @@ public final class TursoDataMigrator {
                             companyId, rows.getLong("record_id"), rows.getString("customer_id"), rows.getString("record_date"), rows.getString("type"), rows.getDouble("amount"));
                 }
             }
+            boolean hasVisits;
+            try (ResultSet tables = company.getMetaData().getTables(null, null, "customer_visits", null)) {
+                hasVisits = tables.next();
+            }
+            if (hasVisits) {
+                boolean hasPhoto;
+                try (ResultSet columns = company.getMetaData().getColumns(null, null, "customer_visits", "photo_data")) {
+                    hasPhoto = columns.next();
+                }
+                try (PreparedStatement query = company.prepareStatement("SELECT * FROM customer_visits");
+                     ResultSet rows = query.executeQuery()) {
+                    while (rows.next()) {
+                        turso.execute("INSERT INTO customer_visits (company_id, visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data)"
+                                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                        + " ON CONFLICT(company_id, visit_id) DO UPDATE SET customer_id = excluded.customer_id,"
+                                        + " visited_at = excluded.visited_at, ph = excluded.ph, chlo = excluded.chlo, stb = excluded.stb,"
+                                        + " alk = excluded.alk, cal = excluded.cal, notes = excluded.notes, photo_data = excluded.photo_data",
+                                companyId, rows.getLong("visit_id"), rows.getString("customer_id"), rows.getString("visited_at"),
+                                rows.getString("ph"), rows.getString("chlo"), rows.getString("stb"),
+                                rows.getObject("alk"), rows.getObject("cal"), rows.getString("notes"),
+                                hasPhoto ? rows.getString("photo_data") : "");
+                    }
+                }
+            }
             try (PreparedStatement query = company.prepareStatement("SELECT type_name FROM record_types"); ResultSet rows = query.executeQuery()) {
                 while (rows.next()) {
                     turso.execute("INSERT INTO record_types (company_id, type_name) VALUES (?, ?) ON CONFLICT(company_id, type_name) DO NOTHING", companyId, rows.getString("type_name"));
@@ -175,8 +212,48 @@ public final class TursoDataMigrator {
                             companyId, rows.getString("setting_key"), rows.getString("setting_value"));
                 }
             }
+            migrateSalesQuotes(turso, companyId, company);
         }
         System.out.println("Migrated company " + companyId + " from " + databasePath.getFileName());
+    }
+
+    private static void migrateSalesQuotes(TursoHttpClient turso, long companyId, Connection company)
+            throws SQLException, IOException, InterruptedException {
+        try (ResultSet tables = company.getMetaData().getTables(null, null, "sales_quotes", null)) {
+            if (!tables.next()) return;
+        }
+        long nextId = 1;
+        try (PreparedStatement query = company.prepareStatement("SELECT * FROM sales_quotes");
+             ResultSet rows = query.executeQuery()) {
+            while (rows.next()) {
+                long quoteId = rows.getLong("quote_id");
+                nextId = Math.max(nextId, Math.addExact(quoteId, 1));
+                turso.execute("INSERT INTO sales_quotes (company_id, quote_id, quote_number, customer_id, quote_date,"
+                                + " notes, terms, lines_json, converted_at, created_at, updated_at)"
+                                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                + " ON CONFLICT(company_id, quote_id) DO UPDATE SET quote_number = excluded.quote_number,"
+                                + " customer_id = excluded.customer_id, quote_date = excluded.quote_date, notes = excluded.notes,"
+                                + " terms = excluded.terms, lines_json = excluded.lines_json, converted_at = excluded.converted_at,"
+                                + " created_at = excluded.created_at, updated_at = excluded.updated_at",
+                        companyId, quoteId, rows.getString("quote_number"), rows.getString("customer_id"),
+                        rows.getString("quote_date"), rows.getString("notes"), rows.getString("terms"),
+                        rows.getString("lines_json"), rows.getString("converted_at"),
+                        rows.getString("created_at"), rows.getString("updated_at"));
+            }
+        }
+        boolean hasSequence;
+        try (ResultSet tables = company.getMetaData().getTables(null, null, "sales_quote_sequences", null)) {
+            hasSequence = tables.next();
+        }
+        if (hasSequence) {
+            try (PreparedStatement query = company.prepareStatement("SELECT MAX(next_id) FROM sales_quote_sequences");
+                 ResultSet rows = query.executeQuery()) {
+                if (rows.next()) nextId = Math.max(nextId, rows.getLong(1));
+            }
+        }
+        turso.execute("INSERT INTO sales_quote_sequences(company_id, next_id) VALUES (?, ?)"
+                        + " ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)",
+                companyId, nextId);
     }
 
     private static Path locateCompanyDatabase(String databaseFile, Path masterDirectory) {

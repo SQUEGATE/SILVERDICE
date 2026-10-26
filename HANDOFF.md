@@ -91,6 +91,8 @@ Employee permission flags (stored as JSON in `accounts.permissions_json`, modele
 | `canEditCustomers` | Create/edit/delete customers, reorder routes |
 | `canViewStatements` | Statements, Charged Summary, Record Types (view) |
 | `canEditStatements` | Add/delete records, Monthly Statement, record type changes |
+| `canAccessVisits` | Visits tab: search assigned customers, view/add/edit visits. Opt-in for employees; existing employees do not get it automatically. |
+| `canAccessSalesQuote` | Sales Quote tab: prepare/save/edit/delete quotes and export quotation PDFs for assigned customers. Off by default for employees. Conversion additionally requires `canEditStatements`. |
 | `canViewRevenueSummary` | Revenue Summary |
 | `canViewPdf` | View PDF settings and generate statements |
 | `canEditPdf` | Change PDF settings |
@@ -137,10 +139,39 @@ Choose a credit type. The app adds a record to **every Active customer** using t
 - **Desktop:** `runMonthlyStatement()`
 - **Web:** `vMonthly()`
 
+### Visits (desktop and web)
+- Open **Visits**, search customers and/or filter by service day, then select a customer.
+- The visit page displays the customer's name and the live current date/time. **Past visits** lists saved visits newest-first; selecting one fills the form for editing. **New Visit** clears the form.
+- Sliders have fixed choices: PH `7.0, 7.2, 7.4, 7.6, 7.8, 8.0`; CHLO `1-2, 2-4, 3-6, 5-10, 7.5-15, 10-20`; STB `100, 90, 80, 70, 60, 50, 40, 30`. New forms start at PH 7.4, CHLO 3-6, STB 50; these are initial selections, not recommended values.
+- ALK and CAL are optional; blank values are stored as SQL NULL, not zero. When provided, each must be a positive whole number from 1 through 2147483647. Notes allow up to 16000 characters.
+- Each visit can have **one optional photo**, saved with the visit. Upload/replace/remove the photo, then press **Save**. Selecting a past visit restores its photo along with its readings.
+- Select a saved entry in **Past visits**, then press **Delete Visit** and confirm to permanently remove that visit and its photo. Delete is disabled for unsaved New Visit forms. The existing Visits employee permission includes deletion, scoped to assigned customers. Other devices see the deletion when they reload the customer's visits.
+- **Web:** **Take Photo** requests the device camera using a file input with `capture="environment"`; the browser/device controls which capture interface opens (the app cannot force a preferred camera app). **Upload Photo** uses the normal file chooser. Unsupported formats such as HEIC on browsers that cannot decode them produce an error; use JPEG or PNG instead.
+- **Desktop:** **Upload Photo** only, as requested. Choose PNG/JPEG (up to 25 MB). `VisitPhoto.java` reads, scales, and compresses the image. Both apps resize photos to at most 1280 pixels on the longest side and compress them to a JPEG data URL within 600000 characters. This is a resized copy, not archival storage of the original file.
+- Photos are stored in `customer_visits.photo_data`, shared with authorized devices, and included in cloud backups. Existing visits without photos continue to work. Visit writes allow up to 700 KB. A PUT from an older client that omits `photo_data` preserves the existing photo; an explicit empty string removes it.
+- Recommended values are shown only for STB (50-100), ALK (70-120), and CAL (250-500), as requested.
+- **Save** creates a visit with the server's UTC timestamp (local desktop mode uses the computer's clock). Saving a selected past visit updates that record without changing its original date/time. Both apps display timestamps in the device's local timezone.
+- Employee editors include a **Visits** permission, initially off. It grants viewing, adding, and editing visits only for customers allowed by the employee's customer/day assignments. It does not grant billing or customer editing rights. Employees should sign out and back in after permissions change.
+- Visits are shared through the API, not pushed live: reopen Visits/select the customer again to load another device's changes. Cloud backups include visits; restoring an older backup without visits replaces visit history with an empty history.
+- Desktop implementation: `VisitsPanel.java` owns the asynchronous search/form/history UI; `VisitRecord.java` defines choices and validation; `DatabaseManager.getVisits/saveVisit` handles local SQLite and remote API persistence.
+
 ### 4.6 Charged Summary
 Lists Active customers with a balance above $0.00, highest first, with a total.
 - **Desktop:** `refreshChargedSummary()`
 - **Web:** `vCharged()`
+
+### Sales Quote (desktop and web)
+- Open **Sales Quote**, search customers and/or filter by service day, then select a customer. Each customer can have multiple saved quotes.
+- Quotes reuse the statement record types and credit/debit classification but keep their own dated description/price lines. Saving a quote alone does **not** add statement entries or change the customer's balance.
+- Add/remove/edit lines and notes, then save. The system assigns a company-scoped quote number in the form `SQ-000001`; deleting a quote does not make its number available for reuse.
+- Generate a quotation PDF based on the supplied sample: company header/logo, **SALES QUOTATION** title, quote number, customer address block, notes, Date / Description / Price rows, total, advance-payment message, and payment methods. Company details/logo/payment instructions come from PDF settings. No quantity, tax, or expiration fields were requested.
+- **Convert to Statement** is an explicit, confirmed action for an accepted, saved quote. It copies its dated signed lines into the customer's statement exactly once. Repeating conversion is rejected instead of duplicating entries.
+- Company accounts can convert quotes. An employee must have **both Sales Quote and Edit Statement Data** permissions, and access to that customer.
+- Converted quotes become **read-only** and cannot be deleted; PDF export remains available. Conversion does not process a payment or collect money.
+- Save line/form changes before exporting or converting: a numbered saved quote, not an unsaved draft, is the source of both operations. Conversion preserves the stored sign/date and uses `type: description` for the statement description (or just the type when description is empty or identical).
+- Quote data is shared through the API and included in company backups. Other devices see updates after reopening/reloading the customer's quotes, not by live push.
+- Limits: 1-200 lines, nonzero prices up to 999999999.99 in absolute value with at most two decimal places; notes and terms up to 16000 characters each. Quote create/update bodies allow up to 2 MiB. Combined company backup restore retains its separate 50 MiB cap.
+- Regression checks: run the canonical desktop `.\gradlew.bat test`, and from `cloudflare\worker` run `node --test test\quotes.sqlite.test.js test\quotes-web.test.js`. These cover stored quotes, numbering, permissions, conversion/retries/rollback, API contracts, PDF content/pagination, and form behavior.
 
 ### 4.7 Revenue Summary
 Sum of `amount_charged` for non-inactive customers, grouped by service day, with a grand total.
@@ -255,6 +286,7 @@ Package root: `src/main/java/com/poolapp/`
 |---|---|
 | `DatabaseManager.java` | **Per-company data access.** Every public method (customers, statements, record types, PDF settings, revenue, reorder, backup) has two branches: **remote** (calls the Worker through `CompManagerApiClient`) and **local** (JDBC against a SQLite file). Local mode creates and migrates tables in `initializeDatabase` and `addColumnIfMissing`. Statement records are sorted by `parseRecordDate` (MM/DD/YYYY). |
 | `MasterDatabaseManager.java` | **Accounts and companies.** Login (`authenticateMaster/Company/Employee`, which call `/v1/auth/login` in cloud mode), company CRUD, employee CRUD, and creating `DatabaseManager`s for a company or for an employee preview. Local mode keeps a `master.db`. |
+| `SalesQuoteStore.java` | Quotation persistence and once-only conversion to statement records, using local SQLite or the authenticated API client exposed by `DatabaseManager.getApiClient()`. |
 | `CompManagerApiClient.java` | Minimal HTTP JSON client (GET/POST/PUT/DELETE with Bearer token). Turns API `{error}` responses into exceptions. |
 | `AppApiConfiguration.java` | Resolves the API URL. Precedence: env `COMP_MANAGER_API_URL`, then system property `comp.manager.api.url`, then `config.properties` (packaged), `./config.properties`, and `%USERPROFILE%\.compmanager\config.properties`. `getWebAppUrl()` is used for the phone link. |
 | `TursoHttpClient.java` | Direct Turso HTTP client, used **only** by the migrator. |
@@ -265,6 +297,7 @@ Package root: `src/main/java/com/poolapp/`
 |---|---|
 | `Customer.java` | Customer fields: id, names, address, city/state/zip, phone, email, serviceDay, amountCharged, notes, startingDate, status, routeOrder. |
 | `StatementRecord.java` | id, date (MM/DD/YYYY string), type, amount (`BigDecimal`). |
+| `SalesQuote.java` | Saved quotation identity/number, date, customer, notes, payment terms, signed line items, and conversion/creation/update timestamps. |
 | `CompanyProfile.java` | Company id, name, contact info, username, local DB path. |
 | `EmployeeProfile.java` | Employee identity, permission flags, allowed customers and days, API session token. |
 | `PdfSettings.java` | All PDF settings: fonts, colors, margins, offsets, company info, footer, logo path/size/show, `paymentInfo`, `logoData`, page size, landscape. |
@@ -275,6 +308,7 @@ Package root: `src/main/java/com/poolapp/`
 | `service/AppPackageGenerator.java` | Behind the master's **Generate App ZIP** button. Locates the project, runs `gradlew packageAppImage` into a temp build folder, verifies `Comp Manager.exe` exists, then zips the app image to `Downloads\Comp-Manager-cloud-test-<timestamp>.zip`, retrying if antivirus locks files. Requires the source checkout on that PC. |
 | `service/EmailService.java` | Opens a new Outlook message (classic `outlook.exe` or new `olk.exe`) with the PDF attached. SMTP settings in `config.properties` are legacy. |
 | `service/SmsService.java` | Opens the Windows `sms:` handler, or falls back to Google Messages for Web, with a text summary (no attachment). |
+| `service/SalesQuotePdf.java` | PDFBox quotation export based on the supplied sample, including the company logo/header, quote/customer details, line table, totals, advance-payment terms, and payment instructions. |
 | `update/UpdateChecker.java` | On startup, checks GitHub Releases of `update.repo` (`SQUEGATE/SILVERDICE`) and offers to open the download if a newer version exists. Skipped when not running from a packaged jar. |
 
 ---
@@ -307,18 +341,24 @@ Package root: `src/main/java/com/poolapp/`
 | `GET/POST /v1/admin/companies/:id/employees` | master or that company | List or save employees. |
 | `DELETE /v1/admin/employees/:id` | master or that company | Delete an employee. |
 | `POST /v1/companies/employees/:id/session` | company | Employee preview token ("view as employee"). |
-| `GET /v1/customers[?q=&order=id]` | view customers | List, sorted by day then route order. Also **self-heals** route orders to 1..N (`healRouteOrders`). |
+| `GET /v1/customers[?q=&order=id]` | customer view permissions, visits, or sales quote | List, sorted by day then route order. Also **self-heals** route orders to 1..N (`healRouteOrders`). |
 | `GET /v1/customers/next-id` | view customers | Next numeric customer ID. |
 | `POST /v1/customers/reorder` | edit customers | `{service_day, customer_ids[]}` → sets route_order 1..N. |
 | `POST /v1/customers`, `PUT/DELETE /v1/customers/:id`, `GET /v1/customers/:id` | edit/view | Customer CRUD. Create and update call `placeInRoute` so the Order field and route stay consistent. Delete cascades the customer's statement records. |
 | `GET /v1/customers/:id/balance` | view statements | Sum of amounts. |
 | `GET/POST /v1/customers/:id/statements` | view/edit statements | List or add records. |
+| `GET/POST /v1/customers/:id/visits` | visits | Newest-first history or create a visit; creation time comes from the server. |
+| `PUT /v1/customers/:id/visits/:visitId` | visits | Update readings/notes, preserving the original timestamp. Every visit operation enforces company and customer assignments. |
+| `DELETE /v1/customers/:id/visits/:visitId` | visits | Permanently delete the selected visit and its photo. Company and customer assignment restrictions apply; missing visits return 404. |
+| `GET/POST /v1/customers/:id/quotes` | sales quote | List a customer's saved quotations or create a numbered quote. |
+| `PUT/DELETE /v1/customers/:id/quotes/:quoteId` | sales quote | Edit/delete an unconverted quote; converted quotes are locked. |
+| `POST /v1/customers/:id/quotes/:quoteId/convert` | sales quote + edit statements (company accounts allowed) | Atomically copy quote lines to the statement once and lock the quotation. |
 | `DELETE /v1/statements/:id` | edit statements | Delete a record. |
-| `GET /v1/record-types`, `POST`/`PUT`/`DELETE` | view/edit statements | Manage types (rename updates existing records). |
+| `GET /v1/record-types`, `POST`/`PUT`/`DELETE` | view statements or sales quote for GET; edit statements for writes | Manage types (rename updates existing records). Quotation access alone never grants type editing. |
 | `GET /v1/statement-types` | view statements | Distinct types in use. |
 | `POST /v1/statement-types/normalize` | edit statements | Force a type's amounts positive or negative. |
 | `GET /v1/revenue` | revenue | Sum of charges by service day. |
-| `GET/PUT /v1/settings` | view/edit PDF | PDF settings key/value. Values are limited to 16,000 chars, except `logoData` (600,000 chars, PNG/JPEG data URL only). Settings requests may be up to 700 KB. |
+| `GET/PUT /v1/settings` | view PDF or sales quote for GET; edit PDF for PUT | PDF settings key/value. Values are limited to 16,000 chars, except `logoData` (600,000 chars, PNG/JPEG data URL only). Settings requests may be up to 700 KB. Quotation access needs read-only settings for company branding and credit/debit rules. |
 | `GET /v1/backup`, `POST /v1/backup/restore` | company manager | JSON export / full replace. |
 
 **Helper functions:**
@@ -374,6 +414,9 @@ Script sections, in order:
 | `accounts` | `account_id` | username (unique), password_hash (PBKDF2), role (MASTER/COMPANY/EMPLOYEE), company_id, employee_id, names, phone, email, `permissions_json`, `allowed_customer_ids_json`, `allowed_days_json` |
 | `customers` | (`company_id`, `customer_id`) | names, address, city, state, zip, phone, email, service_day, amount_charged, notes, starting_date, status, **route_order** (added at runtime) |
 | `statement_records` | (`company_id`, `record_id`) | customer_id, record_date (MM/DD/YYYY text), type, amount (+charge / −payment) |
+| `customer_visits` | (`company_id`, `visit_id`) | customer_id, visited_at (UTC ISO timestamp), ph, chlo, stb, nullable alk/cal, notes, photo_data (PNG/JPEG data URL or empty string). Created/migrated automatically for existing databases, preserving saved visits when ALK/CAL become nullable. Local company SQLite uses visit_id as its primary key. |
+| `sales_quotes` | (`company_id`, `quote_id`) | quote_number, customer_id, quote_date (MM/DD/YYYY), notes, terms, lines_json, converted_at (NULL until converted), created_at, updated_at. |
+| `sales_quote_sequences` | `company_id` | next_id, a durable company-specific high watermark so quote numbers are not reused after deletion. |
 | `record_types` | (`company_id`, `type_name`) | — |
 | `pdf_settings` | (`company_id`, `setting_key`) | setting_value. Keys include companyName, companyAddress, companyPhone, companyEmail, footerText, showGenerationDate, paymentInfo, logoPath, logoData, showLogo, logoWidth, logoHeight, fonts, colors, margins, offsets, pageSize, landscape, recordTypeCreditKeywords, recordTypeDebitKeywords. |
 
@@ -399,6 +442,7 @@ Every company-scoped query filters by `company_id` taken from the **signed sessi
 ### Desktop
 - **Requirements:** JDK 17 (installed at `C:\Program Files\Java\jdk-17`). The Gradle wrapper downloads Gradle 9.2.
 - **Compile:** `.\gradlew.bat compileJava`
+- **Visits regression tests:** `.\gradlew.bat test` (JUnit validation, real SQLite persistence, and headless Swing form flows). If OneDrive locks build output, supply `-PverificationBuildDir=<absolute temporary directory outside OneDrive>`.
 - **Run from source:** `.\gradlew.bat run`, or in VS Code use the **Starter** launch config.
   - `.vscode/settings.json` pins VS Code's Java to JDK 17.
   - If you ever see `UnsupportedClassVersionError (class file version 69)`, delete the `bin` folder and run *Java: Clean Java Language Server Workspace*.

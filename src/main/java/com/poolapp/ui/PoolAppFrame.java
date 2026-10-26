@@ -85,6 +85,8 @@ public class PoolAppFrame extends JFrame {
     private final JTable customerTable;
     private final JTextArea revenueArea;
     private final JPanel cardPanel;
+    private VisitsPanel visitsPanel;
+    private SalesQuotesPanel salesQuotesPanel;
     private final JPanel miniTabsPanel;
     private final List<String> favoriteIds = new ArrayList<>();
     private final Map<String, JButton> starButtons = new java.util.HashMap<>();
@@ -208,8 +210,8 @@ public class PoolAppFrame extends JFrame {
         currentStatementRecords = new ArrayList<>();
         activeRecordCustomerId = "";
         customersById = new ArrayList<>();
-        pdfSettings = loadPdfSettings();
-        syncEmbeddedLogo(pdfSettings);
+        pdfSettings = canAccessScreen("PDF") ? loadPdfSettings() : new PdfSettings();
+        if (canEditPdfData()) syncEmbeddedLogo(pdfSettings);
         loadRecordTypeKeywords();
 
         ((AbstractDocument) zipField.getDocument()).setDocumentFilter(new DigitFilter(10));
@@ -670,6 +672,10 @@ public class PoolAppFrame extends JFrame {
         JButton customerDetailsButton = new JButton("Customer Details");
         JButton customersButton = new JButton("Customers");
         JButton statementsButton = new JButton("Statements");
+        JButton visitsButton = new JButton("Visits");
+        JButton salesQuoteButton = new JButton("Sales Quote");
+        salesQuoteButton.setFont(salesQuoteButton.getFont().deriveFont(Font.BOLD, 14f));
+        visitsButton.setFont(visitsButton.getFont().deriveFont(Font.BOLD, 14f));
         JButton revenueSummaryButton = new JButton("Revenue Summary");
         JButton pdfButton = new JButton("PDF");
         JButton employeesButton = new JButton("Employees");
@@ -684,6 +690,16 @@ public class PoolAppFrame extends JFrame {
         }
         if (canAccessScreen("Customers")) {
             navigationPanel.add(withStar("Customers", customersButton));
+        }
+        if (canAccessScreen("Visits")) {
+            navigationPanel.add(withStar("Visits", visitsButton));
+            visitsPanel = new VisitsPanel(dbManager, this::canAccessCustomer);
+            cardPanel.add(visitsPanel, "Visits");
+        }
+        if (canAccessScreen("SalesQuote")) {
+            navigationPanel.add(withStar("SalesQuote", salesQuoteButton));
+            salesQuotesPanel = new SalesQuotesPanel(dbManager, this::canAccessCustomer, canEditStatementData());
+            cardPanel.add(salesQuotesPanel, "SalesQuote");
         }
         if (canAccessScreen("Statements")) {
             navigationPanel.add(withStar("Statements", statementsButton));
@@ -756,6 +772,8 @@ public class PoolAppFrame extends JFrame {
         customerDetailsButton.addActionListener(e -> showScreen("CustomerDetails"));
         customersButton.addActionListener(e -> showScreen("Customers"));
         statementsButton.addActionListener(e -> showScreen("Statements"));
+        visitsButton.addActionListener(e -> showScreen("Visits"));
+        salesQuoteButton.addActionListener(e -> showScreen("SalesQuote"));
         revenueSummaryButton.addActionListener(e -> showScreen("RevenueSummary"));
         pdfButton.addActionListener(e -> showScreen("PDF"));
         employeesButton.addActionListener(e -> showScreen("Employees"));
@@ -808,6 +826,8 @@ public class PoolAppFrame extends JFrame {
         if ("Employees".equals(screenName)) {
             refreshEmployeesScreen();
         }
+        if ("Visits".equals(screenName)) visitsPanel.refresh();
+        if ("SalesQuote".equals(screenName)) salesQuotesPanel.refresh();
         CardLayout layout = (CardLayout) cardPanel.getLayout();
         layout.show(cardPanel, screenName);
         
@@ -828,7 +848,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private static final String[][] FAVORITE_ITEMS = {
-        {"CustomerDetails", "Customer Details"}, {"Customers", "Customers"}, {"Statements", "Statements"},
+        {"CustomerDetails", "Customer Details"}, {"Customers", "Customers"}, {"Visits", "Visits"}, {"SalesQuote", "Sales Quote"}, {"Statements", "Statements"},
         {"MonthlyStatement", "Monthly Statement"}, {"ChargedSummary", "Charged Summary"},
         {"RevenueSummary", "Revenue Summary"}, {"PDF", "PDF"}, {"Employees", "Employees"}
     };
@@ -1243,6 +1263,10 @@ public class PoolAppFrame extends JFrame {
                 return employeeProfile.isCanViewCustomers();
             case "Statements":
                 return employeeProfile.isCanViewStatements();
+            case "Visits":
+                return employeeProfile.isCanAccessVisits();
+            case "SalesQuote":
+                return employeeProfile.isCanAccessSalesQuote();
             case "RevenueSummary":
                 return employeeProfile.isCanViewRevenueSummary();
             case "PDF":
@@ -1257,7 +1281,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private String getDefaultAccessibleScreen() {
-        String[] screens = {"CustomerDetails", "Customers", "Statements", "RevenueSummary", "PDF", "Employees"};
+        String[] screens = {"CustomerDetails", "Customers", "Visits", "SalesQuote", "Statements", "RevenueSummary", "PDF", "Employees"};
         for (String screen : screens) {
             if (canAccessScreen(screen)) {
                 return screen;
@@ -3168,6 +3192,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void setNewCustomerId() {
+        if (!canAccessScreen("CustomerDetails") && !canAccessScreen("Customers")) return;
         idField.setText(dbManager.getNextCustomerId());
     }
 
@@ -3481,6 +3506,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void loadRecordTypesFromDatabase() {
+        if (!canAccessScreen("Statements")) return;
         try {
             dbManager.ensureDefaultTypes();
             List<String> types = dbManager.getRecordTypes();
@@ -3541,6 +3567,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private List<String> loadKeywordList(String settingKey, List<String> defaults) {
+        if (!canAccessScreen("PDF")) return defaults;
         String defaultValue = String.join(", ", defaults);
         String savedValue = dbManager.getPdfSetting(settingKey, defaultValue);
         return parseKeywordList(savedValue, defaults);
@@ -3592,6 +3619,8 @@ public class PoolAppFrame extends JFrame {
         employee.setCanViewCustomerDetails(source.isCanViewCustomerDetails());
         employee.setCanViewCustomers(source.isCanViewCustomers());
         employee.setCanViewStatements(source.isCanViewStatements());
+        employee.setCanAccessVisits(source.isCanAccessVisits());
+        employee.setCanAccessSalesQuote(source.isCanAccessSalesQuote());
         employee.setCanViewRevenueSummary(source.isCanViewRevenueSummary());
         employee.setCanViewPdf(source.isCanViewPdf());
         employee.setCanEditPdf(source.isCanEditPdf());
@@ -3835,6 +3864,8 @@ public class PoolAppFrame extends JFrame {
         private final JCheckBox customerDetailsCheck;
         private final JCheckBox customersCheck;
         private final JCheckBox statementsCheck;
+        private final JCheckBox visitsCheck;
+        private final JCheckBox salesQuoteCheck;
         private final JCheckBox revenueCheck;
         private final JCheckBox pdfCheck;
         private final JCheckBox editPdfCheck;
@@ -3868,6 +3899,8 @@ public class PoolAppFrame extends JFrame {
             customerDetailsCheck = new JCheckBox("Customer Details", employeeProfile.isCanViewCustomerDetails());
             customersCheck = new JCheckBox("Customers", employeeProfile.isCanViewCustomers());
             statementsCheck = new JCheckBox("Statements", employeeProfile.isCanViewStatements());
+            visitsCheck = new JCheckBox("Visits (view, add, and edit visits)", employeeProfile.isCanAccessVisits());
+            salesQuoteCheck = new JCheckBox("Sales Quote", employeeProfile.isCanAccessSalesQuote());
             revenueCheck = new JCheckBox("Revenue Summary", employeeProfile.isCanViewRevenueSummary());
             pdfCheck = new JCheckBox("PDF", employeeProfile.isCanViewPdf());
             editPdfCheck = new JCheckBox("Can Edit PDF Settings", employeeProfile.isCanEditPdf());
@@ -3915,6 +3948,8 @@ public class PoolAppFrame extends JFrame {
             permissionsPanel.add(customerDetailsCheck);
             permissionsPanel.add(customersCheck);
             permissionsPanel.add(statementsCheck);
+            permissionsPanel.add(visitsCheck);
+            permissionsPanel.add(salesQuoteCheck);
             permissionsPanel.add(revenueCheck);
             permissionsPanel.add(pdfCheck);
             permissionsPanel.add(editPdfCheck);
@@ -4041,6 +4076,8 @@ public class PoolAppFrame extends JFrame {
             employeeProfile.setCanViewCustomerDetails(customerDetailsCheck.isSelected());
             employeeProfile.setCanViewCustomers(customersCheck.isSelected());
             employeeProfile.setCanViewStatements(statementsCheck.isSelected());
+            employeeProfile.setCanAccessVisits(visitsCheck.isSelected());
+            employeeProfile.setCanAccessSalesQuote(salesQuoteCheck.isSelected());
             employeeProfile.setCanViewRevenueSummary(revenueCheck.isSelected());
             employeeProfile.setCanViewPdf(pdfCheck.isSelected());
             employeeProfile.setCanEditPdf(editPdfCheck.isSelected());

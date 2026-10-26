@@ -17,6 +17,7 @@ dependencies {
     implementation 'org.apache.pdfbox:pdfbox:3.0.1'
     implementation 'com.sun.mail:jakarta.mail:2.0.1'
     implementation 'org.json:json:20240303'
+    testImplementation 'junit:junit:4.13.2'
 }
 
 // Version is read at runtime via getPackage().getImplementationVersion() for the update checker.
@@ -34,6 +35,10 @@ application {
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)
+    }
+
+    tasks.named('test') {
+        systemProperty 'java.awt.headless', 'true'
     }
 }
 

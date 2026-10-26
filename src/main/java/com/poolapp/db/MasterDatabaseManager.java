@@ -149,6 +149,8 @@ public class MasterDatabaseManager {
             employee.setCanViewCustomerDetails(permissions.optBoolean("canViewCustomerDetails"));
             employee.setCanViewCustomers(permissions.optBoolean("canViewCustomers"));
             employee.setCanViewStatements(permissions.optBoolean("canViewStatements"));
+            employee.setCanAccessVisits(permissions.optBoolean("canAccessVisits"));
+            employee.setCanAccessSalesQuote(permissions.optBoolean("canAccessSalesQuote"));
             employee.setCanViewRevenueSummary(permissions.optBoolean("canViewRevenueSummary"));
             employee.setCanViewPdf(permissions.optBoolean("canViewPdf"));
             employee.setCanEditPdf(permissions.optBoolean("canEditPdf"));
@@ -224,6 +226,8 @@ public class MasterDatabaseManager {
                     + "can_view_customer_details INTEGER NOT NULL DEFAULT 1,"
                     + "can_view_customers INTEGER NOT NULL DEFAULT 1,"
                     + "can_view_statements INTEGER NOT NULL DEFAULT 1,"
+                    + "can_access_visits INTEGER NOT NULL DEFAULT 0,"
+                    + "can_access_sales_quote INTEGER NOT NULL DEFAULT 0,"
                     + "can_view_revenue_summary INTEGER NOT NULL DEFAULT 0,"
                     + "can_view_pdf INTEGER NOT NULL DEFAULT 0,"
                         + "can_edit_pdf INTEGER NOT NULL DEFAULT 0,"
@@ -237,6 +241,8 @@ public class MasterDatabaseManager {
                         addColumnIfMissing(connection, "employees", "can_edit_pdf", "INTEGER NOT NULL DEFAULT 0");
             addColumnIfMissing(connection, "employees", "can_edit_customers", "INTEGER NOT NULL DEFAULT 0");
             addColumnIfMissing(connection, "employees", "can_edit_statements", "INTEGER NOT NULL DEFAULT 0");
+            addColumnIfMissing(connection, "employees", "can_access_visits", "INTEGER NOT NULL DEFAULT 0");
+            addColumnIfMissing(connection, "employees", "can_access_sales_quote", "INTEGER NOT NULL DEFAULT 0");
         } catch (SQLException e) {
             throw new RuntimeException("Failed to initialize master database", e);
         }
@@ -347,6 +353,8 @@ public class MasterDatabaseManager {
                 employee.setCanViewCustomerDetails(permissions.optBoolean("canViewCustomerDetails"));
                 employee.setCanViewCustomers(permissions.optBoolean("canViewCustomers"));
                 employee.setCanViewStatements(permissions.optBoolean("canViewStatements"));
+                employee.setCanAccessVisits(permissions.optBoolean("canAccessVisits"));
+                employee.setCanAccessSalesQuote(permissions.optBoolean("canAccessSalesQuote"));
                 employee.setCanViewRevenueSummary(permissions.optBoolean("canViewRevenueSummary"));
                 employee.setCanViewPdf(permissions.optBoolean("canViewPdf"));
                 employee.setCanEditPdf(permissions.optBoolean("canEditPdf"));
@@ -358,7 +366,7 @@ public class MasterDatabaseManager {
             return employee;
         }
         String sql = "SELECT e.employee_id, e.company_id, c.company_name, c.database_file, e.first_name, e.last_name, e.phone, e.email, e.username, e.password, "
-            + "e.can_view_customer_details, e.can_view_customers, e.can_view_statements, e.can_view_revenue_summary, e.can_view_pdf, e.can_edit_pdf, e.can_edit_customers, e.can_edit_statements, "
+            + "e.can_view_customer_details, e.can_view_customers, e.can_view_statements, e.can_access_visits, e.can_access_sales_quote, e.can_view_revenue_summary, e.can_view_pdf, e.can_edit_pdf, e.can_edit_customers, e.can_edit_statements, "
                 + "e.allowed_customer_ids, e.allowed_days "
                 + "FROM employees e "
                 + "JOIN companies c ON c.company_id = e.company_id "
@@ -532,7 +540,7 @@ public class MasterDatabaseManager {
             return employees;
         }
         String sql = "SELECT e.employee_id, e.company_id, c.company_name, c.database_file, e.first_name, e.last_name, e.phone, e.email, e.username, e.password, "
-            + "e.can_view_customer_details, e.can_view_customers, e.can_view_statements, e.can_view_revenue_summary, e.can_view_pdf, e.can_edit_pdf, e.can_edit_customers, e.can_edit_statements, "
+            + "e.can_view_customer_details, e.can_view_customers, e.can_view_statements, e.can_access_visits, e.can_access_sales_quote, e.can_view_revenue_summary, e.can_view_pdf, e.can_edit_pdf, e.can_edit_customers, e.can_edit_statements, "
                 + "e.allowed_customer_ids, e.allowed_days "
                 + "FROM employees e JOIN companies c ON c.company_id = e.company_id WHERE e.company_id = ? ORDER BY e.employee_id";
         List<EmployeeProfile> employees = new ArrayList<>();
@@ -555,6 +563,8 @@ public class MasterDatabaseManager {
                 .put("canViewCustomerDetails", employee.isCanViewCustomerDetails())
                 .put("canViewCustomers", employee.isCanViewCustomers())
                 .put("canViewStatements", employee.isCanViewStatements())
+                .put("canAccessVisits", employee.isCanAccessVisits())
+                .put("canAccessSalesQuote", employee.isCanAccessSalesQuote())
                 .put("canViewRevenueSummary", employee.isCanViewRevenueSummary())
                 .put("canViewPdf", employee.isCanViewPdf())
                 .put("canEditPdf", employee.isCanEditPdf())
@@ -576,7 +586,7 @@ public class MasterDatabaseManager {
             return;
         }
         if (employee.getEmployeeId() == null) {
-            String sql = "INSERT INTO employees (company_id, first_name, last_name, phone, email, username, password, can_view_customer_details, can_view_customers, can_view_statements, can_view_revenue_summary, can_view_pdf, can_edit_pdf, can_edit_customers, can_edit_statements, allowed_customer_ids, allowed_days) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            String sql = "INSERT INTO employees (company_id, first_name, last_name, phone, email, username, password, can_view_customer_details, can_view_customers, can_view_statements, can_access_visits, can_access_sales_quote, can_view_revenue_summary, can_view_pdf, can_edit_pdf, can_edit_customers, can_edit_statements, allowed_customer_ids, allowed_days) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
                 bindEmployee(statement, employee, false);
                 statement.executeUpdate();
@@ -589,7 +599,7 @@ public class MasterDatabaseManager {
                 throw new RuntimeException("Unable to create employee", e);
             }
         } else {
-            String sql = "UPDATE employees SET first_name = ?, last_name = ?, phone = ?, email = ?, username = ?, password = ?, can_view_customer_details = ?, can_view_customers = ?, can_view_statements = ?, can_view_revenue_summary = ?, can_view_pdf = ?, can_edit_pdf = ?, can_edit_customers = ?, can_edit_statements = ?, allowed_customer_ids = ?, allowed_days = ? WHERE employee_id = ? AND company_id = ?";
+            String sql = "UPDATE employees SET first_name = ?, last_name = ?, phone = ?, email = ?, username = ?, password = ?, can_view_customer_details = ?, can_view_customers = ?, can_view_statements = ?, can_access_visits = ?, can_access_sales_quote = ?, can_view_revenue_summary = ?, can_view_pdf = ?, can_edit_pdf = ?, can_edit_customers = ?, can_edit_statements = ?, allowed_customer_ids = ?, allowed_days = ? WHERE employee_id = ? AND company_id = ?";
             try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
                 int index = 1;
                 statement.setString(index++, employee.getFirstName());
@@ -601,6 +611,8 @@ public class MasterDatabaseManager {
                 statement.setInt(index++, employee.isCanViewCustomerDetails() ? 1 : 0);
                 statement.setInt(index++, employee.isCanViewCustomers() ? 1 : 0);
                 statement.setInt(index++, employee.isCanViewStatements() ? 1 : 0);
+                statement.setInt(index++, employee.isCanAccessVisits() ? 1 : 0);
+                statement.setInt(index++, employee.isCanAccessSalesQuote() ? 1 : 0);
                 statement.setInt(index++, employee.isCanViewRevenueSummary() ? 1 : 0);
                 statement.setInt(index++, employee.isCanViewPdf() ? 1 : 0);
                 statement.setInt(index++, employee.isCanEditPdf() ? 1 : 0);
@@ -644,6 +656,8 @@ public class MasterDatabaseManager {
         statement.setInt(index++, employee.isCanViewCustomerDetails() ? 1 : 0);
         statement.setInt(index++, employee.isCanViewCustomers() ? 1 : 0);
         statement.setInt(index++, employee.isCanViewStatements() ? 1 : 0);
+        statement.setInt(index++, employee.isCanAccessVisits() ? 1 : 0);
+        statement.setInt(index++, employee.isCanAccessSalesQuote() ? 1 : 0);
         statement.setInt(index++, employee.isCanViewRevenueSummary() ? 1 : 0);
         statement.setInt(index++, employee.isCanViewPdf() ? 1 : 0);
         statement.setInt(index++, employee.isCanEditPdf() ? 1 : 0);
@@ -671,6 +685,8 @@ public class MasterDatabaseManager {
         employee.setCanViewCustomerDetails(resultSet.getInt("can_view_customer_details") == 1);
         employee.setCanViewCustomers(resultSet.getInt("can_view_customers") == 1);
         employee.setCanViewStatements(resultSet.getInt("can_view_statements") == 1);
+        employee.setCanAccessVisits(resultSet.getInt("can_access_visits") == 1);
+        employee.setCanAccessSalesQuote(resultSet.getInt("can_access_sales_quote") == 1);
         employee.setCanViewRevenueSummary(resultSet.getInt("can_view_revenue_summary") == 1);
         employee.setCanViewPdf(resultSet.getInt("can_view_pdf") == 1);
         employee.setCanEditPdf(resultSet.getInt("can_edit_pdf") == 1);

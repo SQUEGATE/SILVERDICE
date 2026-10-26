@@ -12,6 +12,8 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 
 public final class CompManagerApiClient {
+    private static final HttpClient SHARED_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10)).build();
     private final String baseUrl;
     private final String token;
     private final HttpClient httpClient;
@@ -24,12 +26,14 @@ public final class CompManagerApiClient {
         if (baseUrl == null || baseUrl.isBlank()) throw new IllegalArgumentException("API base URL is required");
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.token = token;
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        this.httpClient = SHARED_CLIENT;
     }
 
     public Object get(String path) {
         return request("GET", path, null);
     }
+
+    public String getBaseUrl() { return baseUrl; }
 
     public Object post(String path, JSONObject body) {
         return request("POST", path, body);

@@ -144,20 +144,37 @@ public final class StatementReaderStore {
     private List<PreviewRow> localPreview(String documentHash, List<StatementPdfReader.SourceRow> rows,
                                           List<Customer> customers) {
         List<Customer> accessible = customers == null ? List.of() : customers;
+        List<CustomerName> names = accessible.stream().map(StatementReaderStore::prepareName).toList();
         int year = LocalDate.now(clock).getYear();
         List<PreviewRow> results = new ArrayList<>();
         Set<String> fingerprintsInDocument = new HashSet<>();
         try (Connection connection = localConnection()) {
             boolean hasAudit = auditTableExists(connection);
+            Set<String> importedSources = new HashSet<>();
+            Set<String> importedReferences = new HashSet<>();
+            if (hasAudit) try (Statement query = connection.createStatement();
+                              ResultSet audit = query.executeQuery("SELECT document_hash, source_id, reference FROM reader_imports")) {
+                while (audit.next()) {
+                    if (documentHash.equals(audit.getString("document_hash"))) importedSources.add(audit.getString("source_id"));
+                    String reference = audit.getString("reference");
+                    if (reference != null) importedReferences.add(reference.trim().toUpperCase(Locale.ROOT));
+                }
+            }
+            Set<String> existingPayments = new HashSet<>();
+            try (Statement query = connection.createStatement();
+                 ResultSet payments = query.executeQuery("SELECT customer_id, record_date, amount FROM statement_records WHERE amount < 0")) {
+                while (payments.next()) existingPayments.add(payments.getString("customer_id") + "|" + payments.getString("record_date")
+                        + "|" + BigDecimal.valueOf(payments.getDouble("amount")).negate().setScale(2, RoundingMode.HALF_UP).toPlainString());
+            }
             for (StatementPdfReader.SourceRow source : rows) {
                 String date = parseDate(source.dateText(), year);
                 BigDecimal amount = "deposit".equals(source.direction()) ? parsePositiveAmount(source.depositText()) : null;
                 String sourceText = clip(source.text(), 4000);
-                if (hasAudit && wasImported(connection, documentHash, source.sourceId())) {
+                if (importedSources.contains(source.sourceId())) {
                     results.add(previewRow(source, date, amount, "", List.of(), "imported", "This PDF row was already imported."));
                     continue;
                 }
-                if (hasAudit && !source.reference().isBlank() && referenceExists(connection, source.reference())) {
+                if (!source.reference().isBlank() && importedReferences.contains(source.reference().trim().toUpperCase(Locale.ROOT))) {
                     results.add(previewRow(source, date, amount, "", List.of(), "imported", "This bank reference was already imported."));
                     continue;
                 }
@@ -170,10 +187,11 @@ public final class StatementReaderStore {
                 }
                 List<Customer> full = new ArrayList<>();
                 List<Customer> candidateCustomers = new ArrayList<>();
-                for (Customer customer : accessible) {
-                    Match match = matchName(sourceText, customer);
-                    if (match.full()) full.add(customer);
-                    if (match.full() || match.partial()) candidateCustomers.add(customer);
+                NameWindows windows = prepareWindows(sourceText);
+                for (CustomerName name : names) {
+                    Match match = matchName(windows, name);
+                    if (match.full()) full.add(name.customer());
+                    if (match.full() || match.partial()) candidateCustomers.add(name.customer());
                 }
                 String customerId = "";
                 String status = "review";
@@ -183,7 +201,7 @@ public final class StatementReaderStore {
                 if (full.size() == 1) {
                     customerId = full.get(0).getId();
                     status = "ready";
-                    if (fingerprintExists(connection, customerId, date, amount)) {
+                    if (existingPayments.contains(customerId + "|" + date + "|" + amount.toPlainString())) {
                         status = "duplicate";
                         reason = "A payment with this customer, date, and amount already exists; explicit override is required.";
                     }
@@ -202,31 +220,39 @@ public final class StatementReaderStore {
         return results;
     }
 
-    private static Match matchName(String text, Customer customer) {
+    private record CustomerName(Customer customer, List<String> words, Set<String> compact, String sorted) { }
+    private record NameWindows(Set<String> words, Set<String> compact, Set<String> sorted) { }
+
+    private static CustomerName prepareName(Customer customer) {
         List<String> firstWords = Arrays.stream(normalizeWords(customer.getFirstName())).filter(word -> !word.isBlank()).toList();
         List<String> lastWords = Arrays.stream(normalizeWords(customer.getLastName())).filter(word -> !word.isBlank()).toList();
-        if (firstWords.isEmpty() || lastWords.isEmpty()) return new Match(false, false);
+        if (firstWords.isEmpty() || lastWords.isEmpty()) return new CustomerName(customer, List.of(), Set.of(), "");
         List<String> nameWords = new ArrayList<>(firstWords);
         nameWords.addAll(lastWords);
-        if (nameWords.size() > 12) return new Match(false, false);
-        List<String> sourceWords = Arrays.stream(normalizeWords(text)).filter(word -> !word.isBlank()).toList();
+        if (nameWords.size() > 12) return new CustomerName(customer, List.of(), Set.of(), "");
         Set<String> compactNames = new HashSet<>(List.of(String.join("", firstWords) + String.join("", lastWords),
                 String.join("", lastWords) + String.join("", firstWords)));
         String sortedName = nameWords.stream().sorted().reduce((left, right) -> left + " " + right).orElse("");
-        boolean full = false;
-        for (int start = 0; start < sourceWords.size() && !full; start++) {
+        return new CustomerName(customer, nameWords, compactNames, sortedName);
+    }
+
+    private static NameWindows prepareWindows(String text) {
+        List<String> sourceWords = Arrays.stream(normalizeWords(text)).filter(word -> !word.isBlank()).toList();
+        Set<String> compact = new HashSet<>(), sorted = new HashSet<>();
+        for (int start = 0; start < sourceWords.size(); start++) {
             for (int size = 1; size <= 12 && start + size <= sourceWords.size(); size++) {
                 List<String> window = sourceWords.subList(start, start + size);
-                String joined = String.join("", window);
-                String sorted = window.stream().sorted().reduce((left, right) -> left + " " + right).orElse("");
-                if (compactNames.contains(joined) || sortedName.equals(sorted)) {
-                    full = true;
-                    break;
-                }
+                compact.add(String.join("", window));
+                sorted.add(window.stream().sorted().reduce((left, right) -> left + " " + right).orElse(""));
             }
         }
-        Set<String> sourceSet = new HashSet<>(sourceWords);
-        boolean partial = nameWords.stream().filter(word -> word.length() > 1).anyMatch(sourceSet::contains);
+        return new NameWindows(new HashSet<>(sourceWords), compact, sorted);
+    }
+
+    private static Match matchName(NameWindows source, CustomerName name) {
+        boolean full = !name.words().isEmpty() && (source.sorted().contains(name.sorted())
+                || name.compact().stream().anyMatch(source.compact()::contains));
+        boolean partial = name.words().stream().filter(word -> word.length() > 1).anyMatch(source.words()::contains);
         return new Match(full, partial);
     }
 

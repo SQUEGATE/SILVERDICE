@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.poolapp.SalesQuoteStoreTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-26T20:33:48.933Z" hostname="SQUEGATE" time="3.226">
+  <properties/>
+  <testcase name="persistsSeparateQuotesEditsAndNeverReusesDeletedNumber" classname="com.poolapp.SalesQuoteStoreTest" time="0.585"/>
+  <testcase name="paginatesSummariesAndLoadsFullDetailsOnlyOnDemand" classname="com.poolapp.SalesQuoteStoreTest" time="1.415"/>
+  <testcase name="convertsExactlyOnceAndLocksBothStaleAndConvertedDrafts" classname="com.poolapp.SalesQuoteStoreTest" time="0.317"/>
+  <testcase name="concurrentConversionAndCreationKeepExactlyOnceAndUniqueNumbers" classname="com.poolapp.SalesQuoteStoreTest" time="0.528"/>
+  <testcase name="conversionRollsBackEveryLineAndTimestampWhenStatementInsertFails" classname="com.poolapp.SalesQuoteStoreTest" time="0.379"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

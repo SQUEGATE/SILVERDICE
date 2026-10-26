@@ -121,8 +121,38 @@ public class PoolAppFrame extends JFrame {
     private final List<Customer> customersById;
     private int currentCustomerIndex = -1;
     private PdfSettings pdfSettings;
-    private List<String> creditTypeKeywords;
-    private List<String> debitTypeKeywords;
+    private JPanel pdfPanel;
+    private boolean pdfBusy;
+    private List<String> creditTypeKeywords = List.of("payment", "paid", "credit", "refund", "discount",
+            "adjustment", "rebate", "deposit", "return", "transfer in", "check", "cheque");
+    private List<String> debitTypeKeywords = List.of("cash", "bill", "charge", "service", "invoice", "fee",
+            "debit", "purchase", "due", "owed", "repair", "labor", "parts", "materials");
+    private final Map<String, Long> loadGenerations = new java.util.HashMap<>();
+    private boolean monthlyBusy;
+    private String pendingMonthlyId;
+    private String pendingMonthlyScope;
+    private final PendingMonthlyRequests pendingMonthlyRequests = new PendingMonthlyRequests();
+    private int statementOffset;
+    private int statementTotal;
+    private final JButton previousStatements = new JButton("Previous 50");
+    private final JButton nextStatements = new JButton("Next 50");
+    private final JLabel statementPage = new JLabel(" ");
+    private JButton customerSearchButton;
+    private JButton chargedRefreshButton;
+    private boolean statementWriteBusy;
+    private final List<JComponent> statementWriteControls = new ArrayList<>();
+    private final JButton previousCustomerPage = new JButton("Previous 50");
+    private final JButton nextCustomerPage = new JButton("Next 50");
+    private final JLabel customerPageLabel = new JLabel(" ");
+    private final JCheckBox reorderDay = new JCheckBox("Reorder entire day");
+    private int customerOffset;
+    private int customerTotal;
+    private boolean customerLoading;
+    private boolean reorderReady;
+    private boolean exportBusy;
+    private final List<JButton> exportButtons = new ArrayList<>();
+    private final Map<String, Customer> displayedCustomers = new java.util.HashMap<>();
+    private final JLabel exportStatus = new JLabel(" ");
 
     public PoolAppFrame() {
         this(new DatabaseManager(), null, null, null, null);
@@ -211,8 +241,7 @@ public class PoolAppFrame extends JFrame {
         currentStatementRecords = new ArrayList<>();
         activeRecordCustomerId = "";
         customersById = new ArrayList<>();
-        pdfSettings = canAccessScreen("PDF") ? loadPdfSettings() : new PdfSettings();
-        if (canEditPdfData()) syncEmbeddedLogo(pdfSettings);
+        pdfSettings = new PdfSettings();
         loadRecordTypeKeywords();
 
         ((AbstractDocument) zipField.getDocument()).setDocumentFilter(new DigitFilter(10));
@@ -278,9 +307,10 @@ public class PoolAppFrame extends JFrame {
         miniTabsPanel = new JPanel(new GridLayout(2, 1, 6, 6));
 
         initComponents();
-        loadCustomers(filterAccessibleCustomers(dbManager.getAllCustomers()));
+        loadFilteredCustomers();
         refreshRevenueSummary();
         refreshDetailCustomerList();
+        if (canAccessScreen("PDF")) refreshPdfPanel();
     }
 
     private static String resolveWindowTitle(CompanyProfile companyProfile, EmployeeProfile employeeProfile) {
@@ -537,6 +567,14 @@ public class PoolAppFrame extends JFrame {
         JPanel customersBalancePanel = new JPanel(new FlowLayout(FlowLayout.LEADING));
         customersBalancePanel.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         customersBalancePanel.add(customerBalanceLabel);
+        customersBalancePanel.add(previousCustomerPage);
+        customersBalancePanel.add(customerPageLabel);
+        customersBalancePanel.add(nextCustomerPage);
+        customersBalancePanel.add(reorderDay);
+        previousCustomerPage.addActionListener(e -> loadCustomerPage(Math.max(0, customerOffset - 50)));
+        nextCustomerPage.addActionListener(e -> loadCustomerPage(customerOffset + 50));
+        reorderDay.setToolTipText("Select a single day and clear search to load the complete route for dragging.");
+        reorderDay.addActionListener(e -> loadFilteredCustomers());
         tablePanel.add(customersBalancePanel, BorderLayout.SOUTH);
 
         JPanel recordPanel = new JPanel(new GridBagLayout());
@@ -635,9 +673,17 @@ public class PoolAppFrame extends JFrame {
         rc.weightx = 1.0;
         
         JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
+        actionPanel.add(previousStatements);
+        actionPanel.add(statementPage);
+        actionPanel.add(nextStatements);
+        previousStatements.addActionListener(e -> loadStatementPage(activeRecordCustomerId, Math.max(0, statementOffset - 50)));
+        nextStatements.addActionListener(e -> loadStatementPage(activeRecordCustomerId, statementOffset + 50));
+        previousStatements.setEnabled(false);
+        nextStatements.setEnabled(false);
         JButton statementButton = new JButton("Generate Statement");
         JButton emailButton = new JButton("Send Email");
         JButton smsButton = new JButton("Send SMS");
+        exportButtons.addAll(List.of(statementButton, emailButton, smsButton));
         JButton backupButton = new JButton("Backup DB");
         JButton restoreButton = new JButton("Restore DB");
         actionPanel.add(statementButton);
@@ -645,6 +691,7 @@ public class PoolAppFrame extends JFrame {
         actionPanel.add(smsButton);
         actionPanel.add(backupButton);
         actionPanel.add(restoreButton);
+        actionPanel.add(exportStatus);
         recordPanel.add(actionPanel, rc);
         
         rc.gridwidth = 1;
@@ -739,7 +786,8 @@ public class PoolAppFrame extends JFrame {
         cardPanel.add(tablePanel, "Customers");
         cardPanel.add(recordPanel, "Statements");
         cardPanel.add(revenuePanel, "RevenueSummary");
-        cardPanel.add(createPdfPanel(), "PDF");
+        pdfPanel = createPdfPanel();
+        cardPanel.add(pdfPanel, "PDF");
         cardPanel.add(createChargedSummaryPanel(), "ChargedSummary");
         cardPanel.add(employeesPanel, "Employees");
 
@@ -798,6 +846,7 @@ public class PoolAppFrame extends JFrame {
         saveButton.addActionListener(e -> saveCustomer());
         clearButton.addActionListener(e -> clearForm());
         searchButton.addActionListener(e -> loadFilteredCustomers());
+        customerSearchButton = searchButton;
         clearFilterButton.addActionListener(e -> resetFilters());
         dayFilterCombo.addActionListener(e -> loadFilteredCustomers());
 
@@ -826,6 +875,8 @@ public class PoolAppFrame extends JFrame {
 
         applyCustomerEditPermissions(saveButton, clearButton);
         applyStatementEditPermissions(recordDateField, recordTypeCombo, recordAmountField, addRecordButton, deleteRecordButton, addTypeButton, keywordButton);
+        statementWriteControls.addAll(List.of(recordDateField, recordTypeCombo, recordAmountField,
+                addRecordButton, deleteRecordButton, addTypeButton, keywordButton));
     }
 
     private void showScreen(String screenName) {
@@ -843,9 +894,7 @@ public class PoolAppFrame extends JFrame {
         
         // Reload PDF settings and refresh PDF panel when switching to PDF tab
         if ("PDF".equals(screenName)) {
-            pdfSettings = loadPdfSettings();
-            // Trigger repaint to show updated settings in preview
-            cardPanel.repaint();
+            refreshPdfPanel();
         }
         
         if ("Statements".equals(screenName) && activeRecordCustomerId != null && !activeRecordCustomerId.isBlank()) {
@@ -854,6 +903,7 @@ public class PoolAppFrame extends JFrame {
         if ("ChargedSummary".equals(screenName)) {
             refreshChargedSummary();
         }
+        if ("RevenueSummary".equals(screenName)) refreshRevenueSummary();
         updateMiniTabs(screenName);
     }
 
@@ -970,6 +1020,7 @@ public class PoolAppFrame extends JFrame {
         JLabel title = new JLabel("Charged Summary - active customers with a balance above $0.00");
         title.setFont(title.getFont().deriveFont(Font.BOLD, 15f));
         JButton refresh = new JButton("Refresh");
+        chargedRefreshButton = refresh;
         refresh.addActionListener(e -> refreshChargedSummary());
         JPanel top = new JPanel(new BorderLayout());
         top.add(title, BorderLayout.WEST);
@@ -982,38 +1033,30 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void refreshChargedSummary() {
+        if (chargedRefreshButton != null && !chargedRefreshButton.isEnabled()) return;
+        if (chargedRefreshButton != null) chargedRefreshButton.setEnabled(false);
         chargedTotalLabel.setText("Loading balances...");
-        List<Customer> active = new ArrayList<>();
-        for (Customer customer : filterAccessibleCustomers(dbManager.getAllCustomers())) {
-            if (customer.isActive()) {
-                active.add(customer);
-            }
-        }
+        long generation = nextLoad("charged");
         new SwingWorker<List<Object[]>, Void>() {
             @Override
             protected List<Object[]> doInBackground() throws Exception {
-                java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
-                try {
-                    List<java.util.concurrent.Future<BigDecimal>> futures = new ArrayList<>();
-                    for (Customer customer : active) {
-                        futures.add(pool.submit(() -> dbManager.getStatementBalance(customer.getId())));
-                    }
+                Map<String, BigDecimal> balances = dbManager.getStatementBalances();
+                List<Customer> active = filterAccessibleCustomers(dbManager.getAllCustomers());
                     List<Object[]> rows = new ArrayList<>();
-                    for (int i = 0; i < active.size(); i++) {
-                        BigDecimal balance = futures.get(i).get();
-                        if (balance.signum() > 0) {
-                            rows.add(new Object[]{active.get(i), balance});
+                    for (Customer customer : active) {
+                        BigDecimal balance = balances.getOrDefault(customer.getId(), BigDecimal.ZERO);
+                        if (customer.isActive() && balance.signum() > 0) {
+                            rows.add(new Object[]{customer, balance});
                         }
                     }
                     rows.sort((x, y) -> ((BigDecimal) y[1]).compareTo((BigDecimal) x[1]));
                     return rows;
-                } finally {
-                    pool.shutdown();
-                }
             }
 
             @Override
             protected void done() {
+                if (!currentLoad("charged", generation)) return;
+                if (chargedRefreshButton != null) chargedRefreshButton.setEnabled(true);
                 try {
                     List<Object[]> rows = get();
                     chargedModel.setRowCount(0);
@@ -1034,14 +1077,25 @@ public class PoolAppFrame extends JFrame {
         }.execute();
     }
     private void refreshDetailCustomerList() {
+        loadDetailCustomerList(null);
+    }
+
+    private void loadDetailCustomerList(String selectedId) {
+        loadAsync("detailCustomers", () -> filterAccessibleCustomers(dbManager.getAllCustomersOrderedById()), loaded -> {
         customersById.clear();
-        customersById.addAll(filterAccessibleCustomers(dbManager.getAllCustomersOrderedById()));
+        customersById.addAll(loaded);
         if (customersById.isEmpty()) {
             currentCustomerIndex = -1;
         } else if (currentCustomerIndex < 0 || currentCustomerIndex >= customersById.size()) {
             currentCustomerIndex = 0;
         }
         updateNavigationButtons();
+        if (selectedId != null) {
+            for (int i = 0; i < customersById.size(); i++) {
+                if (selectedId.equals(customersById.get(i).getId())) { showCustomerByIndex(i); break; }
+            }
+        }
+        });
     }
 
     private void showCustomerByIndex(int index) {
@@ -1054,13 +1108,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void selectCustomerById(String customerId) {
-        refreshDetailCustomerList();
-        for (int i = 0; i < customersById.size(); i++) {
-            if (customerId.equals(customersById.get(i).getId())) {
-                showCustomerByIndex(i);
-                return;
-            }
-        }
+        loadDetailCustomerList(customerId);
     }
 
     private void showPreviousCustomer() {
@@ -1110,19 +1158,21 @@ public class PoolAppFrame extends JFrame {
             JOptionPane.showMessageDialog(this, "Please enter a first or last name to search.", "Search Required", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-        List<Customer> matches = dbManager.searchCustomersByName(query);
-        matches = filterAccessibleCustomers(matches);
+        loadAsync("detailSearch", () -> filterAccessibleCustomers(dbManager.searchCustomersByName(query)), matches -> {
         if (matches.isEmpty()) {
             JOptionPane.showMessageDialog(this, "No customer found for that search.", "Not Found", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         selectCustomerById(matches.get(0).getId());
         showScreen("CustomerDetails");
+        });
     }
 
     private void loadCustomers(List<Customer> customers) {
+        displayedCustomers.clear();
         tableModel.setRowCount(0);
         for (Customer customer : filterAccessibleCustomers(customers)) {
+            displayedCustomers.put(customer.getId(), customer);
             String amountDisplay = "$" + customer.getAmountCharged().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
             tableModel.addRow(new Object[]{
                     customer.getId(),
@@ -1137,23 +1187,43 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void loadFilteredCustomers() {
+        loadCustomerPage(0);
+    }
+
+    private void loadCustomerPage(int offset) {
+        nextLoad("selectedCustomer");
         String search = searchField.getText().trim();
         String selectedDay = Objects.toString(dayFilterCombo.getSelectedItem(), "All");
-
-        List<Customer> customers;
-        if (search.isBlank()) {
-            customers = dbManager.getAllCustomers();
-        } else {
-            customers = dbManager.searchCustomers(search);
-        }
-
-        customers = filterAccessibleCustomers(customers);
-
-        if (!"All".equals(selectedDay)) {
-            customers.removeIf(customer -> !selectedDay.equals(customer.getServiceDay()));
-        }
-
-        loadCustomers(customers);
+        boolean reorder = reorderDay.isSelected() && canEditCustomerData() && search.isBlank() && !"All".equals(selectedDay);
+        if (!reorder) reorderDay.setSelected(false);
+        customerLoading = true;
+        reorderReady = false;
+        previousCustomerPage.setEnabled(false);
+        nextCustomerPage.setEnabled(false);
+        customerPageLabel.setText(reorder ? "Loading entire route..." : "Loading customers...");
+        if (customerSearchButton != null) customerSearchButton.setEnabled(false);
+        loadAsync("customers", () -> {
+            if (reorder) {
+                return new com.poolapp.db.CustomerBrowserStore(dbManager).fullDay(selectedDay, employeeProfile);
+            }
+            return new com.poolapp.db.CustomerBrowserStore(dbManager).page(search, selectedDay, offset, employeeProfile);
+        }, page -> {
+            customerLoading = false;
+            customerOffset = offset;
+            customerTotal = page.total();
+            reorderReady = reorder;
+            if (customerSearchButton != null) customerSearchButton.setEnabled(true);
+            loadCustomers(page.rows());
+            previousCustomerPage.setEnabled(!reorder && offset > 0);
+            nextCustomerPage.setEnabled(!reorder && offset + 50 < customerTotal);
+            customerPageLabel.setText(reorder ? "Entire day: " + customerTotal + " customers"
+                    : (customerTotal == 0 ? 0 : offset + 1) + "–" + Math.min(offset + 50, customerTotal) + " of " + customerTotal);
+        }, error -> {
+            customerLoading = false;
+            customerPageLabel.setText("Unable to load customers.");
+            if (customerSearchButton != null) customerSearchButton.setEnabled(true);
+            showLoadError(error);
+        });
     }
 
     private void updateRouteOrderEnabled() {
@@ -1165,7 +1235,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private boolean canReorderCustomers() {
-        return canEditCustomerData()
+        return !customerLoading && reorderReady && reorderDay.isSelected() && canEditCustomerData()
                 && !"All".equals(Objects.toString(dayFilterCombo.getSelectedItem(), "All"))
                 && searchField.getText().trim().isEmpty();
     }
@@ -1173,7 +1243,7 @@ public class PoolAppFrame extends JFrame {
     private void installCustomerRowDragging() {
         customerTable.setDragEnabled(true);
         customerTable.setDropMode(DropMode.INSERT_ROWS);
-        customerTable.setToolTipText("Filter by a service day, then drag a row up or down to set the order.");
+        customerTable.setToolTipText("Select a service day and Reorder entire day, then drag rows to set the order.");
         customerTable.setTransferHandler(new TransferHandler() {
             @Override
             public int getSourceActions(JComponent component) {
@@ -1218,47 +1288,54 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void saveCustomerRowOrder() {
+        if (!canReorderCustomers()) return;
         String day = Objects.toString(dayFilterCombo.getSelectedItem(), "All");
         List<String> ids = new ArrayList<>();
         for (int i = 0; i < tableModel.getRowCount(); i++) {
             ids.add(Objects.toString(tableModel.getValueAt(i, 0), ""));
         }
-        try {
+        String shownId = idField.getText().trim();
+        customerLoading = true;
+        customerTable.setEnabled(false);
+        loadAsync("routeOrder", () -> {
             dbManager.reorderCustomers(day, ids);
-            String shownId = idField.getText().trim();
-            if (!shownId.isEmpty()) {
-                Customer shown = dbManager.getCustomerById(shownId);
-                if (shown != null && canAccessCustomer(shown)) {
-                    populateFieldsWithCustomer(shown);
-                }
-            }
-        } catch (RuntimeException e) {
-            JOptionPane.showMessageDialog(this, "Unable to save the new order: " + e.getMessage(), "Order Not Saved", JOptionPane.ERROR_MESSAGE);
+            return shownId.isEmpty() ? null : dbManager.getCustomerById(shownId);
+        }, shown -> {
+            customerLoading = false;
+            customerTable.setEnabled(true);
+            if (shown != null && shownId.equals(idField.getText().trim()) && canAccessCustomer(shown))
+                populateFieldsWithCustomer(shown);
+        }, error -> {
+            customerLoading = false;
+            customerTable.setEnabled(true);
+            showLoadError(error);
             loadFilteredCustomers();
-        }
+        });
     }
 
     private void resetFilters() {
         searchField.setText("");
         dayFilterCombo.setSelectedIndex(0);
-        loadCustomers(filterAccessibleCustomers(dbManager.getAllCustomers()));
+        reorderDay.setSelected(false);
+        loadFilteredCustomers();
     }
 
     private void populateFormFromSelection() {
+        nextLoad("selectedCustomer");
         int selectedRow = customerTable.getSelectedRow();
         if (selectedRow < 0) {
             return;
         }
         String customerId = Objects.toString(tableModel.getValueAt(selectedRow, 0), "");
         if (!customerId.isBlank()) {
-            Customer customer = dbManager.getCustomerById(customerId);
+            loadAsync("selectedCustomer", () -> dbManager.getCustomerById(customerId), customer -> {
             if (customer != null && canAccessCustomer(customer)) {
                 populateFieldsWithCustomer(customer);
                 selectCustomerById(customerId);
                 updateCustomerBalanceLabel(customerId);
                 activeRecordCustomerId = customerId;
-                return;
             }
+            });
         }
     }
 
@@ -1681,7 +1758,7 @@ public class PoolAppFrame extends JFrame {
             throw new IllegalStateException("Select a customer from the table first.");
         }
         String id = Objects.toString(tableModel.getValueAt(selectedRow, 0), "");
-        Customer customer = dbManager.getCustomerById(id);
+        Customer customer = displayedCustomers.get(id);
         if (customer == null) {
             throw new IllegalStateException("Selected customer record not found.");
         }
@@ -1689,9 +1766,9 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void generateStatement() {
+        if (exportBusy) return;
         try {
             Customer customer = getCustomerFromFormOrSelection();
-            List<StatementRecord> records = dbManager.getStatementRecords(customer.getId());
             
             // Create file chooser for PDF location
             JFileChooser fileChooser = new JFileChooser();
@@ -1707,14 +1784,43 @@ public class PoolAppFrame extends JFrame {
                 pdfFile = new File(pdfFile.getAbsolutePath() + ".pdf");
             }
             
-            createStatementPDF(customer, records, pdfFile);
-            
-            JOptionPane.showMessageDialog(this, "Statement PDF saved successfully to:\n" + pdfFile.getAbsolutePath(), "PDF Generated", JOptionPane.INFORMATION_MESSAGE);
+            File output = pdfFile;
+            runExport("Generating complete statement...", () -> {
+                createStatementPDF(customer, dbManager.getStatementRecords(customer.getId()), output);
+                return "Statement PDF saved successfully to:\n" + output.getAbsolutePath();
+            });
             
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this, "Unable to generate statement PDF: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
+
+        private void runExport(String message, java.util.concurrent.Callable<String> task) {
+            if (exportBusy) return;
+            if (pdfBusy) {
+                JOptionPane.showMessageDialog(this, "Wait for PDF settings to finish loading or saving.", "Statement", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            exportBusy = true;
+            pdfBusy = true;
+            setContainerEnabled(pdfPanel, false);
+            exportStatus.setText(message);
+            exportButtons.forEach(button -> button.setEnabled(false));
+            setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+            loadAsync("statementExport", task, result -> {
+                finishExport();
+                JOptionPane.showMessageDialog(this, result, "Statement", JOptionPane.INFORMATION_MESSAGE);
+            }, error -> { finishExport(); showLoadError(error); });
+        }
+
+        private void finishExport() {
+            exportBusy = false;
+            pdfBusy = false;
+            setContainerEnabled(pdfPanel, canEditPdfData());
+            exportStatus.setText(" ");
+            exportButtons.forEach(button -> button.setEnabled(true));
+            setCursor(Cursor.getDefaultCursor());
+        }
 
     private String buildStatementFileName(Customer customer) {
         String lastName = customer.getLastName() == null ? "" : customer.getLastName().trim();
@@ -1793,60 +1899,76 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void savePdfSettings(PdfSettings settings) {
-        dbManager.savePdfSetting("titleFont", settings.getTitleFont());
-        dbManager.savePdfSetting("titleSize", String.valueOf(settings.getTitleSize()));
-        dbManager.savePdfSetting("headerFont", settings.getHeaderFont());
-        dbManager.savePdfSetting("headerSize", String.valueOf(settings.getHeaderSize()));
-        dbManager.savePdfSetting("bodyFont", settings.getBodyFont());
-        dbManager.savePdfSetting("bodySize", String.valueOf(settings.getBodySize()));
-        dbManager.savePdfSetting("footerFont", settings.getFooterFont());
-        dbManager.savePdfSetting("footerSize", String.valueOf(settings.getFooterSize()));
+        Map<String, String> values = new java.util.LinkedHashMap<>();
+        values.put("titleFont", settings.getTitleFont());
+        values.put("titleSize", String.valueOf(settings.getTitleSize()));
+        values.put("headerFont", settings.getHeaderFont());
+        values.put("headerSize", String.valueOf(settings.getHeaderSize()));
+        values.put("bodyFont", settings.getBodyFont());
+        values.put("bodySize", String.valueOf(settings.getBodySize()));
+        values.put("footerFont", settings.getFooterFont());
+        values.put("footerSize", String.valueOf(settings.getFooterSize()));
+        values.put("titleColor", settings.getTitleColor());
+        values.put("headerColor", settings.getHeaderColor());
+        values.put("bodyColor", settings.getBodyColor());
+        values.put("footerColor", settings.getFooterColor());
+        values.put("marginLeft", String.valueOf(settings.getMarginLeft()));
+        values.put("marginTop", String.valueOf(settings.getMarginTop()));
+        values.put("companyName", settings.getCompanyName());
+        values.put("companyAddress", settings.getCompanyAddress());
+        values.put("companyPhone", settings.getCompanyPhone());
+        values.put("companyEmail", settings.getCompanyEmail());
+        values.put("logoPath", settings.getLogoPath());
+        values.put("showLogo", String.valueOf(settings.isShowLogo()));
+        values.put("logoX", String.valueOf(settings.getLogoX()));
+        values.put("logoY", String.valueOf(settings.getLogoY()));
+        values.put("logoWidth", String.valueOf(settings.getLogoWidth()));
+        values.put("logoHeight", String.valueOf(settings.getLogoHeight()));
+        values.put("showTableBorders", String.valueOf(settings.isShowTableBorders()));
+        values.put("tableBorderColor", settings.getTableBorderColor());
+        values.put("footerText", settings.getFooterText());
+        values.put("paymentInfo", settings.getPaymentInfo());
+        values.put("logoData", settings.getLogoData());
+        values.put("showGenerationDate", String.valueOf(settings.isShowGenerationDate()));
+        values.put("pageSize", settings.getPageSize());
+        values.put("landscape", String.valueOf(settings.isLandscape()));
+        values.put("companyInfoOffsetX", String.valueOf(settings.getCompanyInfoOffsetX()));
+        values.put("companyInfoOffsetY", String.valueOf(settings.getCompanyInfoOffsetY()));
+        values.put("titleOffsetX", String.valueOf(settings.getTitleOffsetX()));
+        values.put("titleOffsetY", String.valueOf(settings.getTitleOffsetY()));
+        values.put("headerOffsetX", String.valueOf(settings.getHeaderOffsetX()));
+        values.put("headerOffsetY", String.valueOf(settings.getHeaderOffsetY()));
+        values.put("bodyOffsetX", String.valueOf(settings.getBodyOffsetX()));
+        values.put("bodyOffsetY", String.valueOf(settings.getBodyOffsetY()));
+        values.put("tableOffsetX", String.valueOf(settings.getTableOffsetX()));
+        values.put("tableOffsetY", String.valueOf(settings.getTableOffsetY()));
+        values.put("footerOffsetX", String.valueOf(settings.getFooterOffsetX()));
+        values.put("footerOffsetY", String.valueOf(settings.getFooterOffsetY()));
+        dbManager.savePdfSettings(values);
+    }
 
-        dbManager.savePdfSetting("titleColor", settings.getTitleColor());
-        dbManager.savePdfSetting("headerColor", settings.getHeaderColor());
-        dbManager.savePdfSetting("bodyColor", settings.getBodyColor());
-        dbManager.savePdfSetting("footerColor", settings.getFooterColor());
+    private void refreshPdfPanel() {
+        if (pdfBusy) return;
+        pdfBusy = true;
+        setContainerEnabled(pdfPanel, false);
+        loadAsync("pdfSettings", this::loadPdfSettings, loaded -> {
+            pdfBusy = false;
+            pdfSettings = loaded;
+            replacePdfPanel();
+        }, error -> {
+            pdfBusy = false;
+            setContainerEnabled(pdfPanel, canEditPdfData());
+            showLoadError(error);
+        });
+    }
 
-        dbManager.savePdfSetting("marginLeft", String.valueOf(settings.getMarginLeft()));
-        dbManager.savePdfSetting("marginTop", String.valueOf(settings.getMarginTop()));
-
-        dbManager.savePdfSetting("companyName", settings.getCompanyName());
-        dbManager.savePdfSetting("companyAddress", settings.getCompanyAddress());
-        dbManager.savePdfSetting("companyPhone", settings.getCompanyPhone());
-        dbManager.savePdfSetting("companyEmail", settings.getCompanyEmail());
-
-        dbManager.savePdfSetting("logoPath", settings.getLogoPath());
-        dbManager.savePdfSetting("showLogo", String.valueOf(settings.isShowLogo()));
-        dbManager.savePdfSetting("logoX", String.valueOf(settings.getLogoX()));
-        dbManager.savePdfSetting("logoY", String.valueOf(settings.getLogoY()));
-        dbManager.savePdfSetting("logoWidth", String.valueOf(settings.getLogoWidth()));
-        dbManager.savePdfSetting("logoHeight", String.valueOf(settings.getLogoHeight()));
-
-        dbManager.savePdfSetting("showTableBorders", String.valueOf(settings.isShowTableBorders()));
-        dbManager.savePdfSetting("tableBorderColor", settings.getTableBorderColor());
-
-        dbManager.savePdfSetting("footerText", settings.getFooterText());
-        dbManager.savePdfSetting("paymentInfo", settings.getPaymentInfo());
-        dbManager.savePdfSetting("logoData", settings.getLogoData());
-        dbManager.savePdfSetting("showGenerationDate", String.valueOf(settings.isShowGenerationDate()));
-
-        dbManager.savePdfSetting("pageSize", settings.getPageSize());
-        dbManager.savePdfSetting("landscape", String.valueOf(settings.isLandscape()));
-        
-        // Save position offsets
-        dbManager.savePdfSetting("companyInfoOffsetX", String.valueOf(settings.getCompanyInfoOffsetX()));
-        dbManager.savePdfSetting("companyInfoOffsetY", String.valueOf(settings.getCompanyInfoOffsetY()));
-        dbManager.savePdfSetting("titleOffsetX", String.valueOf(settings.getTitleOffsetX()));
-        dbManager.savePdfSetting("titleOffsetY", String.valueOf(settings.getTitleOffsetY()));
-        dbManager.savePdfSetting("headerOffsetX", String.valueOf(settings.getHeaderOffsetX()));
-        dbManager.savePdfSetting("headerOffsetY", String.valueOf(settings.getHeaderOffsetY()));
-        dbManager.savePdfSetting("bodyOffsetX", String.valueOf(settings.getBodyOffsetX()));
-        dbManager.savePdfSetting("bodyOffsetY", String.valueOf(settings.getBodyOffsetY()));
-        dbManager.savePdfSetting("tableOffsetX", String.valueOf(settings.getTableOffsetX()));
-        dbManager.savePdfSetting("tableOffsetY", String.valueOf(settings.getTableOffsetY()));
-        dbManager.savePdfSetting("footerOffsetX", String.valueOf(settings.getFooterOffsetX()));
-        dbManager.savePdfSetting("footerOffsetY", String.valueOf(settings.getFooterOffsetY()));
-
+    private void replacePdfPanel() {
+        cardPanel.remove(pdfPanel);
+        pdfPanel = createPdfPanel();
+        cardPanel.add(pdfPanel, "PDF");
+        if ("PDF".equals(currentScreen)) ((CardLayout) cardPanel.getLayout()).show(cardPanel, "PDF");
+        cardPanel.revalidate();
+        cardPanel.repaint();
     }
 
     private JPanel createPdfPanel() {
@@ -2165,6 +2287,7 @@ public class PoolAppFrame extends JFrame {
         panel.add(buttonPanel, gbc);
 
         saveButton.addActionListener(e -> {
+            if (pdfBusy) return;
             // Update settings from panel
             pdfSettings.setTitleFont((String) titleFontCombo.getSelectedItem());
             pdfSettings.setTitleSize((Integer) titleSizeSpinner.getValue());
@@ -2182,7 +2305,6 @@ public class PoolAppFrame extends JFrame {
             pdfSettings.setLogoHeight((Integer) logoHeightSpinner.getValue());
             pdfSettings.setFooterText(footerTextField.getText());
             pdfSettings.setPaymentInfo(paymentInfoField.getText());
-            refreshEmbeddedLogo(pdfSettings);
             pdfSettings.setShowGenerationDate(showGenerationDateCheck.isSelected());
             
             // Update position offsets
@@ -2199,24 +2321,32 @@ public class PoolAppFrame extends JFrame {
             pdfSettings.setFooterOffsetX((Integer) footerOffsetXSpinner.getValue());
             pdfSettings.setFooterOffsetY((Integer) footerOffsetYSpinner.getValue());
 
-            // Save to database
-            savePdfSettings(pdfSettings);
-            JOptionPane.showMessageDialog(this, "PDF settings saved successfully!", "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
+            PdfSettings captured = pdfSettings;
+            pdfBusy = true;
+            setContainerEnabled(panel, false);
+            loadAsync("pdfWrite", () -> {
+                refreshEmbeddedLogo(captured);
+                savePdfSettings(captured);
+                return captured;
+            }, saved -> {
+                pdfBusy = false; setContainerEnabled(panel, canEditPdfData());
+                JOptionPane.showMessageDialog(this, "PDF settings saved successfully!", "Settings Saved", JOptionPane.INFORMATION_MESSAGE);
+            }, error -> { pdfBusy = false; setContainerEnabled(panel, canEditPdfData()); showLoadError(error); });
         });
 
         resetButton.addActionListener(e -> {
+            if (pdfBusy) return;
             int result = JOptionPane.showConfirmDialog(this,
                 "Are you sure you want to reset all PDF settings to defaults?",
                 "Reset Settings", JOptionPane.YES_NO_OPTION);
             if (result == JOptionPane.YES_OPTION) {
                 PdfSettings resetSettings = new PdfSettings(); // Reset to defaults
-                savePdfSettings(resetSettings);
-                JOptionPane.showMessageDialog(this, "PDF settings reset to defaults!", "Settings Reset", JOptionPane.INFORMATION_MESSAGE);
-                // Refresh the panel by recreating it
-                mainPanel.removeAll();
-                mainPanel.add(createPdfPanel());
-                mainPanel.revalidate();
-                mainPanel.repaint();
+                pdfBusy = true; setContainerEnabled(panel, false);
+                loadAsync("pdfWrite", () -> { savePdfSettings(resetSettings); return resetSettings; }, saved -> {
+                    pdfBusy = false; pdfSettings = saved;
+                    replacePdfPanel();
+                    JOptionPane.showMessageDialog(this, "PDF settings reset to defaults!", "Settings Reset", JOptionPane.INFORMATION_MESSAGE);
+                }, error -> { pdfBusy = false; setContainerEnabled(panel, canEditPdfData()); showLoadError(error); });
             }
         });
 
@@ -3033,7 +3163,7 @@ public class PoolAppFrame extends JFrame {
             Files.copy(dbPath, currentBackup, StandardCopyOption.REPLACE_EXISTING);
             Files.copy(selected.toPath(), dbPath, StandardCopyOption.REPLACE_EXISTING);
             JOptionPane.showMessageDialog(this, "Database restored successfully. Previous database backed up as:\n" + currentBackup.toAbsolutePath(), "Restore Complete", JOptionPane.INFORMATION_MESSAGE);
-            loadCustomers(filterAccessibleCustomers(dbManager.getAllCustomers()));
+            loadFilteredCustomers();
             refreshRevenueSummary();
             refreshDetailCustomerList();
             clearForm();
@@ -3081,7 +3211,7 @@ public class PoolAppFrame extends JFrame {
             Files.writeString(safety.toPath(), dbManager.exportBackup().toString(2));
             dbManager.restoreBackup(backup);
             JOptionPane.showMessageDialog(this, "Company data restored. Previous data saved as:\n" + safety.getAbsolutePath(), "Restore Complete", JOptionPane.INFORMATION_MESSAGE);
-            loadCustomers(filterAccessibleCustomers(dbManager.getAllCustomers()));
+            loadFilteredCustomers();
             refreshRevenueSummary();
             refreshDetailCustomerList();
             clearForm();
@@ -3091,7 +3221,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void sendEmailToCustomer() {
-        File statementPdf = null;
+        if (exportBusy) return;
         try {
             Customer customer = getCustomerFromFormOrSelection();
             if (customer.getEmail().isBlank()) {
@@ -3101,24 +3231,29 @@ public class PoolAppFrame extends JFrame {
             if (senderEmail.isBlank()) {
                 throw new IllegalStateException("Sender email is not configured.");
             }
-            statementPdf = createTemporaryStatementPdf(customer);
-            String statement = buildStatement(customer, getStatementSenderName(), senderEmail, getStatementSenderPhone());
-            emailService.sendEmail(customer.getEmail(), "Pool Service Statement for " + customer.getFullName(), statement,
-                    senderEmail, getStatementSenderName(), statementPdf);
-            JOptionPane.showMessageDialog(this, "Email sent successfully.", "Email", JOptionPane.INFORMATION_MESSAGE);
+            String senderName = getStatementSenderName(), senderPhone = getStatementSenderPhone();
+            runExport("Preparing and sending complete statement...", () -> {
+                File statementPdf = null;
+                try {
+                    statementPdf = createTemporaryStatementPdf(customer);
+                    String statement = buildStatement(customer, senderName, senderEmail, senderPhone);
+                    emailService.sendEmail(customer.getEmail(), "Pool Service Statement for " + customer.getFullName(), statement,
+                            senderEmail, senderName, statementPdf);
+                    return "Email sent successfully.";
+                } finally {
+                    if (statementPdf != null) Files.deleteIfExists(statementPdf.toPath());
+                }
+            });
         } catch (Throwable error) {
             String message = error.getMessage();
             JOptionPane.showMessageDialog(this, "Unable to send email: "
                     + (message == null || message.isBlank() ? error.getClass().getSimpleName() : message),
                     "Error", JOptionPane.ERROR_MESSAGE);
-        } finally {
-            if (statementPdf != null && statementPdf.exists()) {
-                statementPdf.delete();
-            }
         }
     }
 
     private void sendSmsToCustomer() {
+        if (exportBusy) return;
         try {
             Customer customer = getCustomerFromFormOrSelection();
             if (customer.getPhone().isBlank()) {
@@ -3128,9 +3263,12 @@ public class PoolAppFrame extends JFrame {
             if (senderPhone.isBlank()) {
                 throw new IllegalStateException("Sender phone is not configured.");
             }
-            String statement = buildStatement(customer, getStatementSenderName(), getStatementSenderEmail(), senderPhone);
-            smsService.sendSms(customer.getPhone(), statement);
-            JOptionPane.showMessageDialog(this, "SMS sent successfully.", "SMS", JOptionPane.INFORMATION_MESSAGE);
+            String senderName = getStatementSenderName(), senderEmail = getStatementSenderEmail();
+            runExport("Sending statement SMS...", () -> {
+                String statement = buildStatement(customer, senderName, senderEmail, senderPhone);
+                smsService.sendSms(customer.getPhone(), statement);
+                return "SMS sent successfully.";
+            });
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this, "Unable to send SMS: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
@@ -3148,8 +3286,11 @@ public class PoolAppFrame extends JFrame {
         if (prefix.length() < 3) {
             prefix = "STATEMENT";
         }
-        File pdfFile = Files.createTempFile(prefix + "_", ".pdf").toFile();
-        createStatementPDF(customer, dbManager.getStatementRecords(customer.getId()), pdfFile);
+        Path directory = Path.of("statement-email-work");
+        Files.createDirectories(directory);
+        File pdfFile = directory.resolve(prefix + "_" + java.util.UUID.randomUUID() + ".pdf").toFile();
+        try { createStatementPDF(customer, dbManager.getStatementRecords(customer.getId()), pdfFile); }
+        catch (IOException | RuntimeException e) { Files.deleteIfExists(pdfFile.toPath()); throw e; }
         return pdfFile;
     }
 
@@ -3205,7 +3346,10 @@ public class PoolAppFrame extends JFrame {
 
     private void setNewCustomerId() {
         if (!canAccessScreen("CustomerDetails") && !canAccessScreen("Customers")) return;
-        idField.setText(dbManager.getNextCustomerId());
+        String previousId = idField.getText();
+        loadAsync("newCustomerId", dbManager::getNextCustomerId, id -> {
+            if (idField.getText().equals(previousId)) idField.setText(id);
+        });
     }
 
     private void formatPhoneField() {
@@ -3234,25 +3378,16 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void openStatementForCustomer(String customerId) {
-        Customer customer = dbManager.getCustomerById(customerId);
-        if (customer == null) {
-            JOptionPane.showMessageDialog(this, "Customer record not found.", "Error", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        if (!canAccessCustomer(customer)) {
-            JOptionPane.showMessageDialog(this, "You do not have access to that customer.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        activeRecordCustomerId = customer.getId();
-        recordCustomerLabel.setText("Customer: " + customer.getFullName());
+        activeRecordCustomerId = customerId;
+        recordCustomerLabel.setText("Loading customer...");
         recordDateField.setText(LocalDate.now().format(DATE_FORMAT));
-        recordTypeCombo.setSelectedIndex(0);
+        if (recordTypeCombo.getItemCount() > 0) recordTypeCombo.setSelectedIndex(0);
         recordAmountField.setText("$0.00");
-        loadStatementRecordsForCustomer(customer.getId());
         showScreen("Statements");
     }
 
     private void addStatementRecord() {
+        if (statementWriteBusy) return;
         if (!canEditStatementData()) {
             JOptionPane.showMessageDialog(this, "You have view-only access for statement data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
             return;
@@ -3294,70 +3429,127 @@ public class PoolAppFrame extends JFrame {
         if (classifyRecordType(type) == RecordTypeCategory.DEBIT) {
             amount = amount.negate();
         }
-        dbManager.addStatementRecord(activeRecordCustomerId, date, type, amount);
-        loadStatementRecordsForCustomer(activeRecordCustomerId);
-        recordAmountField.setText("$0.00");
+        String customerId = activeRecordCustomerId;
+        String savedType = type;
+        BigDecimal savedAmount = amount;
+        statementWriteBusy = true; setStatementWriteControls(false);
+        loadAsync("statementWrite", () -> {
+            dbManager.addStatementRecord(customerId, date, savedType, savedAmount); return customerId;
+        }, id -> {
+            statementWriteBusy = false; setStatementWriteControls(true);
+            if (id.equals(activeRecordCustomerId)) {
+                loadStatementRecordsForCustomer(id);
+                recordAmountField.setText("$0.00");
+            }
+        }, error -> { statementWriteBusy = false; setStatementWriteControls(true); showLoadError(error); });
     }
 
     private void runMonthlyStatement() {
+        if (monthlyBusy) return;
         if (!canEditStatementData()) {
             JOptionPane.showMessageDialog(this, "You have view-only access for statement data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
             return;
         }
+        monthlyBusy = true;
+        setMonthlyButtonsEnabled(false);
+        loadAsync("monthlyPreparation", () -> new MonthlyPreparation(dbManager.getRecordTypes(),
+                filterAccessibleCustomers(dbManager.getAllCustomers()).stream().filter(Customer::isActive).toList()),
+                this::confirmMonthlyStatement, error -> {
+                    monthlyBusy = false; setMonthlyButtonsEnabled(true); showLoadError(error);
+                });
+    }
+
+    private record MonthlyPreparation(List<String> types, List<Customer> customers) { }
+
+    private void confirmMonthlyStatement(MonthlyPreparation preparation) {
         List<String> creditTypes = new ArrayList<>();
-        for (String type : dbManager.getRecordTypes()) {
+        for (String type : preparation.types()) {
             if (classifyRecordType(type) == RecordTypeCategory.CREDIT) {
                 creditTypes.add(type);
             }
         }
         creditTypes.sort(String.CASE_INSENSITIVE_ORDER);
         if (creditTypes.isEmpty()) {
+            monthlyBusy = false; setMonthlyButtonsEnabled(true);
             JOptionPane.showMessageDialog(this, "No credit types are saved for this company.", "Monthly Statement", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         Object choice = JOptionPane.showInputDialog(this, "Select the credit type to charge:", "Monthly Statement",
                 JOptionPane.QUESTION_MESSAGE, null, creditTypes.toArray(), creditTypes.get(0));
         if (choice == null) {
+            monthlyBusy = false; setMonthlyButtonsEnabled(true);
             return;
         }
         String type = choice.toString();
-        List<Customer> active = new ArrayList<>();
-        for (Customer customer : filterAccessibleCustomers(dbManager.getAllCustomers())) {
-            if (customer.isActive()) {
-                active.add(customer);
-            }
-        }
+        List<Customer> active = preparation.customers();
         String date = LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth()).format(DATE_FORMAT);
         if (active.isEmpty()) {
+            monthlyBusy = false; setMonthlyButtonsEnabled(true);
             JOptionPane.showMessageDialog(this, "There are no active customers.", "Monthly Statement", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
+        List<String> customerIds = active.stream().map(Customer::getId).sorted().toList();
+        String scope = date + "\n" + type + "\n" + customerIds;
+        String identity = monthlyIdentity();
+        String retainedId = pendingMonthlyRequests.find(identity, scope);
+        if (retainedId != null) {
+            pendingMonthlyScope = scope;
+            pendingMonthlyId = retainedId;
+        } else if (!scope.equals(pendingMonthlyScope)) {
+            pendingMonthlyScope = scope;
+            pendingMonthlyId = java.util.UUID.randomUUID().toString();
+        }
         int confirm = JOptionPane.showConfirmDialog(this,
-                "Add a \"" + type + "\" record dated " + date + " to " + active.size() + " active customer(s)?",
+                (retainedId != null ? "Retry the same unconfirmed monthly request?\nRequest: " + retainedId
+                        + "\nThis will not duplicate a previously completed request.\n" : "")
+                        + "Add a \"" + type + "\" record dated " + date + " to " + active.size() + " active customer(s)?",
                 "Monthly Statement", JOptionPane.YES_NO_OPTION);
         if (confirm != JOptionPane.YES_OPTION) {
+            monthlyBusy = false; setMonthlyButtonsEnabled(true);
             return;
         }
-        int added = 0;
-        List<String> failed = new ArrayList<>();
-        for (Customer customer : active) {
-            try {
-                dbManager.addStatementRecord(customer.getId(), date, type,
-                        customer.getAmountCharged().setScale(2, java.math.RoundingMode.HALF_UP));
-                added++;
-            } catch (Exception e) {
-                failed.add(customer.getFullName());
-            }
+        String requestId;
+        try {
+            requestId = pendingMonthlyRequests.retain(identity, scope, pendingMonthlyId);
+        } catch (RuntimeException e) {
+            monthlyBusy = false; setMonthlyButtonsEnabled(true); showLoadError(e); return;
         }
+        loadAsync("monthlyWrite", () -> dbManager.addMonthlyStatements(requestId, date, type, customerIds), added -> {
+        monthlyBusy = false; setMonthlyButtonsEnabled(true);
+        pendingMonthlyRequests.confirmed(identity, scope);
+        pendingMonthlyId = null; pendingMonthlyScope = null;
         if (activeRecordCustomerId != null && !activeRecordCustomerId.isBlank()) {
             loadStatementRecordsForCustomer(activeRecordCustomerId);
         }
         String message = "Added " + added + " record(s) dated " + date + ".";
-        if (!failed.isEmpty()) {
-            message += "\nFailed for: " + String.join(", ", failed);
-        }
         JOptionPane.showMessageDialog(this, message, "Monthly Statement",
-                failed.isEmpty() ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE);
+                JOptionPane.INFORMATION_MESSAGE);
+        }, error -> {
+            monthlyBusy = false; setMonthlyButtonsEnabled(true);
+            JOptionPane.showMessageDialog(this, "Monthly statement was not confirmed.\n" + error.getMessage()
+                    + "\nUse Monthly Statement again to retry the SAME request safely; no automatic retry was made.",
+                    "Monthly Statement", JOptionPane.ERROR_MESSAGE);
+        });
+    }
+
+    private void setMonthlyButtonsEnabled(boolean enabled) {
+        setMonthlyButtonsEnabled(getContentPane(), enabled);
+    }
+
+    private String monthlyIdentity() {
+        return (dbManager.getApiClient() != null ? dbManager.getApiClient().getBaseUrl()
+                : Objects.toString(dbManager.getDatabasePath(), "local"))
+                + "|" + (companyProfile != null ? companyProfile.getId()
+                : employeeProfile != null ? employeeProfile.getCompanyId() : "local")
+                + "|" + (employeeProfile != null ? employeeProfile.getEmployeeId() : "company");
+    }
+
+    private void setMonthlyButtonsEnabled(java.awt.Container container, boolean enabled) {
+        for (java.awt.Component component : container.getComponents()) {
+            if (component instanceof JButton button && "Monthly Statement".equals(button.getText()))
+                button.setEnabled(enabled);
+            if (component instanceof java.awt.Container child) setMonthlyButtonsEnabled(child, enabled);
+        }
     }
 
     private String promptForCheckNumber() {
@@ -3519,19 +3711,20 @@ public class PoolAppFrame extends JFrame {
 
     private void loadRecordTypesFromDatabase() {
         if (!canAccessScreen("Statements")) return;
-        try {
+        loadAsync("recordTypes", () -> {
             dbManager.ensureDefaultTypes();
-            List<String> types = dbManager.getRecordTypes();
+            return dbManager.getRecordTypes();
+        }, types -> {
             DefaultComboBoxModel<String> model = (DefaultComboBoxModel<String>) recordTypeCombo.getModel();
             populateRecordTypeCombo(model, types);
             if (!types.isEmpty()) {
                 recordTypeCombo.setSelectedIndex(0);
             }
-        } catch (Exception e) {
-            // Fallback to default types if database fails
+        }, error -> {
             DefaultComboBoxModel<String> model = (DefaultComboBoxModel<String>) recordTypeCombo.getModel();
             populateRecordTypeCombo(model, List.of("Bill", "Payment"));
-        }
+            showLoadError(error);
+        });
     }
 
     private enum RecordTypeCategory {
@@ -3568,21 +3761,12 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void loadRecordTypeKeywords() {
-        creditTypeKeywords = loadKeywordList(
-                "recordTypeCreditKeywords",
-                List.of("payment", "paid", "credit", "refund", "discount", "adjustment", "rebate", "deposit", "return", "transfer in", "check", "cheque")
-        );
-        debitTypeKeywords = loadKeywordList(
-                "recordTypeDebitKeywords",
-                List.of("cash", "bill", "charge", "service", "invoice", "fee", "debit", "purchase", "due", "owed", "repair", "labor", "parts", "materials")
-        );
-    }
-
-    private List<String> loadKeywordList(String settingKey, List<String> defaults) {
-        if (!canAccessScreen("PDF")) return defaults;
-        String defaultValue = String.join(", ", defaults);
-        String savedValue = dbManager.getPdfSetting(settingKey, defaultValue);
-        return parseKeywordList(savedValue, defaults);
+        if (!canAccessScreen("PDF")) return;
+        loadAsync("recordKeywords", dbManager::getAllPdfSettings, settings -> {
+            creditTypeKeywords = parseKeywordList(settings.get("recordTypeCreditKeywords"), creditTypeKeywords);
+            debitTypeKeywords = parseKeywordList(settings.get("recordTypeDebitKeywords"), debitTypeKeywords);
+            loadRecordTypesFromDatabase();
+        });
     }
 
     private List<String> parseKeywordList(String value, List<String> defaults) {
@@ -3755,6 +3939,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void deleteSelectedRecord() {
+        if (statementWriteBusy) return;
         if (!canEditStatementData()) {
             JOptionPane.showMessageDialog(this, "You have view-only access for statement data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
             return;
@@ -3773,21 +3958,47 @@ public class PoolAppFrame extends JFrame {
             int confirm = JOptionPane.showConfirmDialog(this, "Delete selected record?", "Confirm Delete", JOptionPane.YES_NO_OPTION);
             if (confirm == JOptionPane.YES_OPTION) {
                 StatementRecord record = currentStatementRecords.get(modelIndex);
-                dbManager.deleteStatementRecord(record.getId());
-                loadStatementRecordsForCustomer(activeRecordCustomerId);
+                String customerId = activeRecordCustomerId;
+                statementWriteBusy = true; setStatementWriteControls(false);
+                loadAsync("statementWrite", () -> {
+                    dbManager.deleteStatementRecord(record.getId()); return customerId;
+                }, id -> {
+                    statementWriteBusy = false; setStatementWriteControls(true);
+                    if (id.equals(activeRecordCustomerId)) loadStatementRecordsForCustomer(id);
+                }, error -> { statementWriteBusy = false; setStatementWriteControls(true); showLoadError(error); });
             }
         }
     }
 
     private void loadStatementRecordsForCustomer(String customerId) {
+        loadStatementPage(customerId, 0);
+    }
+
+    private void setStatementWriteControls(boolean enabled) {
+        statementWriteControls.forEach(control -> control.setEnabled(enabled && canEditStatementData()));
+    }
+
+    private record StatementPage(Customer customer, org.json.JSONObject page) { }
+
+    private void loadStatementPage(String customerId, int offset) {
+        nextLoad("statements");
         recordTableModel.setRowCount(0);
+        currentStatementRecords = new ArrayList<>();
+        previousStatements.setEnabled(false);
+        nextStatements.setEnabled(false);
         if (customerId == null || customerId.isBlank()) {
             recordCustomerLabel.setText("Customer: (select a customer first)");
             recordBalanceLabel.setText("Current Balance: $0.00");
             currentStatementRecords = new ArrayList<>();
             return;
         }
-        Customer customer = dbManager.getCustomerById(customerId);
+        recordBalanceLabel.setText("Loading statement...");
+        loadAsync("statements", () -> {
+            Customer customer = dbManager.getCustomerById(customerId);
+            if (customer == null || !canAccessCustomer(customer)) throw new IllegalStateException("Customer access restricted.");
+            return new StatementPage(customer, dbManager.getStatementRecordPage(customerId, 50, offset));
+        }, loaded -> {
+        Customer customer = loaded.customer();
         if (customer != null && !canAccessCustomer(customer)) {
             recordCustomerLabel.setText("Customer: (access restricted)");
             recordBalanceLabel.setText("Current Balance: $0.00");
@@ -3797,30 +4008,46 @@ public class PoolAppFrame extends JFrame {
         if (customer != null) {
             recordCustomerLabel.setText("Customer: " + customer.getFullName());
         }
-        currentStatementRecords = dbManager.getStatementRecords(customerId);
-        BigDecimal balance = BigDecimal.ZERO;
-        for (StatementRecord record : currentStatementRecords) {
+        statementOffset = offset;
+        statementTotal = loaded.page().getInt("total");
+        org.json.JSONArray rows = loaded.page().getJSONArray("rows");
+        for (int i = 0; i < rows.length(); i++) {
+            org.json.JSONObject row = rows.getJSONObject(i);
+            StatementRecord record = new StatementRecord(row.getLong("record_id"), row.getString("date"),
+                    row.getString("type"), new BigDecimal(row.get("amount").toString()));
+            currentStatementRecords.add(record);
             BigDecimal lineAmount = record.getAmount();
-            balance = balance.add(lineAmount);
             String displayAmount = (lineAmount.signum() < 0 ? "$-" : "$" ) + lineAmount.abs().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
             recordTableModel.addRow(new Object[]{record.getDate(), record.getType(), displayAmount});
         }
+        BigDecimal balance = new BigDecimal(loaded.page().get("balance").toString());
         recordBalanceLabel.setText("Current Balance: $" + balance.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
-        updateCustomerBalanceLabel(customerId);
+        statementPage.setText((statementTotal == 0 ? 0 : offset + 1) + "–"
+                + Math.min(offset + 50, statementTotal) + " of " + statementTotal);
+        previousStatements.setEnabled(offset > 0);
+        nextStatements.setEnabled(offset + 50 < statementTotal);
+        }, error -> {
+            recordBalanceLabel.setText("Unable to load statement.");
+            showLoadError(error);
+        });
     }
 
     private void updateCustomerBalanceLabel(String customerId) {
+        nextLoad("customerBalance");
         if (customerId == null || customerId.isBlank()) {
             customerBalanceLabel.setText("Current Balance: $0.00");
             return;
         }
+        customerBalanceLabel.setText("Loading balance...");
+        loadAsync("customerBalance", () -> {
         Customer customer = dbManager.getCustomerById(customerId);
         if (customer != null && !canAccessCustomer(customer)) {
-            customerBalanceLabel.setText("Current Balance: $0.00");
-            return;
+            throw new IllegalStateException("Customer access restricted.");
         }
-        BigDecimal balance = dbManager.getStatementBalance(customerId);
+        return dbManager.getStatementBalance(customerId);
+        }, balance -> {
         customerBalanceLabel.setText("Current Balance: $" + balance.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
+        }, error -> { customerBalanceLabel.setText("Unable to load balance."); showLoadError(error); });
     }
 
     private void formatAmountField() {
@@ -3838,6 +4065,8 @@ public class PoolAppFrame extends JFrame {
     }
 
     private void refreshRevenueSummary() {
+        revenueArea.setText("Loading revenue...");
+        loadAsync("revenue", () -> {
         List<Customer> accessibleCustomers = filterAccessibleCustomers(dbManager.getAllCustomers());
         Map<String, BigDecimal> revenueByDay = new java.util.LinkedHashMap<>();
         for (String day : DAYS) {
@@ -3861,7 +4090,43 @@ public class PoolAppFrame extends JFrame {
             builder.append(String.format("%s: $%s\n", day, revenue));
         }
         builder.append("\nTotal Revenue: $").append(totalRevenue.setScale(2, java.math.RoundingMode.HALF_UP)).append("\n");
-        revenueArea.setText(builder.toString());
+        return builder.toString();
+        }, revenueArea::setText, error -> {
+            revenueArea.setText("Unable to load revenue: " + error.getMessage());
+        });
+    }
+
+    private long nextLoad(String key) {
+        long generation = loadGenerations.getOrDefault(key, 0L) + 1;
+        loadGenerations.put(key, generation);
+        return generation;
+    }
+
+    private boolean currentLoad(String key, long generation) {
+        return loadGenerations.getOrDefault(key, 0L) == generation;
+    }
+
+    private <T> void loadAsync(String key, java.util.concurrent.Callable<T> task,
+                               java.util.function.Consumer<T> success) {
+        loadAsync(key, task, success, this::showLoadError);
+    }
+
+    private <T> void loadAsync(String key, java.util.concurrent.Callable<T> task,
+                               java.util.function.Consumer<T> success, java.util.function.Consumer<Throwable> failure) {
+        long generation = nextLoad(key);
+        new SwingWorker<T, Void>() {
+            @Override protected T doInBackground() throws Exception { return task.call(); }
+            @Override protected void done() {
+                if (!currentLoad(key, generation)) return;
+                try { success.accept(get()); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); failure.accept(e); }
+                catch (Exception e) { failure.accept(e.getCause() == null ? e : e.getCause()); }
+            }
+        }.execute();
+    }
+
+    private void showLoadError(Throwable error) {
+        JOptionPane.showMessageDialog(this, error.getMessage(), "Unable to complete request", JOptionPane.ERROR_MESSAGE);
     }
 
     private static class EmployeeEditorDialog extends JDialog {

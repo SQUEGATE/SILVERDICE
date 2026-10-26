@@ -107,8 +107,12 @@ test("reader: permissions, company and customer isolation, master preview and le
     assert.equal((await post("invalid")).status, 401);
     for (const name of ["denied", "statements", "master"]) assert.equal((await post(await login(name))).status, 403);
     assert.equal((await post(reader)).body.rows[0].status, "ready");
+    assert.deepEqual((await post(reader)).body.customers, [
+      { customer_id: "jose", first_name: "José", last_name: "García" }
+    ]);
     assert.equal((await post(await login("two"))).body.rows[0].customer_id, "");
     assert.equal((await post(reader, [source({ text: "Unassigned Person" })])).body.rows[0].candidate_ids.length, 0);
+    assert.deepEqual((await post(reader, [source({ text: "Unassigned Person" })])).body.customers, []);
     assert.equal((await post(reader, [source({ text: "la Cruz Ana María De" })])).body.rows[0].customer_id, "day");
     assert.equal((await call("/v1/customers", { token: reader })).status, 200);
     assert.equal((await call("/v1/customers/jose", { token: reader })).status, 200);
@@ -129,6 +133,26 @@ test("reader: permissions, company and customer isolation, master preview and le
   }, { legacy: true });
 });
 
+test("reader: Zelle/Zel filtering preserves database customer matches in either name order", async () => {
+  const { zelleDepositRows } = await import("../public/statement-reader.mjs");
+  await fixture(async ({ call, login, db }) => {
+    const token = await login("one");
+    const before = db.prepare("SELECT COUNT(*) n FROM statement_records").get().n;
+    const rows = [
+      "Zelle From Jose Garcia", "Zelle From Garcia Jose",
+      "Zel From Jose Garcia", "zEL from GARCIA, JOSE",
+    ].map((text, i) => source({ text, source_id: `1:${i + 1}`, line: i + 1, date_text: "9/8", deposit_text: `${110 + i}.00` }));
+    const filtered = zelleDepositRows(rows);
+    assert.equal(filtered.length, 4);
+    const result = await call(previewPath, { method: "POST", token, body: document(filtered) });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body.rows.map(row => [row.status, row.customer_id]),
+      rows.map(() => ["ready", "jose"]));
+    assert.ok(result.body.rows.every(row => row.date === `09/08/${result.body.year}`));
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM statement_records").get().n, before);
+  });
+});
+
 test("reader: normalized bounded full names, partial and ambiguous review, strict posting dates and deposit columns", async () => {
   await fixture(async ({ call, login, db }) => {
     const token = await login("one");
@@ -145,7 +169,10 @@ test("reader: normalized bounded full names, partial and ambiguous review, stric
       [{ date_text: "02/29/2027" }, "ignored", ""],
       [{ date_text: "04/31" }, "ignored", ""],
       [{ date_text: "10/20/26" }, "ignored", ""],
-      [{ date_text: "1/02" }, "ignored", ""],
+      [{ date_text: "1/02" }, "ready", "jose"],
+      [{ date_text: "9/8" }, "ready", "jose"],
+      [{ date_text: "9/8/2025" }, "ready", "jose"],
+      [{ date_text: "2/30" }, "ignored", ""],
       [{ date_text: "", text: "Beginning balance 10/20 $500" }, "ignored", ""],
       [{ direction: "withdrawal" }, "ignored", ""],
       [{ direction: "unknown" }, "ignored", ""],

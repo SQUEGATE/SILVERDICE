@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.poolapp.PendingMonthlyRequestsTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-26T20:33:48.859Z" hostname="SQUEGATE" time="0.059">
+  <properties/>
+  <testcase name="preservesUncertainRequestAcrossReopenAndSeparatesScopes" classname="com.poolapp.PendingMonthlyRequestsTest" time="0.059"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

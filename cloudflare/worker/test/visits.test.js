@@ -57,18 +57,7 @@ function decodeArgs(args = []) {
 
 function mockDatabase() {
   executedSql = [];
-  globalThis.fetch = async (_url, options) => {
-    const pipeline = JSON.parse(options.body);
-    const first = pipeline.requests[0];
-    if (first.type === "batch") {
-      return Response.json({
-        results: [{
-          type: "ok",
-          response: { result: { step_results: first.batch.steps.map(() => ({})), step_errors: [] } }
-        }]
-      });
-    }
-    const { sql, args: encodedArgs } = first.stmt;
+  const execute = ({ sql, args: encodedArgs }) => {
     const args = decodeArgs(encodedArgs);
     executedSql.push({ sql, args });
     let rows = [];
@@ -144,7 +133,22 @@ function mockDatabase() {
         rows = [{ ...savedVisit, ph: args[0], chlo: args[1], stb: args[2], alk: args[3], cal: args[4], notes: args[5], photo_data: args[6] ?? savedVisit.photo_data }];
       }
     }
-    return Response.json({ results: [executeResult(rows)] });
+    return executeResult(rows);
+  };
+  globalThis.fetch = async (_url, options) => {
+    const first = JSON.parse(options.body).requests[0];
+    if (first.type === "batch") {
+      return Response.json({
+        results: [{
+          type: "ok",
+          response: { result: {
+            step_results: first.batch.steps.map(step => step.stmt.sql === "ROLLBACK" ? null : execute(step.stmt).response.result),
+            step_errors: []
+          } }
+        }]
+      });
+    }
+    return Response.json({ results: [execute(first.stmt)] });
   };
 }
 

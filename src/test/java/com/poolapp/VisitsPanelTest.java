@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class VisitsPanelTest {
     @Test
     public void filtersCustomersAndSavesAndEditsVisit() throws Exception {
-        Path directory = Files.createTempDirectory("comp-manager-visits-ui-test-");
+        Path directory = Files.createDirectories(Path.of("visits-ui-test-" + java.util.UUID.randomUUID()));
         Path path = directory.resolve("visits.db");
         try {
             DatabaseManager database = new DatabaseManager(path);
@@ -68,6 +68,7 @@ public class VisitsPanelTest {
             VisitsTest.check(field(panel, "photoData", String.class).isEmpty(), "New visit clears photo");
             VisitsTest.check(!button(panel, "Delete Visit").isEnabled(), "New Visit disables delete");
             SwingUtilities.invokeAndWait(() -> field(panel, "history", JComboBox.class).setSelectedIndex(1));
+            awaitIdle(panel);
             VisitsTest.check(field(panel, "notes", JTextArea.class).getText().equals("Edited UI visit"), "Past visit reloads fields");
             VisitsTest.check(!field(panel, "photoData", String.class).isEmpty(), "Past visit reloads photo");
             SwingUtilities.invokeAndWait(() -> {

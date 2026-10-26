@@ -21,6 +21,26 @@ public class StatementPdfReaderTest {
     private static final PDFont FONT = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
     private final StatementPdfReader reader = new StatementPdfReader();
 
+    @Test public void previewOnlyKeepsZelleOrZelDepositsAndPreservesOriginalIdentities() {
+        List<StatementPdfReader.SourceRow> rows = List.of(
+                source("1:1", "Zelle From Demo", "deposit"),
+                source("1:2", "zEL from Demo", "deposit"),
+                source("1:3", "Cash deposit", "deposit"),
+                source("1:4", "Zelle To Demo", "deposit"),
+                source("1:5", "Zel To Demo", "withdrawal"),
+                source("1:6", "Zelle From Demo", "unknown"),
+                source("1:7", "Hazel deposit", "deposit"),
+                source("1:8", "Zel deposit", "deposit"));
+        List<StatementPdfReader.SourceRow> kept = StatementPdfReader.zelleDepositRows(rows);
+        assertEquals(List.of("1:1", "1:2", "1:8"), kept.stream().map(StatementPdfReader.SourceRow::sourceId).toList());
+        assertSame(rows.get(0), kept.get(0));
+    }
+
+    private static StatementPdfReader.SourceRow source(String id, String text, String direction) {
+        return new StatementPdfReader.SourceRow(id, 1, Integer.parseInt(id.substring(2)),
+                text, "9/1", "25.00", direction, "");
+    }
+
     @Test public void readsDepositColumnOnlyFirstColumnDateWrapsAndRepeatedPageHeaders() throws Exception {
         byte[] pdf = statementPdf();
         StatementPdfReader.Extraction extraction = reader.extract(pdf);

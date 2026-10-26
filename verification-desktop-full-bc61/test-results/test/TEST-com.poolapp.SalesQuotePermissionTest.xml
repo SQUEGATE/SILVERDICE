@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.poolapp.SalesQuotePermissionTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-26T20:44:44.208Z" hostname="SQUEGATE" time="0.036">
+  <properties/>
+  <testcase name="quotePermissionDefaultsOffAndRoundTripsThroughEmployeeApi" classname="com.poolapp.SalesQuotePermissionTest" time="0.036"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

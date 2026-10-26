@@ -16,6 +16,39 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class SalesQuoteApiTest {
+    @Test public void summaryPagesAndFullDetailsUseSeparateAuthenticatedRequests() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        List<String> requests = java.util.Collections.synchronizedList(new ArrayList<>());
+        JSONObject full = SalesQuoteTest.draft("c1", "Full notes", SalesQuote.DEFAULT_TERMS,
+                List.of(SalesQuoteTest.line("Bill", "Item", "-10"))).body()
+                .put("quote_id", 52).put("quote_number", "SQ-000052").put("customer_id", "c1")
+                .put("converted_at", JSONObject.NULL).put("created_at", "").put("updated_at", "");
+        JSONObject summary = new JSONObject(full.toString());
+        summary.remove("lines"); summary.remove("notes"); summary.remove("terms");
+        server.createContext("/", exchange -> {
+            requests.add(exchange.getRequestURI().toString());
+            if (!"Bearer synthetic-token".equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+                exchange.sendResponseHeaders(401, -1); exchange.close(); return;
+            }
+            Object result = exchange.getRequestURI().getQuery() == null ? full
+                    : new JSONObject().put("rows", new JSONArray().put(summary)).put("total", 53);
+            byte[] bytes = result.toString().getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var out = exchange.getResponseBody()) { out.write(bytes); }
+        });
+        server.start();
+        try {
+            SalesQuoteStore store = new SalesQuoteStore(new DatabaseManager(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "synthetic-token", 1));
+            var page = store.page("c1", 50, 50);
+            assertEquals(53, page.total());
+            assertEquals(52, page.rows().get(0).id());
+            assertEquals("Full notes", store.get("c1", 52).notes());
+            assertEquals(List.of("/v1/customers/c1/quotes?summary=1&limit=50&offset=50",
+                    "/v1/customers/c1/quotes/52"), requests);
+        } finally { server.stop(0); }
+    }
+
     @Test public void remoteCrudAndConversionFollowAuthenticatedContract() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         List<String> requests = java.util.Collections.synchronizedList(new ArrayList<>());

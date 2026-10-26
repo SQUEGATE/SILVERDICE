@@ -69,6 +69,24 @@ public class StatementReaderStoreTest {
         }
     }
 
+    @Test public void zelleFilterPreservesDatabaseMatchesInBothNameOrders() {
+        List<String> names = List.of("Zelle From Jane Paret-Swihl", "Zelle From Paret-Swihl Jane",
+                "Zel From Jane ParetSwihl", "zEL from PARETSWIHL, JANE");
+        List<StatementPdfReader.SourceRow> sources = new java.util.ArrayList<>();
+        for (int i = 0; i < names.size(); i++) {
+            sources.add(source("1:" + (i + 1), 1, i + 1, names.get(i), "9/8", (110 + i) + ".00", "deposit", ""));
+        }
+        List<StatementPdfReader.SourceRow> filtered = StatementPdfReader.zelleDepositRows(sources);
+        assertEquals(4, filtered.size());
+        List<StatementReaderStore.PreviewRow> preview = store.preview(hash('d'), filtered, List.of(jane));
+        assertEquals(4, preview.size());
+        for (StatementReaderStore.PreviewRow row : preview) {
+            assertEquals("ready", row.status());
+            assertEquals("c1", row.customerId());
+        }
+        assertTrue(database.getStatementRecords("c1").isEmpty());
+    }
+
     @Test public void partialNamesRequireManualSelectionAndAmbiguousNamesStayReview() {
         List<StatementReaderStore.PreviewRow> partial = store.preview(hash('b'),
                 List.of(source("1:1", 1, 1, "9/8 Zelle from Jane", "9/8", "20.00", "deposit", "")),

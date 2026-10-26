@@ -1,8 +1,8 @@
 export const LIMITS = Object.freeze({ bytes: 25 * 1024 * 1024, pages: 100, rows: 1000 });
 
 const dateStart = /^(\d{1,2}\/\d{1,2}(?:\/\d{4})?)(?=\s|$)/;
-const outgoing = /\bzelle\s+to\b|\bwithdrawals?\b|\bsubtractions?\b|\bpurchase\b|\bdebit\b|\bpayment\s+to\b/i;
-const incoming = /\bzelle\s+from\b|\bdeposits?\b|\bincoming\b|\bcredit\b/i;
+const outgoing = /\b(?:zelle|zel)\s+to\b|\bwithdrawals?\b|\bsubtractions?\b|\bpurchase\b|\bdebit\b|\bpayment\s+to\b/i;
+const incoming = /\b(?:zelle|zel)\s+from\b|\bdeposits?\b|\bincoming\b|\bcredit\b/i;
 const moneyPattern = /(?:\$\s*)?-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}(?!\d)/g;
 
 function tokens(item) {
@@ -20,7 +20,8 @@ function tokens(item) {
 export function groupTextLines(items) {
   const lines = [];
   for (const item of items.flatMap(tokens).sort((a, b) => b.y - a.y || a.x - b.x)) {
-    let line = lines.find(l => Math.abs(l.y - item.y) <= 2.5);
+    let line = lines[lines.length - 1];
+    if (line && Math.abs(line.y - item.y) > 2.5) line = null;
     if (!line) lines.push(line = { y: item.y, items: [] });
     line.items.push(item);
   }
@@ -72,7 +73,14 @@ function amountCells(items) {
 }
 
 function extractReference(text) {
-  return (/\bref(?:erence)?\.?\s*(?:#|:)?\s*([A-Za-z0-9][A-Za-z0-9_-]{1,159})/i.exec(text)?.[1] || "").slice(0, 160);
+  for (const match of text.matchAll(/\bref(?:erence)?\.?\s*(?:#|:)?\s*([A-Za-z0-9][A-Za-z0-9._:/#-]{0,159})(?![A-Za-z0-9._:/#-])/gi)) {
+    if (/\d/.test(match[1])) return match[1];
+  }
+  return "";
+}
+
+export function zelleDepositRows(rows) {
+  return rows.filter(row => row.direction === "deposit" && /\b(?:zelle|zel)\b/i.test(row.text) && !outgoing.test(row.text));
 }
 
 export function extractStatementRows(pages, { currentYear = new Date().getFullYear() } = {}) {

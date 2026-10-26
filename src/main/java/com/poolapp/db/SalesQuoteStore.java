@@ -44,6 +44,7 @@ public final class SalesQuoteStore {
             for (int i = 0; i < rows.length(); i++) result.add(SalesQuote.fromJson(rows.getJSONObject(i)));
             return result;
         }
+
         try (Connection c = connect(); PreparedStatement s = c.prepareStatement(
                 "SELECT * FROM sales_quotes WHERE customer_id=? ORDER BY quote_id DESC")) {
             s.setString(1, customerId);
@@ -53,6 +54,48 @@ public final class SalesQuoteStore {
         } catch (SQLException e) { throw failure(e); }
     }
 
+        public record Summary(long id, String number, String date, boolean converted) {
+            public static Summary fromJson(JSONObject row) {
+                return new Summary(row.getLong("quote_id"), row.getString("quote_number"), row.getString("quote_date"),
+                        !row.isNull("converted_at") && !row.optString("converted_at").isBlank());
+            }
+        }
+        public record Page(List<Summary> rows, int total) { }
+
+        public Page page(String customerId, int limit, int offset) {
+            if (limit < 1 || limit > 200 || offset < 0) throw new IllegalArgumentException("Invalid quote page");
+            if (database.getApiClient() != null) {
+                JSONObject page = CompManagerApiClient.object(database.getApiClient().get(
+                        path(customerId) + "?summary=1&limit=" + limit + "&offset=" + offset));
+                List<Summary> rows = new ArrayList<>();
+                JSONArray json = page.getJSONArray("rows");
+                for (int i = 0; i < json.length(); i++) rows.add(Summary.fromJson(json.getJSONObject(i)));
+                return new Page(rows, page.getInt("total"));
+            }
+            try (Connection c = connect()) {
+                int total;
+                try (PreparedStatement s = c.prepareStatement("SELECT COUNT(*) FROM sales_quotes WHERE customer_id=?")) {
+                    s.setString(1, customerId);
+                    try (ResultSet rs = s.executeQuery()) { rs.next(); total = rs.getInt(1); }
+                }
+                List<Summary> rows = new ArrayList<>();
+                try (PreparedStatement s = c.prepareStatement("SELECT quote_id,quote_number,customer_id,quote_date,"
+                        + "'' AS notes,'' AS terms,'[]' AS lines_json,converted_at,created_at,updated_at "
+                        + "FROM sales_quotes WHERE customer_id=? ORDER BY quote_id DESC LIMIT ? OFFSET ?")) {
+                    s.setString(1, customerId); s.setInt(2, limit); s.setInt(3, offset);
+                    try (ResultSet rs = s.executeQuery()) { while (rs.next()) rows.add(new Summary(rs.getLong("quote_id"),
+                            rs.getString("quote_number"), rs.getString("quote_date"), rs.getString("converted_at") != null)); }
+                }
+                return new Page(rows, total);
+            } catch (SQLException e) { throw failure(e); }
+        }
+
+        public SalesQuote get(String customerId, long id) {
+            if (database.getApiClient() != null) return SalesQuote.fromJson(CompManagerApiClient.object(
+                    database.getApiClient().get(path(customerId) + "/" + id)));
+            try (Connection c = connect()) { return load(c, customerId, id); }
+            catch (SQLException e) { throw failure(e); }
+        }
     public SalesQuote save(SalesQuote quote) {
         if (quote.converted()) throw new IllegalStateException("Converted quotations are read-only.");
         if (database.getApiClient() != null) {

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.poolapp.OptimizedDatabaseTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-26T20:38:24.133Z" hostname="SQUEGATE" time="1.208">
+  <properties/>
+  <testcase name="groupedBalancesAndStatementPagesKeepFullRunningBalances" classname="com.poolapp.OptimizedDatabaseTest" time="0.586"/>
+  <testcase name="visitPagesOmitPhotoButDetailRoundTripsIt" classname="com.poolapp.OptimizedDatabaseTest" time="0.198"/>
+  <testcase name="monthlyBatchRollsBackEveryChargeWhenOneFails" classname="com.poolapp.OptimizedDatabaseTest" time="0.239"/>
+  <testcase name="monthlyBatchIsAtomicScopedAndRetrySafe" classname="com.poolapp.OptimizedDatabaseTest" time="0.185"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

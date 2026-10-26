@@ -20,6 +20,43 @@ export default {
       }
 
       const session = await authenticateRequest(request, env);
+      if (url.pathname === "/v1/balances" && request.method === "GET") {
+        requirePermission(session, "canViewStatements");
+        const access = customerAccessSql(session);
+        const rows = await turso(env, `SELECT c.customer_id, COALESCE(SUM(s.amount), 0) AS balance
+          FROM (SELECT customer_id FROM customers WHERE company_id = ?${access.sql}) c
+          LEFT JOIN statement_records s ON s.company_id = ? AND s.customer_id = c.customer_id
+          GROUP BY c.customer_id ORDER BY c.customer_id`, requiredCompanyId(session), ...access.args, requiredCompanyId(session));
+        return json({ rows }, 200, request);
+      }
+      if (url.pathname === "/v1/statements/monthly" && request.method === "POST") {
+        return await createMonthlyStatements(request, env, session);
+      }
+      if (url.pathname === "/v1/settings/batch" && request.method === "PUT") {
+        requirePermission(session, "canEditPdf");
+        const body = await readJson(request, 2 * 1024 * 1024);
+        if (Object.keys(body).some(key => key !== "settings") || !body.settings
+            || typeof body.settings !== "object" || Array.isArray(body.settings)
+            || Object.keys(body.settings).length > 200) throw httpError(400, "Invalid settings");
+        const statements = Object.entries(body.settings).map(([key, value]) => {
+          const settingKey = requiredString(key, "key", 160);
+          validateSetting(settingKey, value);
+          return settingStatement(requiredCompanyId(session), settingKey, value);
+        });
+        if (statements.length) await tursoTransaction(env, statements);
+        return json({ saved: true }, 200, request);
+      }
+      const detailMatch = url.pathname.match(/^\/v1\/(quotes|visits)\/(\d+)$/);
+      if (detailMatch && request.method === "GET") {
+        const quote = detailMatch[1] === "quotes";
+        requirePermission(session, quote ? "canAccessSalesQuote" : "canAccessVisits");
+        const rows = await turso(env, `SELECT customer_id FROM ${quote ? "sales_quotes" : "customer_visits"}
+          WHERE company_id = ? AND ${quote ? "quote_id" : "visit_id"} = ?`, requiredCompanyId(session), Number(detailMatch[2]));
+        if (!rows.length) throw httpError(404, "Record not found");
+        return quote
+          ? await handleQuotes(request, env, session, rows[0].customer_id, Number(detailMatch[2]), false)
+          : await getVisit(request, env, session, rows[0].customer_id, Number(detailMatch[2]));
+      }
       if (url.pathname === "/v1/statement-reader/preview" && request.method === "POST") {
         return await previewReader(request, env, session);
       }
@@ -120,9 +157,7 @@ export default {
         requirePermission(session, "canEditPdf");
         const body = await readJson(request, 700 * 1024);
         const settingKey = requiredString(body.key, "key", 160);
-        const maxValueLength = settingKey === "logoData" ? 600000 : 16000;
-        if (typeof body.value !== "string" || body.value.length > maxValueLength) throw httpError(400, `value must be a string no longer than ${maxValueLength} characters`);
-        if (settingKey === "logoData" && body.value && !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(body.value)) throw httpError(400, "logoData must be a PNG or JPEG data URL");
+        validateSetting(settingKey, body.value);
         await turso(env, "INSERT INTO pdf_settings (company_id, setting_key, setting_value) VALUES (?, ?, ?) ON CONFLICT(company_id, setting_key) DO UPDATE SET setting_value = excluded.setting_value", requiredCompanyId(session), settingKey, body.value);
         return json({ saved: true }, 200, request);
       }
@@ -203,6 +238,9 @@ export default {
         return await createVisit(request, env, session, decodeURIComponent(visitsMatch[1]));
       }
       const visitMatch = url.pathname.match(/^\/v1\/customers\/([^/]+)\/visits\/(\d+)$/);
+      if (visitMatch && request.method === "GET") {
+        return await getVisit(request, env, session, decodeURIComponent(visitMatch[1]), Number(visitMatch[2]));
+      }
       if (visitMatch && request.method === "PUT") {
         return await updateVisit(request, env, session, decodeURIComponent(visitMatch[1]), Number(visitMatch[2]));
       }
@@ -279,16 +317,9 @@ async function saveCompany(request, env) {
 }
 
 async function deleteCompany(request, env, companyId) {
-  await turso(env, "DELETE FROM reader_imports WHERE company_id = ?", companyId);
-  await turso(env, "DELETE FROM accounts WHERE company_id = ?", companyId);
-  await turso(env, "DELETE FROM sales_quotes WHERE company_id = ?", companyId);
-  await turso(env, "DELETE FROM sales_quote_sequences WHERE company_id = ?", companyId);
-  await turso(env, "DELETE FROM customer_visits WHERE company_id = ?", companyId);
-  await turso(env, "DELETE FROM statement_records WHERE company_id = ?", companyId);
-  await turso(env, "DELETE FROM customers WHERE company_id = ?", companyId);
-  await turso(env, "DELETE FROM record_types WHERE company_id = ?", companyId);
-  await turso(env, "DELETE FROM pdf_settings WHERE company_id = ?", companyId);
-  await turso(env, "DELETE FROM companies WHERE company_id = ?", companyId);
+  await tursoTransaction(env, ["reader_imports", "accounts", "monthly_statement_requests", "sales_quotes",
+    "sales_quote_sequences", "customer_visits", "statement_records", "customers", "record_types", "pdf_settings", "companies"]
+    .map(table => ({ sql: `DELETE FROM ${table} WHERE company_id = ?`, args: [companyId] })));
   return json({ deleted: true }, 200, request);
 }
 
@@ -411,17 +442,52 @@ async function listCustomers(request, env, session) {
   const args = [requiredCompanyId(session)];
   sql += filters.sql;
   args.push(...filters.args);
+  if (url.searchParams.has("service_day")) {
+    sql += " AND service_day = ?";
+    args.push(url.searchParams.get("service_day"));
+  }
   if (query) {
-    sql += " AND (lower(first_name) LIKE ? OR lower(last_name) LIKE ? OR lower(address) LIKE ? OR lower(city) LIKE ? OR lower(state) LIKE ? OR lower(zip) LIKE ? OR lower(email) LIKE ?)";
+    sql += " AND (lower(first_name) LIKE ? OR lower(last_name) LIKE ? OR lower(address) LIKE ? OR lower(city) LIKE ? OR lower(state) LIKE ? OR lower(zip) LIKE ? OR lower(email) LIKE ? OR lower(customer_id) LIKE ? OR lower(phone) LIKE ? OR lower(first_name || ' ' || last_name) LIKE ?)";
     const pattern = `%${query}%`;
-    args.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern);
+    args.push(...Array(10).fill(pattern));
   }
   sql += orderById
     ? " ORDER BY CASE WHEN customer_id GLOB '[0-9]*' THEN CAST(customer_id AS INTEGER) ELSE 999999999 END, customer_id"
-    : " ORDER BY service_day, CASE WHEN route_order > 0 THEN 0 ELSE 1 END, route_order, last_name, first_name";
-  const rows = await turso(env, sql, ...args);
-  if (!orderById && !query && !filters.sql) await healRouteOrders(env, requiredCompanyId(session), rows);
-  return json(rows, 200, request);
+    : " ORDER BY service_day, CASE WHEN route_order > 0 THEN 0 ELSE 1 END, route_order, last_name, first_name, customer_id";
+  const result = await listResult(request, env, sql, args);
+  if (Array.isArray(result) && !orderById && !query && !filters.sql) await healRouteOrders(env, requiredCompanyId(session), result);
+  return json(result, 200, request);
+}
+
+function pagination(request) {
+  const params = new URL(request.url).searchParams;
+  if (!params.has("limit") && !params.has("offset")) return null;
+  const limit = params.get("limit") ?? "50", offset = params.get("offset") ?? "0";
+  if (!/^\d+$/.test(limit) || !/^\d+$/.test(offset) || !Number.isSafeInteger(Number(offset))
+      || Number(limit) < 1 || Number(limit) > 500) throw httpError(400, "limit must be 1-500 and offset a nonnegative integer");
+  return { limit: Number(limit), offset: Number(offset) };
+}
+
+async function listResult(request, env, sql, args, transform = row => row) {
+  const page = pagination(request);
+  if (!page) return (await turso(env, sql, ...args)).map(transform);
+  const results = await tursoTransaction(env, [
+    { sql: `SELECT COUNT(*) AS total FROM (${sql})`, args },
+    { sql: `${sql} LIMIT ? OFFSET ?`, args: [...args, page.limit, page.offset] }
+  ]);
+  return { rows: results[1].map(transform), total: Number(results[0][0].total) };
+}
+
+function validateSetting(key, value) {
+  if (requiredString(key, "key", 160) !== key) throw httpError(400, "Invalid setting key");
+  const max = key === "logoData" ? 600000 : 16000;
+  if (typeof value !== "string" || value.length > max) throw httpError(400, `value must be a string no longer than ${max} characters`);
+  if (key === "logoData" && value && !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value)) throw httpError(400, "logoData must be a PNG or JPEG data URL");
+}
+
+function settingStatement(companyId, key, value) {
+  return { sql: "INSERT INTO pdf_settings (company_id, setting_key, setting_value) VALUES (?, ?, ?) ON CONFLICT(company_id, setting_key) DO UPDATE SET setting_value = excluded.setting_value",
+    args: [companyId, key, value] };
 }
 
 async function healRouteOrders(env, companyId, rows) {
@@ -475,9 +541,9 @@ function readerReference(value) {
 
 function readerDate(value, year, full = false) {
   if (typeof value !== "string") return "";
-  const match = /^(\d{2})\/(\d{2})(?:\/(\d{4}))?$/.exec(value);
+  const match = (full ? /^(\d{2})\/(\d{2})\/(\d{4})$/ : /^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?$/).exec(value);
   if (!match || (full && !match[3])) return "";
-  const result = `${match[1]}/${match[2]}/${match[3] || year}`;
+  const result = `${match[1].padStart(2, "0")}/${match[2].padStart(2, "0")}/${match[3] || year}`;
   try { return quoteDate(result); } catch { return ""; }
 }
 
@@ -527,21 +593,30 @@ function readerWords(value) {
   return value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
 }
 
-function readerMatch(text, customer) {
+function readerTextTokens(text) {
   const words = readerWords(text);
-  const first = readerWords(customer.first_name), last = readerWords(customer.last_name);
-  const name = [...first, ...last];
-  if (!first.length || !last.length || name.length > 12) return { full: false, partial: false };
-  const sorted = name.slice().sort().join(" ");
-  const compact = [first.join("") + last.join(""), last.join("") + first.join("")];
-  let full = false;
-  for (let start = 0; start < words.length && !full; start++) {
+  const compact = new Set(), sorted = new Set();
+  for (let start = 0; start < words.length; start++) {
     for (let size = 1; size <= 12 && start + size <= words.length; size++) {
       const window = words.slice(start, start + size);
-      if (compact.includes(window.join("")) || window.slice().sort().join(" ") === sorted) { full = true; break; }
+      compact.add(window.join(""));
+      sorted.add(window.slice().sort().join(" "));
     }
   }
-  return { full, partial: name.some(word => words.includes(word)) };
+  return { words: new Set(words), compact, sorted };
+}
+
+function readerNameTokens(customer) {
+  const first = readerWords(customer.first_name), last = readerWords(customer.last_name);
+  const name = [...first, ...last];
+  return { valid: first.length > 0 && last.length > 0 && name.length <= 12, name,
+    sorted: name.slice().sort().join(" "), compact: [first.join("") + last.join(""), last.join("") + first.join("")] };
+}
+
+function readerMatch(text, name) {
+  if (!name.valid) return { full: false, partial: false };
+  return { full: name.compact.some(value => text.compact.has(value)) || text.sorted.has(name.sorted),
+    partial: name.name.some(word => text.words.has(word)) };
 }
 
 async function previewReader(request, env, session) {
@@ -553,18 +628,23 @@ async function previewReader(request, env, session) {
   const payments = await turso(env, "SELECT customer_id, record_date, amount FROM statement_records WHERE company_id = ? AND amount < 0 AND customer_id IN (SELECT customer_id FROM customers WHERE company_id = ?" + filters.sql + ")",
     companyId, companyId, ...filters.args);
   const audit = await turso(env, "SELECT document_hash, source_id, reference FROM reader_imports WHERE company_id = ?", companyId);
+  const names = customers.map(customer => ({ customer, tokens: readerNameTokens(customer) }));
+  const sourceIds = new Set(audit.filter(item => item.document_hash === body.document_hash).map(item => item.source_id));
+  const references = new Set(audit.filter(item => item.reference).map(item => item.reference.toUpperCase()));
+  const paymentFingerprints = new Set(payments.map(payment =>
+    JSON.stringify([String(payment.customer_id), payment.record_date, Math.round(-Number(payment.amount) * 100)])));
   const year = new Date().getUTCFullYear();
   const fingerprints = new Map();
   const rows = body.rows.map(row => {
     const date = readerDate(row.date_text, year), amount = readerMoney(row.deposit_text);
     const result = { source_id: row.source_id, page: row.page, line: row.line, text: row.text,
       date, amount, customer_id: "", candidate_ids: [], status: "ignored", reason: "Not a dated deposit", reference: row.reference };
-    if (audit.some(item => (item.document_hash === body.document_hash && item.source_id === row.source_id)
-        || (row.reference && item.reference?.toUpperCase() === row.reference))) {
+    if (sourceIds.has(row.source_id) || (row.reference && references.has(row.reference))) {
       return { ...result, status: "imported", reason: "Source or bank reference already imported" };
     }
     if (row.direction !== "deposit" || !date || amount === null) return result;
-    const matches = customers.map(customer => ({ customer, ...readerMatch(row.text, customer) }));
+    const textTokens = readerTextTokens(row.text);
+    const matches = names.map(({ customer, tokens }) => ({ customer, ...readerMatch(textTokens, tokens) }));
     const full = matches.filter(match => match.full);
     result.candidate_ids = matches.filter(match => match.full || match.partial).map(match => String(match.customer.customer_id));
     result.status = "review";
@@ -575,8 +655,7 @@ async function previewReader(request, env, session) {
     result.status = "ready";
     result.reason = "Unique full name";
     const fingerprint = JSON.stringify([result.customer_id, date, amount]);
-    if (payments.some(payment => String(payment.customer_id) === result.customer_id && payment.record_date === date
-        && Math.round(-Number(payment.amount) * 100) === Math.round(amount * 100))) {
+    if (paymentFingerprints.has(JSON.stringify([result.customer_id, date, Math.round(amount * 100)]))) {
       result.status = "duplicate";
       result.reason = "Existing payment fingerprint";
     }
@@ -587,7 +666,8 @@ async function previewReader(request, env, session) {
   for (const group of fingerprints.values()) if (group.length > 1) {
     for (const row of group) { row.status = "duplicate"; row.reason = "Repeated deposit fingerprint in document"; }
   }
-  return json({ rows, year }, 200, request);
+  const referenced = new Set(rows.flatMap(row => [row.customer_id, ...row.candidate_ids]).filter(Boolean));
+  return json({ rows, year, customers: customers.filter(customer => referenced.has(String(customer.customer_id))) }, 200, request);
 }
 
 async function importReader(request, env, session) {
@@ -688,8 +768,10 @@ async function handleQuotes(request, env, session, customerId, quoteId, convert)
   const companyId = requiredCompanyId(session);
   const scope = [companyId, customerId, quoteId];
   if (quoteId === null && request.method === "GET") {
-    const rows = await turso(env, `SELECT ${QUOTE_COLUMNS} FROM sales_quotes WHERE company_id = ? AND customer_id = ? ORDER BY quote_id DESC`, companyId, customerId);
-    return json(rows.map(quoteResponse), 200, request);
+    const summary = new URL(request.url).searchParams.get("summary") === "1";
+    const columns = summary ? "quote_id, quote_number, customer_id, quote_date, converted_at, created_at, updated_at, (SELECT COALESCE(SUM(json_extract(value, '$.amount')), 0) FROM json_each(lines_json)) AS total" : QUOTE_COLUMNS;
+    return json(await listResult(request, env, `SELECT ${columns} FROM sales_quotes WHERE company_id = ? AND customer_id = ? ORDER BY quote_id DESC`,
+      [companyId, customerId], summary ? row => row : quoteResponse), 200, request);
   }
   if (quoteId === null && request.method === "POST") {
     const quote = validateQuote(await readJson(request, 2 * 1024 * 1024));
@@ -705,6 +787,7 @@ async function handleQuotes(request, env, session, customerId, quoteId, convert)
   if (!Number.isSafeInteger(quoteId) || quoteId < 1) throw httpError(404, "Quote not found");
   const existing = await turso(env, `SELECT ${QUOTE_COLUMNS} FROM sales_quotes WHERE company_id = ? AND customer_id = ? AND quote_id = ?`, ...scope);
   if (!existing.length) throw httpError(404, "Quote not found");
+  if (!convert && request.method === "GET") return json(quoteResponse(existing[0]), 200, request);
   if (existing[0].converted_at !== null) throw httpError(409, "Converted quotes are read-only");
   if (convert && request.method === "POST") {
     const now = new Date().toISOString();
@@ -747,12 +830,20 @@ async function handleQuotes(request, env, session, customerId, quoteId, convert)
 async function listVisits(request, env, session, customerId) {
   requirePermission(session, "canAccessVisits");
   await findAccessibleCustomer(env, session, customerId);
-  const rows = await turso(env,
-    "SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data FROM customer_visits WHERE company_id = ? AND customer_id = ? ORDER BY visited_at DESC, visit_id DESC",
-    requiredCompanyId(session), customerId);
-  return json(rows, 200, request);
+  const summary = new URL(request.url).searchParams.get("summary") === "1";
+  return json(await listResult(request, env,
+    `SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, ${summary ? "(photo_data <> '') AS has_photo" : "photo_data"} FROM customer_visits WHERE company_id = ? AND customer_id = ? ORDER BY visited_at DESC, visit_id DESC`,
+    [requiredCompanyId(session), customerId], summary ? row => ({ ...row, has_photo: Boolean(row.has_photo) }) : row => row), 200, request);
 }
 
+async function getVisit(request, env, session, customerId, visitId) {
+  requirePermission(session, "canAccessVisits");
+  await findAccessibleCustomer(env, session, customerId);
+  const rows = await turso(env, "SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data FROM customer_visits WHERE company_id = ? AND customer_id = ? AND visit_id = ?",
+    requiredCompanyId(session), customerId, visitId);
+  if (!rows.length) throw httpError(404, "Visit not found");
+  return json(rows[0], 200, request);
+}
 async function createVisit(request, env, session, customerId) {
   requirePermission(session, "canAccessVisits");
   await findAccessibleCustomer(env, session, customerId);
@@ -844,23 +935,77 @@ async function reorderCustomers(request, env, session) {
 async function deleteCustomer(request, env, session, customerId) {
   requirePermission(session, "canEditCustomers");
   await findAccessibleCustomer(env, session, customerId);
-  await turso(env, "DELETE FROM reader_imports WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
-  await turso(env, "DELETE FROM sales_quotes WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
-  await turso(env, "DELETE FROM customer_visits WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
-  await turso(env, "DELETE FROM statement_records WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
-  await turso(env, "DELETE FROM customers WHERE company_id = ? AND customer_id = ?", requiredCompanyId(session), customerId);
+  await tursoTransaction(env, ["reader_imports", "sales_quotes", "customer_visits", "statement_records", "customers"]
+    .map(table => ({ sql: `DELETE FROM ${table} WHERE company_id = ? AND customer_id = ?`, args: [requiredCompanyId(session), customerId] })));
   return json({ deleted: true }, 200, request);
 }
 
 async function listStatements(request, env, session, customerId) {
   requirePermission(session, "canViewStatements");
   await findAccessibleCustomer(env, session, customerId);
-  const rows = await turso(env,
-    "SELECT record_id, customer_id, record_date, type, amount FROM statement_records WHERE company_id = ? AND customer_id = ? ORDER BY record_id",
-    requiredCompanyId(session), customerId);
-  return json(rows, 200, request);
+  const page = pagination(request), args = [requiredCompanyId(session), customerId];
+  if (!page) return json(await turso(env, "SELECT record_id, customer_id, record_date, type, amount FROM statement_records WHERE company_id = ? AND customer_id = ? ORDER BY record_id", ...args), 200, request);
+  const tail = "substr(trim(record_date), instr(trim(record_date), '/') + 1)";
+  const month = "substr(trim(record_date), 1, instr(trim(record_date), '/') - 1)";
+  const day = `substr(${tail}, 1, instr(${tail}, '/') - 1)`;
+  const year = `substr(${tail}, instr(${tail}, '/') + 1)`;
+  const isoDate = `printf('%04d-%02d-%02d', CAST(${year} AS INTEGER), CAST(${month} AS INTEGER), CAST(${day} AS INTEGER))`;
+  const chronological = `CASE WHEN length(${month}) BETWEEN 1 AND 2 AND ${month} NOT GLOB '*[^0-9]*'
+    AND length(${day}) BETWEEN 1 AND 2 AND ${day} NOT GLOB '*[^0-9]*'
+    AND length(${year}) BETWEEN 1 AND 4 AND ${year} NOT GLOB '*[^0-9]*' AND CAST(${year} AS INTEGER) > 0
+    AND date(${isoDate}, '+0 days') = ${isoDate}
+    THEN ${isoDate} ELSE '9999-99-99' END`;
+  const results = await tursoTransaction(env, [
+    { sql: "SELECT COUNT(*) AS total, COALESCE(SUM(amount), 0) AS balance FROM statement_records WHERE company_id = ? AND customer_id = ?", args },
+    { sql: `SELECT record_id, customer_id, record_date, type, amount,
+        SUM(amount) OVER (ORDER BY ${chronological}, CASE WHEN amount >= 0 THEN 0 ELSE 1 END, record_id ROWS UNBOUNDED PRECEDING) AS run
+        FROM statement_records WHERE company_id = ? AND customer_id = ?
+        ORDER BY ${chronological} DESC, CASE WHEN amount >= 0 THEN 0 ELSE 1 END DESC, record_id DESC LIMIT ? OFFSET ?`,
+      args: [...args, page.limit, page.offset] }
+  ]);
+  return json({ rows: results[1], total: Number(results[0][0].total), balance: Number(results[0][0].balance) }, 200, request);
 }
 
+async function createMonthlyStatements(request, env, session) {
+  requirePermission(session, "canEditStatements");
+  requirePermission(session, "canViewStatements");
+  const body = await readJson(request);
+  if (Object.keys(body).some(key => !["request_id", "date", "type"].includes(key))
+      || typeof body.request_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.request_id)) {
+    throw httpError(400, "request_id must be a UUID");
+  }
+  const date = quoteDate(body.date), type = requiredString(body.type, "type", 128);
+  const requestId = body.request_id.toLowerCase(), companyId = requiredCompanyId(session);
+  const previous = await turso(env, "SELECT record_date, type, added FROM monthly_statement_requests WHERE company_id = ? AND request_id = ?", companyId, requestId);
+  const response = saved => {
+    if (saved.record_date !== date || saved.type !== type) throw httpError(409, "request_id already used with a different request body");
+    return json({ added: saved.added, request_id: requestId }, 200, request);
+  };
+  if (previous.length) return response(previous[0]);
+  const types = await turso(env, `SELECT type_name,
+      (SELECT setting_value FROM pdf_settings WHERE company_id = ? AND setting_key = 'recordTypeCreditKeywords') AS credit_keywords
+      FROM record_types WHERE company_id = ? AND type_name = ?`, companyId, companyId, type);
+  const keywords = String(types[0]?.credit_keywords || "payment, paid, credit, refund, discount, adjustment, rebate, deposit, return, transfer in, check, cheque")
+    .split(/[,\n]/).map(value => value.trim().toLowerCase()).filter(Boolean);
+  if (!types.length || !keywords.some(keyword => type.toLowerCase().includes(keyword))) {
+    throw httpError(400, "Monthly statements require an existing credit record type");
+  }
+  const access = customerAccessSql(session), claim = crypto.randomUUID();
+  const results = await tursoTransaction(env, [
+    { sql: "INSERT INTO monthly_statement_requests (company_id, request_id, record_date, type, added, claim) VALUES (?, ?, ?, ?, 0, ?) ON CONFLICT(company_id, request_id) DO NOTHING",
+      args: [companyId, requestId, date, type, claim] },
+    { sql: `WITH base AS MATERIALIZED (SELECT COALESCE(MAX(record_id), 0) AS last_id FROM statement_records WHERE company_id = ?),
+        eligible AS MATERIALIZED (SELECT customer_id, amount_charged FROM customers WHERE company_id = ? AND status <> 'Inactive'${access.sql})
+        INSERT INTO statement_records (company_id, record_id, customer_id, record_date, type, amount)
+        SELECT ?, base.last_id + ROW_NUMBER() OVER (ORDER BY eligible.customer_id), eligible.customer_id, ?, ?, eligible.amount_charged
+        FROM eligible, base WHERE EXISTS (SELECT 1 FROM monthly_statement_requests WHERE company_id = ? AND request_id = ? AND claim = ?)`,
+      args: [companyId, companyId, ...access.args, companyId, date, type, companyId, requestId, claim] },
+    { sql: "UPDATE monthly_statement_requests SET added = changes() WHERE company_id = ? AND request_id = ? AND claim = ?",
+      args: [companyId, requestId, claim] },
+    { sql: "SELECT record_date, type, added FROM monthly_statement_requests WHERE company_id = ? AND request_id = ?", args: [companyId, requestId] }
+  ]);
+  return response(results[3][0]);
+}
 async function createStatement(request, env, session, customerId) {
   requirePermission(session, "canEditStatements");
   await findAccessibleCustomer(env, session, customerId);
@@ -1011,6 +1156,7 @@ const BACKUP_TABLES = {
   customer_visits: ["visit_id", "customer_id", "visited_at", "ph", "chlo", "stb", "alk", "cal", "notes", "photo_data"],
   statement_records: ["record_id", "customer_id", "record_date", "type", "amount"],
   reader_imports: ["document_hash", "source_id", "customer_id", "record_id", "record_date", "amount", "reference", "source_text", "imported_at"],
+  monthly_statement_requests: ["request_id", "record_date", "type", "added", "claim"],
   sales_quotes: QUOTE_COLUMNS.split(", "),
   sales_quote_sequences: ["next_id"],
   record_types: ["type_name"],
@@ -1070,9 +1216,10 @@ function validateBackupVisits(visits, customerIds) {
 
 async function exportCompanyBackup(env, companyId) {
   const backup = { format: "comp-manager-backup", version: 1, company_id: companyId, created_at: new Date().toISOString() };
-  for (const [table, columns] of Object.entries(BACKUP_TABLES)) {
-    backup[table] = await turso(env, `SELECT ${columns.join(", ")} FROM ${table} WHERE company_id = ?`, companyId);
-  }
+  const tables = Object.entries(BACKUP_TABLES);
+  const results = await tursoTransaction(env, tables.map(([table, columns]) =>
+    ({ sql: `SELECT ${columns.join(", ")} FROM ${table} WHERE company_id = ?`, args: [companyId] })));
+  tables.forEach(([table], index) => { backup[table] = results[index]; });
   return backup;
 }
 
@@ -1106,12 +1253,22 @@ async function restoreCompanyBackup(request, env, companyId) {
   if (!backup || backup.format !== "comp-manager-backup" || backup.version !== 1) throw httpError(400, "This is not a Comp Manager cloud backup");
   if (Number(backup.company_id) !== companyId) throw httpError(400, "This backup belongs to a different company");
   for (const table of Object.keys(BACKUP_TABLES)) {
-    if (["customer_visits", "sales_quotes", "sales_quote_sequences", "reader_imports"].includes(table) && backup[table] === undefined) backup[table] = [];
+    if (["customer_visits", "sales_quotes", "sales_quote_sequences", "reader_imports", "monthly_statement_requests"].includes(table) && backup[table] === undefined) backup[table] = [];
     if (!Array.isArray(backup[table])) throw httpError(400, `Backup is missing ${table}`);
   }
   const customerIds = new Set(backup.customers.map(row => String(row.customer_id)));
   validateBackupVisits(backup.customer_visits, customerIds);
   validateBackupQuotes(backup, customerIds);
+  const monthlyIds = new Set();
+  for (const row of backup.monthly_statement_requests) {
+    if (!row || typeof row.request_id !== "string"
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(row.request_id)
+        || monthlyIds.has(row.request_id) || !readerDate(row.record_date, 0, true)
+        || !Number.isSafeInteger(row.added) || row.added < 0
+        || typeof row.claim !== "string" || !row.claim || row.claim.length > 80) throw httpError(400, "Invalid monthly request audit");
+    requiredString(row.type, "type", 128);
+    monthlyIds.add(row.request_id);
+  }
   const auditIds = new Set(), auditRefs = new Set();
   for (const row of backup.reader_imports) {
     if (!row || typeof row.document_hash !== "string" || !/^[a-f0-9]{64}$/.test(row.document_hash)
@@ -1132,6 +1289,16 @@ async function restoreCompanyBackup(request, env, companyId) {
     if (!customerIds.has(String(row.customer_id))) throw httpError(400, "Backup has statements for unknown customers");
   }
   const statements = [];
+  for (const row of backup.monthly_statement_requests) {
+    statements.push({
+      sql: `INSERT INTO monthly_statement_requests (company_id, request_id, record_date, type, added, claim) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(company_id, request_id) DO UPDATE SET added =
+          CASE WHEN monthly_statement_requests.record_date = excluded.record_date
+            AND monthly_statement_requests.type = excluded.type AND monthly_statement_requests.added = excluded.added
+          THEN monthly_statement_requests.added ELSE -1 END`,
+      args: [companyId, row.request_id, row.record_date, row.type, row.added, row.claim]
+    });
+  }
   // Restore is an audit UNION, never a replacement. Historical record IDs need not
   // exist in the restored statements. Tombstones for omitted customers also survive;
   // explicit customer/company deletion is the privacy cleanup boundary.
@@ -1161,7 +1328,7 @@ async function restoreCompanyBackup(request, env, companyId) {
     statements.push({ sql: "INSERT INTO sales_quote_sequences (company_id, next_id) VALUES (?, ?) ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)", args: [companyId, nextId] });
   }
   try { await tursoTransaction(env, statements); }
-  catch { throw httpError(409, "Restore transaction failed; conflicting reader audit identities cannot be replaced"); }
+  catch { throw httpError(409, "Restore transaction failed; conflicting audit identities cannot be replaced"); }
   return { restored: true, customers: backup.customers.length, statements: backup.statement_records.length, visits: backup.customer_visits.length, quotes: backup.sales_quotes.length };
 }
 
@@ -1228,24 +1395,43 @@ async function migrateVisits(env) {
   await tursoCore(env, "CREATE INDEX IF NOT EXISTS customer_visits_customer_idx ON customer_visits(company_id, customer_id, visited_at)");
 }
 
-let schemaReady;
+const schemaReady = new Map();
 async function turso(env, sql, ...args) {
-  schemaReady ??= (async () => {
-    for (const ddl of [
-      "ALTER TABLE customers ADD COLUMN starting_date TEXT NOT NULL DEFAULT ''",
-      "ALTER TABLE customers ADD COLUMN status TEXT NOT NULL DEFAULT 'Active'",
-      "ALTER TABLE customers ADD COLUMN route_order INTEGER NOT NULL DEFAULT 0"
-    ]) {
-      try { await tursoCore(env, ddl); } catch { /* column already exists */ }
+  const key = env.SILVERDICE_URL || env.TURSO_HTTP_URL;
+  if (!schemaReady.has(key)) schemaReady.set(key, initializeSchema(env).catch(error => { schemaReady.delete(key); throw error; }));
+  await schemaReady.get(key);
+  return tursoCore(env, sql, ...args);
+}
+
+async function initializeSchema(env) {
+  const exists = await tursoCore(env, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'");
+  if (!exists.length) await tursoCore(env, "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+  const versions = new Set((await tursoCore(env, "SELECT version FROM schema_migrations")).map(row => Number(row.version)));
+  if (!versions.has(1)) {
+    const columns = await tursoCore(env, "PRAGMA table_info(customers)");
+    for (const [name, definition] of [
+      ["starting_date", "TEXT NOT NULL DEFAULT ''"],
+      ["status", "TEXT NOT NULL DEFAULT 'Active'"],
+      ["route_order", "INTEGER NOT NULL DEFAULT 0"]
+    ]) if (!columns.some(column => column.name === name)) {
+      try { await tursoCore(env, `ALTER TABLE customers ADD COLUMN ${name} ${definition}`); }
+      catch (error) { if (!error.message.includes(`duplicate column name: ${name}`)) throw error; }
     }
     await migrateVisits(env);
     await migrateQuotes(env);
     await tursoCore(env, READER_TABLE_SQL);
     await tursoCore(env, "CREATE UNIQUE INDEX IF NOT EXISTS reader_imports_reference_idx ON reader_imports(company_id, reference COLLATE NOCASE) WHERE reference IS NOT NULL AND reference <> ''");
-  })().catch(error => { schemaReady = undefined; throw error; });
-  await schemaReady;
-  return tursoCore(env, sql, ...args);
+    await tursoCore(env, "INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?) ON CONFLICT(version) DO NOTHING", new Date().toISOString());
+  }
+  if (!versions.has(2)) {
+    await tursoTransaction(env, [
+      { sql: MONTHLY_TABLE_SQL, args: [] },
+      { sql: "INSERT INTO schema_migrations (version, applied_at) VALUES (2, ?) ON CONFLICT(version) DO NOTHING", args: [new Date().toISOString()] }
+    ]);
+  }
 }
+
+const MONTHLY_TABLE_SQL = "CREATE TABLE IF NOT EXISTS monthly_statement_requests (company_id INTEGER NOT NULL, request_id TEXT NOT NULL, record_date TEXT NOT NULL, type TEXT NOT NULL, added INTEGER NOT NULL CHECK (typeof(added) = 'integer' AND added >= 0), claim TEXT NOT NULL, PRIMARY KEY (company_id, request_id), FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE)";
 
 const READER_TABLE_SQL = "CREATE TABLE IF NOT EXISTS reader_imports (company_id INTEGER NOT NULL, document_hash TEXT NOT NULL, source_id TEXT NOT NULL, customer_id TEXT NOT NULL, record_id INTEGER NOT NULL CHECK (record_id > 0), record_date TEXT NOT NULL, amount REAL NOT NULL CHECK (amount < 0 AND amount >= -999999999.99), reference TEXT, source_text TEXT NOT NULL, imported_at TEXT NOT NULL, PRIMARY KEY (company_id, document_hash, source_id), FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE)";
 
@@ -1265,7 +1451,7 @@ async function tursoCore(env, sql, ...args) {
   if (!response.ok) throw new Error(`Turso request failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
   const payload = await response.json();
   const result = payload.results?.[0];
-  if (result?.type !== "ok") throw new Error("Turso rejected the database operation");
+  if (result?.type !== "ok") throw new Error(`Turso rejected the database operation: ${result?.error?.message || "unknown error"}`);
   const queryResult = result.response?.result;
   if (!queryResult) return [];
   const columns = queryResult.cols || [];

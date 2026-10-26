@@ -2,6 +2,14 @@
 
 This is a Java desktop app for managing pool service customers.
 
+### Desktop browsing and statement exports
+
+Customers normally load in pages of 50, with search/day filters applied before pagination. Use **Previous 50** / **Next 50** to browse. Customer-details Previous/Next navigation still uses the complete accessible customer sequence.
+
+To reorder a route, clear search, choose one service day, and enable **Reorder entire day**. This explicitly loads the complete accessible day and disables pagination; dragging is unavailable on ordinary partial pages, so saving an order cannot accidentally submit only 50 customers.
+
+Statement PDF generation, email attachments, and SMS delivery run in the background with duplicate-action protection and visible completion/errors. Save-file dialogs remain on the UI thread. Exports always use the complete statement history, independent of the displayed statement page.
+
 ## What it includes
 - Add and edit customer records
 - Store customer data in a local SQLite database file (`customer.db`)

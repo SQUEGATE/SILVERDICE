@@ -220,6 +220,7 @@ public final class TursoDataMigrator {
             }
             migrateSalesQuotes(turso, companyId, company);
             migrateReaderImports(turso, companyId, company);
+            migrateMonthlyRequests(turso, companyId, company);
         }
         System.out.println("Migrated company " + companyId + " from " + databasePath.getFileName());
     }
@@ -280,6 +281,33 @@ public final class TursoDataMigrator {
                         rows.getString("customer_id"), rows.getLong("record_id"), rows.getString("record_date"),
                         rows.getDouble("amount"), rows.getString("reference"),
                         rows.getString("source_text"), rows.getString("imported_at"));
+            }
+        }
+    }
+
+    private static void migrateMonthlyRequests(TursoHttpClient turso, long companyId, Connection company)
+            throws SQLException, IOException, InterruptedException {
+        try (ResultSet tables = company.getMetaData().getTables(null, null, "monthly_statement_batches", null)) {
+            if (!tables.next()) return;
+        }
+        try (PreparedStatement query = company.prepareStatement("SELECT request_id, record_date, type, added FROM monthly_statement_batches");
+             ResultSet rows = query.executeQuery()) {
+            while (rows.next()) {
+                List<java.util.Map<String, String>> existing = turso.execute("SELECT record_date, type, added FROM monthly_statement_requests WHERE company_id = ? AND request_id = ?",
+                        companyId, rows.getString("request_id"));
+                if (!existing.isEmpty()) {
+                    java.util.Map<String, String> saved = existing.get(0);
+                    if (!rows.getString("record_date").equals(saved.get("record_date"))
+                            || !rows.getString("type").equals(saved.get("type"))
+                            || rows.getInt("added") != Integer.parseInt(saved.get("added"))) {
+                        throw new IllegalStateException("Conflicting monthly billing request identity during migration.");
+                    }
+                    continue;
+                }
+                turso.execute("INSERT INTO monthly_statement_requests(company_id, request_id, record_date, type, added, claim)"
+                                + " VALUES (?, ?, ?, ?, ?, ?)",
+                        companyId, rows.getString("request_id"), rows.getString("record_date"), rows.getString("type"),
+                        rows.getInt("added"), java.util.UUID.randomUUID().toString());
             }
         }
     }

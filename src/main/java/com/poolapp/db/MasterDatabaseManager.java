@@ -22,10 +22,12 @@ public class MasterDatabaseManager {
     private final Path databasePath;
     private final String dbUrl;
     private final CompManagerApiClient apiClient;
+    private final String apiBaseUrl;
     private String sessionToken;
 
     public MasterDatabaseManager() {
         String apiBaseUrl = AppApiConfiguration.getBaseUrl();
+        this.apiBaseUrl = apiBaseUrl.isBlank() ? null : apiBaseUrl;
         if (!apiBaseUrl.isBlank()) {
             this.databasePath = null;
             this.dbUrl = null;
@@ -42,6 +44,7 @@ public class MasterDatabaseManager {
     }
 
     public MasterDatabaseManager(Path databasePath) {
+        this.apiBaseUrl = null;
         this.databasePath = databasePath.toAbsolutePath().normalize();
         this.dbUrl = "jdbc:sqlite:" + this.databasePath;
         this.apiClient = null;
@@ -57,6 +60,7 @@ public class MasterDatabaseManager {
         }
         this.databasePath = null;
         this.dbUrl = null;
+        this.apiBaseUrl = apiBaseUrl;
         this.apiClient = new CompManagerApiClient(apiBaseUrl, apiSessionToken);
         this.sessionToken = apiSessionToken;
     }
@@ -70,24 +74,24 @@ public class MasterDatabaseManager {
     }
 
     public String getApiBaseUrl() {
-        return apiClient == null ? null : AppApiConfiguration.getBaseUrl();
+        return apiBaseUrl;
     }
 
     public DatabaseManager createDatabaseManager(long companyId) {
         if (apiClient == null) throw new IllegalStateException("Remote API mode is not enabled");
         JSONObject result = CompManagerApiClient.object(apiRequest("POST", "/v1/admin/companies/" + companyId + "/session", new JSONObject()));
-        return new DatabaseManager(AppApiConfiguration.getBaseUrl(), result.getString("token"), companyId);
+        return new DatabaseManager(apiBaseUrl, result.getString("token"), companyId);
     }
 
     public DatabaseManager createDatabaseManager(long companyId, String token) {
         if (apiClient == null) throw new IllegalStateException("Remote API mode is not enabled");
-        return new DatabaseManager(AppApiConfiguration.getBaseUrl(), token, companyId);
+        return new DatabaseManager(apiBaseUrl, token, companyId);
     }
 
     public DatabaseManager createEmployeePreviewDatabaseManager(long employeeId, long companyId) {
         if (apiClient == null) throw new IllegalStateException("Remote API mode is not enabled");
         JSONObject result = CompManagerApiClient.object(apiRequest("POST", "/v1/companies/employees/" + employeeId + "/session", new JSONObject()));
-        return new DatabaseManager(AppApiConfiguration.getBaseUrl(), result.getString("token"), companyId);
+        return new DatabaseManager(apiBaseUrl, result.getString("token"), companyId);
     }
 
     private JSONObject remoteLogin(String username, String password) {
@@ -105,7 +109,7 @@ public class MasterDatabaseManager {
 
     private Object apiRequest(String method, String path, JSONObject body) {
         if (sessionToken == null || sessionToken.isBlank()) throw new IllegalStateException("Log in before using cloud data");
-        CompManagerApiClient authenticated = new CompManagerApiClient(AppApiConfiguration.getBaseUrl(), sessionToken);
+        CompManagerApiClient authenticated = new CompManagerApiClient(apiBaseUrl, sessionToken);
         switch (method) {
             case "GET": return authenticated.get(path);
             case "POST": return authenticated.post(path, body == null ? new JSONObject() : body);
@@ -288,6 +292,30 @@ public class MasterDatabaseManager {
         saveCompany(profile);
     }
 
+    public record Authentication(String role, CompanyProfile company, EmployeeProfile employee) { }
+
+    /** One cloud password verification, followed by role-specific profile decoding. */
+    public Authentication authenticate(String username, String password) {
+        if (apiClient != null) {
+            sessionToken = null;
+            JSONObject account = remoteLogin(username, password);
+            if (account == null) return null;
+            String role = account.optString("role");
+            if (!List.of("MASTER", "COMPANY", "EMPLOYEE").contains(role))
+                throw new IllegalStateException("Unsupported account role: " + role);
+            String token = account.optString("token");
+            if (token.isBlank()) throw new IllegalStateException("Login did not return a session token");
+            sessionToken = token;
+            return new Authentication(role, "COMPANY".equals(role) ? authenticatedCompany(account) : null,
+                    "EMPLOYEE".equals(role) ? authenticatedEmployee(account) : null);
+        }
+        if (authenticateMaster(username, password)) return new Authentication("MASTER", null, null);
+        CompanyProfile company = authenticateCompany(username, password);
+        if (company != null) return new Authentication("COMPANY", company, null);
+        EmployeeProfile employee = authenticateEmployee(username, password);
+        return employee == null ? null : new Authentication("EMPLOYEE", null, employee);
+    }
+
     public boolean authenticateMaster(String username, String password) {
         if (apiClient != null) {
             JSONObject account = remoteLogin(username, password);
@@ -312,6 +340,12 @@ public class MasterDatabaseManager {
             JSONObject account = remoteLogin(username, password);
             if (account == null || !"COMPANY".equals(account.optString("role"))) return null;
             sessionToken = account.optString("token", null);
+            return authenticatedCompany(account);
+        }
+        return authenticateLocalCompany(username, password);
+    }
+
+    private CompanyProfile authenticatedCompany(JSONObject account) {
             CompanyProfile company = new CompanyProfile();
             company.setId(account.optLong("companyId"));
             company.setCompanyName(account.optString("companyName"));
@@ -320,7 +354,9 @@ public class MasterDatabaseManager {
             company.setUsername(account.optString("username"));
             company.setApiSessionToken(sessionToken);
             return company;
-        }
+    }
+
+    private CompanyProfile authenticateLocalCompany(String username, String password) {
         String sql = "SELECT company_id, company_name, phone, email, address, username, password, database_file FROM companies WHERE username = ? AND password = ?";
         try (Connection connection = getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, username);
@@ -341,6 +377,12 @@ public class MasterDatabaseManager {
             JSONObject account = remoteLogin(username, password);
             if (account == null || !"EMPLOYEE".equals(account.optString("role"))) return null;
             sessionToken = account.optString("token", null);
+            return authenticatedEmployee(account);
+        }
+        return authenticateLocalEmployee(username, password);
+    }
+
+    private EmployeeProfile authenticatedEmployee(JSONObject account) {
             EmployeeProfile employee = new EmployeeProfile();
             employee.setEmployeeId(account.optLong("employeeId"));
             employee.setCompanyId(account.optLong("companyId"));
@@ -368,7 +410,9 @@ public class MasterDatabaseManager {
             employee.setAllowedCustomerIds(jsonStringList(account.optJSONArray("allowedCustomerIds")));
             employee.setAllowedDays(jsonStringList(account.optJSONArray("allowedDays")));
             return employee;
-        }
+    }
+
+    private EmployeeProfile authenticateLocalEmployee(String username, String password) {
         String sql = "SELECT e.employee_id, e.company_id, c.company_name, c.database_file, e.first_name, e.last_name, e.phone, e.email, e.username, e.password, "
             + "e.can_view_customer_details, e.can_view_customers, e.can_view_statements, e.can_access_visits, e.can_access_sales_quote, e.can_access_statement_reader, e.can_view_revenue_summary, e.can_view_pdf, e.can_edit_pdf, e.can_edit_customers, e.can_edit_statements, "
                 + "e.allowed_customer_ids, e.allowed_days "

@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "test": "node --test test/*.test.js test/*.test.mjs",
     "pdf-assets": "node scripts/copy-pdfjs.mjs",
     "predev": "npm run pdf-assets",
     "dev": "wrangler dev",

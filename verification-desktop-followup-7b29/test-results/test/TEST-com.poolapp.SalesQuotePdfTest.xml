@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.poolapp.SalesQuotePdfTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-26T20:43:17.355Z" hostname="SQUEGATE" time="13.415">
+  <properties/>
+  <testcase name="preservesLongNotesTermsEveryLineAndRepeatedHeadersAcrossPages" classname="com.poolapp.SalesQuotePdfTest" time="10.605"/>
+  <testcase name="exportsVisualSampleWithSafeFilename" classname="com.poolapp.SalesQuotePdfTest" time="2.81"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Oct 26, 2026 4:43:28 PM org.apache.pdfbox.pdmodel.PDDocument save
+WARNING: You are overwriting the existing file EXAMPLE_AVERY_SALES_QUOTATION_SQ-000001.pdf, this will produce a corrupted file if you're also reading from it
+]]></system-err>
+</testsuite>

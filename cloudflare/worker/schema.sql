@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS customers (
     notes TEXT NOT NULL DEFAULT '',
     starting_date TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'Active',
+    route_order INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (company_id, customer_id),
     FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE
 );
@@ -143,4 +144,21 @@ CREATE TABLE IF NOT EXISTS pdf_settings (
     setting_value TEXT NOT NULL,
     PRIMARY KEY (company_id, setting_key),
     FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE
+);
+
+-- Request identities survive statement/customer deletion and are unioned on restore.
+CREATE TABLE IF NOT EXISTS monthly_statement_requests (
+    company_id INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    record_date TEXT NOT NULL,
+    type TEXT NOT NULL,
+    added INTEGER NOT NULL CHECK (typeof(added) = 'integer' AND added >= 0),
+    claim TEXT NOT NULL,
+    PRIMARY KEY (company_id, request_id),
+    FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
 );

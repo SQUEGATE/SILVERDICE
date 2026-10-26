@@ -55,6 +55,13 @@ public class VisitsPanel extends JPanel {
     private Customer activeCustomer;
     private boolean rebuildingHistory;
     private boolean busy;
+    private long generation;
+    private int visitOffset;
+    private int visitTotal;
+    private final JButton previousHistory = new JButton("Previous 50");
+    private final JButton nextHistory = new JButton("Next 50");
+    private final JLabel historyPage = new JLabel(" ");
+    private VisitRecord loadedVisit;
 
     public VisitsPanel(DatabaseManager database, Predicate<Customer> accessible) {
         super(new BorderLayout(8, 8));
@@ -143,8 +150,13 @@ public class VisitsPanel extends JPanel {
         past.add(new JLabel("Past visits:"), BorderLayout.WEST);
         past.add(history, BorderLayout.CENTER);
         form.add(past);
+        JPanel paging = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        paging.add(previousHistory); paging.add(historyPage); paging.add(nextHistory);
+        form.add(paging);
+        previousHistory.addActionListener(e -> loadVisitPage(activeCustomer, Math.max(0, visitOffset - 50)));
+        nextHistory.addActionListener(e -> loadVisitPage(activeCustomer, visitOffset + 50));
         history.addActionListener(e -> {
-            if (!rebuildingHistory) populateVisit();
+            if (!rebuildingHistory && !busy) loadSelectedVisit();
         });
         addSlider(form, "PH", ph, VisitRecord.PH_VALUES, null);
         addSlider(form, "CHLO", chlo, VisitRecord.CHLO_VALUES, null);
@@ -203,6 +215,7 @@ public class VisitsPanel extends JPanel {
                 return visit.id();
             }, deletedId -> {
                 visits.removeIf(v -> v.id() == deletedId);
+                visitTotal = Math.max(0, visitTotal - 1);
                 rebuildHistory(0);
                 status.setText("Visit deleted.");
             });
@@ -236,19 +249,39 @@ public class VisitsPanel extends JPanel {
     }
 
     private void loadVisits(Customer customer) {
-        background("Loading visits...", () -> database.getVisits(customer.getId()), found -> {
+        loadVisitPage(customer, 0);
+    }
+
+    private void loadVisitPage(Customer customer, int offset) {
+        if (busy || customer == null) return;
+        background("Loading visits...", () -> database.getVisitPage(customer.getId(), 50, offset), page -> {
             activeCustomer = customer;
+            visitOffset = offset;
+            visitTotal = page.getInt("total");
             customerName.setText(customer.getFullName());
             visits.clear();
-            visits.addAll(found);
+            org.json.JSONArray rows = page.getJSONArray("rows");
+            for (int i = 0; i < rows.length(); i++) visits.add(VisitRecord.fromJson(rows.getJSONObject(i)));
             rebuildHistory(0);
             pages.show(content, "visit");
             status.setText("Ready.");
         });
     }
 
+    private void loadSelectedVisit() {
+        VisitChoice choice = (VisitChoice) history.getSelectedItem();
+        if (choice == null || choice.visit() == null) { loadedVisit = null; populateVisit(); return; }
+        VisitRecord summary = choice.visit();
+        loadedVisit = null;
+        background("Loading visit details...", () -> database.getVisit(summary.customerId(), summary.id()), detail -> {
+            loadedVisit = detail;
+            populateVisit();
+        });
+    }
+
     private void rebuildHistory(long selectedId) {
         visits.sort(Comparator.comparing(VisitRecord::visitedAt).thenComparingLong(VisitRecord::id).reversed());
+        if (visits.size() > 50) visits.subList(50, visits.size()).clear();
         rebuildingHistory = true;
         history.removeAllItems();
         history.addItem(new VisitChoice(null));
@@ -258,12 +291,20 @@ public class VisitsPanel extends JPanel {
             if (visit.id() == selectedId) history.setSelectedItem(choice);
         }
         rebuildingHistory = false;
+        loadedVisit = null;
+        historyPage.setText((visitTotal == 0 ? 0 : visitOffset + 1) + "–"
+                + Math.min(visitOffset + 50, visitTotal) + " of " + visitTotal);
+        previousHistory.setEnabled(!busy && visitOffset > 0);
+        nextHistory.setEnabled(!busy && visitOffset + 50 < visitTotal);
+        if (selectedId != 0) {
+            loadedVisit = visits.stream().filter(v -> v.id() == selectedId).findFirst().orElse(null);
+        }
         populateVisit();
     }
 
     private void populateVisit() {
         VisitChoice choice = (VisitChoice) history.getSelectedItem();
-        VisitRecord visit = choice == null ? null : choice.visit();
+        VisitRecord visit = loadedVisit;
         deleteVisitButton.setEnabled(!busy && visit != null);
         savedTime.setText(visit == null ? "New visit - date and time recorded when saved."
                 : "Visit date and time: " + TIME.format(visit.visitedAt()));
@@ -315,28 +356,50 @@ public class VisitsPanel extends JPanel {
 
     private void saveVisit() {
         if (busy || activeCustomer == null) return;
+        VisitChoice current = (VisitChoice) history.getSelectedItem();
+        if (current != null && current.visit() != null && loadedVisit == null) {
+            showError("Select the visit again to load its details before saving.");
+            return;
+        }
         try {
             VisitChoice choice = (VisitChoice) history.getSelectedItem();
-            VisitRecord existing = choice == null ? null : choice.visit();
+            VisitRecord existing = loadedVisit;
             VisitRecord draft = new VisitRecord(existing == null ? 0 : existing.id(), activeCustomer.getId(),
                     existing == null ? Instant.now() : existing.visitedAt(),
                     VisitRecord.PH_VALUES.get(ph.getValue()), VisitRecord.CHLO_VALUES.get(chlo.getValue()),
                     VisitRecord.STB_VALUES.get(stb.getValue()),
                     VisitRecord.optionalWholeNumber(alk.getText(), "ALK"),
                     VisitRecord.optionalWholeNumber(cal.getText(), "CAL"), notes.getText(), photoData);
-            background("Saving visit...", () -> database.saveVisit(draft), saved -> {
+            int offset = existing == null ? 0 : visitOffset;
+            background("Saving visit...", () -> {
+                VisitRecord saved = database.saveVisit(draft);
+                try { return new SavedVisit(saved, database.getVisitPage(saved.customerId(), 50, offset), null); }
+                catch (RuntimeException e) { return new SavedVisit(saved, null, e.getMessage()); }
+            }, result -> {
+                VisitRecord saved = result.visit();
+                visitOffset = offset;
+                if (result.page() != null) {
+                    visits.clear();
+                    org.json.JSONArray rows = result.page().getJSONArray("rows");
+                    for (int i = 0; i < rows.length(); i++) visits.add(VisitRecord.fromJson(rows.getJSONObject(i)));
+                    visitTotal = result.page().getInt("total");
+                } else if (existing == null) visitTotal++;
                 visits.removeIf(v -> v.id() == saved.id());
                 visits.add(saved);
                 rebuildHistory(saved.id());
-                status.setText("Visit saved.");
+                status.setText(result.warning() == null ? "Visit saved."
+                        : "Visit saved. Refresh history to reload the page: " + result.warning());
             });
         } catch (IllegalArgumentException e) {
             JOptionPane.showMessageDialog(this, e.getMessage(), "Invalid Visit", JOptionPane.WARNING_MESSAGE);
         }
     }
 
+    private record SavedVisit(VisitRecord visit, org.json.JSONObject page, String warning) { }
+
     private <T> void background(String message, Supplier<T> task, Consumer<T> success) {
         if (busy) return;
+        long taskGeneration = ++generation;
         busy = true;
         setControlsEnabled(content, false);
         status.setText(message);
@@ -348,8 +411,11 @@ public class VisitsPanel extends JPanel {
 
             @Override
             protected void done() {
+                if (taskGeneration != generation) return;
                 busy = false;
                 setControlsEnabled(content, true);
+                previousHistory.setEnabled(visitOffset > 0);
+                nextHistory.setEnabled(visitOffset + 50 < visitTotal);
                 VisitChoice choice = (VisitChoice) history.getSelectedItem();
                 deleteVisitButton.setEnabled(choice != null && choice.visit() != null);
                 try {

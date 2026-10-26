@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.poolapp.VisitsPanelTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-26T20:40:44.509Z" hostname="SQUEGATE" time="2.522">
+  <properties/>
+  <testcase name="filtersCustomersAndSavesAndEditsVisit" classname="com.poolapp.VisitsPanelTest" time="2.522"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

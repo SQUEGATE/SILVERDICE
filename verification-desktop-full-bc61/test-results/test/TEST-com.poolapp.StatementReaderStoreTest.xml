@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.poolapp.StatementReaderStoreTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-26T20:44:49.688Z" hostname="SQUEGATE" time="1.994">
+  <properties/>
+  <testcase name="partialNamesRequireManualSelectionAndAmbiguousNamesStayReview" classname="com.poolapp.StatementReaderStoreTest" time="0.286"/>
+  <testcase name="bankReferenceIsHardDuplicateAndAuditFailureRollsBackPayment" classname="com.poolapp.StatementReaderStoreTest" time="0.338"/>
+  <testcase name="previewMatchesReversedAccentAndSeparatorInsensitiveNameWithoutWritingPaymentsOrAudit" classname="com.poolapp.StatementReaderStoreTest" time="0.244"/>
+  <testcase name="repeatedDocumentFingerprintNeedsASeparateExplicitOverride" classname="com.poolapp.StatementReaderStoreTest" time="0.374"/>
+  <testcase name="inaccessibleCustomersCannotMatchOrImport" classname="com.poolapp.StatementReaderStoreTest" time="0.301"/>
+  <testcase name="importsNegativePaymentAndDurableAuditThenBlocksExactRetryAndRequiresFingerprintOverride" classname="com.poolapp.StatementReaderStoreTest" time="0.273"/>
+  <testcase name="zelleFilterPreservesDatabaseMatchesInBothNameOrders" classname="com.poolapp.StatementReaderStoreTest" time="0.174"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

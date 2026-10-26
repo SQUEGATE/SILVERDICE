@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { createHash } from "node:crypto";
-import { extractStatementRows, parseStatementPdf, groupTextLines, LIMITS } from "../public/statement-reader.mjs";
+import { extractStatementRows, parseStatementPdf, groupTextLines, zelleDepositRows, LIMITS } from "../public/statement-reader.mjs";
 import { syntheticPages, makePdf, item, header } from "./fixtures/statement-reader-synthetic.mjs";
 
 test("geometry uses additions, not ending balance; posting date, references, wraps and repeated page headers", () => {
@@ -20,11 +20,44 @@ test("geometry uses additions, not ending balance; posting date, references, wra
   assert.equal(rows[3].source_id.split(":")[0], "2");
   assert.deepEqual(rows, extractStatementRows(syntheticPages()).rows);
 });
+test("preview keeps only whole-word Zelle/Zel deposits, preserves identities and excludes outgoing transfers", () => {
+  const rows = [
+    ["Zelle From Demo", "deposit"], ["zEL from Demo", "deposit"],
+    ["Cash deposit", "deposit"], ["Zelle To Demo", "deposit"],
+    ["Zel To Demo", "withdrawal"], ["Zelle From Demo", "unknown"],
+    ["Hazel deposit", "deposit"], ["Zel deposit", "deposit"],
+  ].map(([text, direction], i) => ({ text, direction, source_id: `1:${i + 1}` }));
+  const kept = zelleDepositRows(rows);
+  assert.deepEqual(kept.map(r => r.source_id), ["1:1", "1:2", "1:8"]);
+  assert.equal(kept[0], rows[0]);
+  const parsed = extractStatementRows([{ items: [
+    item("9/1 Zel From Demo 120.00", 42, 700),
+    item("9/2 Zel To Demo $25.00", 42, 680),
+  ] }]).rows;
+  assert.equal(zelleDepositRows(parsed).length, 1);
+  assert.equal(zelleDepositRows(parsed)[0].deposit_text, "120.00");
+});
 test("large withdrawal numeric right edge never mistaken for deposit despite starting left", () => {
   const rows = extractStatementRows([{ items: [...header(), item("9/1", 61, 670), item("Fictional account transfer", 160, 670),
     item("123,456,789.00", 440, 670, 74), item("100.00", 541, 670, 30)] }]).rows;
   assert.equal(rows[0].direction, "withdrawal");
   assert.equal(rows[0].deposit_text, "");
+});
+test("extracted references satisfy the API digit rule without blocking valid deposits", () => {
+  const descriptions = [
+    "Reference Pending", "Ref # ABCDEF", "Ref # ABCDEF Ref # Bank123",
+    "Reference: Bank.12/AB", "Ref # 7", "Ref # " + "A".repeat(160) + "1",
+  ];
+  const rows = extractStatementRows([{ items: [
+    ...header(),
+    ...descriptions.flatMap((description, i) => [
+      item("9/8", 61, 670 - i * 20), item(description, 160, 670 - i * 20),
+      item("100.00", 420, 670 - i * 20, 30),
+    ]),
+  ] }]).rows;
+  assert.deepEqual(rows.map(row => row.reference), ["", "", "Bank123", "Bank.12/AB", "7", ""]);
+  assert.ok(rows.every(row => row.direction === "deposit" && row.deposit_text === "100.00"));
+  assert.ok(rows.every(row => !row.reference || (/\d/.test(row.reference) && /^[A-Z0-9 ._:/#-]+$/i.test(row.reference))));
 });
 test("description continuation starting a date is not a new posting row", () => {
   const rows = extractStatementRows([{ items: [...header(), item("9/8", 61, 670), item("Zelle From Demo Avery on", 160, 670),
@@ -79,6 +112,17 @@ test("file validation rejects oversized, empty, invalid and stale uploads", asyn
   await assert.rejects(parseStatementPdf(new File([], "empty.pdf")), /non-empty/);
   await assert.rejects(parseStatementPdf(new File(["not pdf"], "fake.pdf")), /not a PDF/);
   await assert.rejects(parseStatementPdf(new File([makePdf()], "cancel.pdf"), { isCurrent: () => false }), /cancelled/);
+});
+test("sorted text grouping preserves tolerance boundaries for large statement pages", () => {
+  const items = Array.from({ length: 2000 }, (_, i) => [
+    item("left" + i, 42, 30000 - i * 10),
+    item("right" + i, 160, 30000 - i * 10 - 2),
+  ]).flat().reverse();
+  const lines = groupTextLines(items);
+  assert.equal(lines.length, 2000);
+  assert.equal(lines[0].text, "left0 right0");
+  assert.equal(lines[1999].text, "left1999 right1999");
+  assert.equal(lines[1999].line, 2000);
 });
 test("actual inline UI compiles; access is opt-in, default landing eligible and direct guard blocks API", async () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");

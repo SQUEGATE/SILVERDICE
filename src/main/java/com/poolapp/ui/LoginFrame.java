@@ -12,6 +12,10 @@ public class LoginFrame extends JFrame {
     private final MasterDatabaseManager masterDatabaseManager;
     private final JTextField usernameField;
     private final JPasswordField passwordField;
+    private final JButton loginButton = new JButton("Login");
+    private final JLabel status = new JLabel(" ");
+    private boolean loggingIn;
+    private long loginGeneration;
 
     public LoginFrame() {
         super("Comp Manager");
@@ -54,7 +58,7 @@ public class LoginFrame extends JFrame {
         content.add(passwordField, gbc);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        JButton loginButton = new JButton("Login");
+        buttonPanel.add(status);
         buttonPanel.add(loginButton);
 
         loginButton.addActionListener(e -> performLogin());
@@ -65,6 +69,7 @@ public class LoginFrame extends JFrame {
     }
 
     private void performLogin() {
+        if (loggingIn) return;
         String username = usernameField.getText().trim();
         String password = new String(passwordField.getPassword());
 
@@ -73,7 +78,54 @@ public class LoginFrame extends JFrame {
             return;
         }
 
-        if (masterDatabaseManager.authenticateMaster(username, password)) {
+        loggingIn = true;
+        long generation = ++loginGeneration;
+        loginButton.setEnabled(false);
+        usernameField.setEnabled(false);
+        passwordField.setEnabled(false);
+        status.setText("Signing in...");
+        new SwingWorker<LoginResult, Void>() {
+            @Override protected LoginResult doInBackground() {
+                MasterDatabaseManager.Authentication auth = masterDatabaseManager.authenticate(username, password);
+                if (auth == null || "MASTER".equals(auth.role())) return new LoginResult(auth, null);
+                long companyId = auth.company() != null ? auth.company().getId() : auth.employee().getCompanyId();
+                java.nio.file.Path path = auth.company() != null ? auth.company().getDatabasePath() : auth.employee().getCompanyDatabasePath();
+                DatabaseManager database = masterDatabaseManager.getApiBaseUrl() != null
+                        ? masterDatabaseManager.createDatabaseManager(companyId, masterDatabaseManager.getSessionToken())
+                        : new DatabaseManager(path);
+                return new LoginResult(auth, database);
+            }
+            @Override protected void done() {
+                if (generation != loginGeneration || !isDisplayable()) return;
+                try {
+                    LoginResult result = get();
+                    if (result.authentication() == null) {
+                        status.setText("Sign-in failed.");
+                        JOptionPane.showMessageDialog(LoginFrame.this, "Invalid username or password.",
+                                "Login Failed", JOptionPane.ERROR_MESSAGE);
+                    } else {
+                        openAccount(result);
+                    }
+                } catch (Exception e) {
+                    Throwable cause = e.getCause() == null ? e : e.getCause();
+                    status.setText("Sign-in failed.");
+                    JOptionPane.showMessageDialog(LoginFrame.this, cause.getMessage(), "Login Failed", JOptionPane.ERROR_MESSAGE);
+                } finally {
+                    loggingIn = false;
+                    loginButton.setEnabled(true);
+                    usernameField.setEnabled(true);
+                    passwordField.setEnabled(true);
+                    passwordField.setText("");
+                }
+            }
+        }.execute();
+    }
+
+    private record LoginResult(MasterDatabaseManager.Authentication authentication, DatabaseManager database) { }
+
+    private void openAccount(LoginResult result) {
+        MasterDatabaseManager.Authentication auth = result.authentication();
+        if ("MASTER".equals(auth.role())) {
             SwingUtilities.invokeLater(() -> {
                 MasterDashboardFrame frame = new MasterDashboardFrame(masterDatabaseManager);
                 frame.setVisible(true);
@@ -82,11 +134,9 @@ public class LoginFrame extends JFrame {
             return;
         }
 
-        CompanyProfile company = masterDatabaseManager.authenticateCompany(username, password);
+        CompanyProfile company = auth.company();
         if (company != null) {
-            DatabaseManager companyDatabase = masterDatabaseManager.getApiBaseUrl() != null
-                    ? masterDatabaseManager.createDatabaseManager(company.getId(), masterDatabaseManager.getSessionToken())
-                    : new DatabaseManager(company.getDatabasePath());
+            DatabaseManager companyDatabase = result.database();
             SwingUtilities.invokeLater(() -> {
                 final PoolAppFrame[] frameHolder = new PoolAppFrame[1];
                 frameHolder[0] = new PoolAppFrame(companyDatabase, company, null, () -> {
@@ -101,11 +151,9 @@ public class LoginFrame extends JFrame {
             return;
         }
 
-        EmployeeProfile employee = masterDatabaseManager.authenticateEmployee(username, password);
+        EmployeeProfile employee = auth.employee();
         if (employee != null) {
-            DatabaseManager companyDatabase = masterDatabaseManager.getApiBaseUrl() != null
-                    ? masterDatabaseManager.createDatabaseManager(employee.getCompanyId(), masterDatabaseManager.getSessionToken())
-                    : new DatabaseManager(employee.getCompanyDatabasePath());
+            DatabaseManager companyDatabase = result.database();
             SwingUtilities.invokeLater(() -> {
                 final PoolAppFrame[] frameHolder = new PoolAppFrame[1];
                 frameHolder[0] = new PoolAppFrame(companyDatabase, null, employee, null, () -> {

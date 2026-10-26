@@ -1,6 +1,6 @@
 # Comp Manager — Handoff Document
 
-_Last updated: October 22, 2026_
+_Last updated: October 26, 2026_
 
 This document explains what Comp Manager is, how it is used day to day, how the pieces fit together, and what each part of the code does. It is written for whoever maintains or extends the app next.
 
@@ -71,6 +71,26 @@ There is no push/live sync. Each screen **re-reads from the API when it is opene
 - **Desktop:** switching screens, selecting a customer, saving, or pressing Refresh reloads data. The PDF settings reload every time a statement is generated.
 - **Web:** every navigation re-fetches. The statement page also refreshes PDF settings each time.
 - **Closing and reopening the app is never required.** Just navigate away and back, or press Refresh.
+
+### Web record-list layout
+
+Record lists use desktop-style tables with labeled columns, alternating row shading, and aligned date/money values. This includes customers, statements, Statement Reader preview, quote history/lines, past visits, summaries, record types, employees, and companies. On a narrow screen or with enlarged text, scroll inside the table to see remaining columns; keyboard users can focus its labeled scroll region. Editing, filtering, permissions, route-order arrows, and import confirmation are unchanged. Printed PDF layouts are separate and unchanged.
+
+### Data loading and optimization contracts
+
+- `GET /v1/balances` aggregates all accessible customer balances in one request, rather than one request per customer. A failed summary load must remain an explicit error, never a zero-balance result.
+- List APIs retain their original complete-array response when pagination is not requested. Opt-in `limit` and `offset` return `{rows,total}`; statement pages also include the complete `balance` and each row's chronological `run`, displayed newest first. A page subtotal must never replace the customer's full balance. PDF/export callers retain the full-record paths.
+- Visit history summaries exclude encoded photo data. Selecting a saved visit fetches its detail, including the photo, before populating the editor. Never save a summary object as if it were the complete visit, because that could remove an unloaded photo.
+- Monthly billing uses a stable request UUID and an atomic server-side batch. Retry the same request identity after an uncertain result; do not automatically create a fresh identity and repeat the charges. Existing confirmed batches remain protected from duplicate retries.
+- Uncertain monthly request identities survive reopening: the web app uses identity-scoped localStorage, and desktop uses Preferences. A retry is an explicit user action, not an automatic background write. Confirmed success clears the pending identity.
+- Cloud batch identities are stored in `monthly_statement_requests` (`company_id`, `request_id`, `record_date`, `type`, `added`, `claim`); local identities use `monthly_statement_batches`, including the explicitly requested customer scope. The local-to-Turso migrator preserves completed identities and rejects incompatible existing request details. Run migration only as a deliberate administrator operation, not as a normal app startup.
+- PDF settings can be saved together through `PUT /v1/settings/batch`, with the existing validation and permissions. Fresh print operations still obtain current branding/settings.
+- Desktop equivalents in `DatabaseManager` provide grouped balances, bounded statement/visit pages, individual visit detail, atomic scoped monthly batches and bulk PDF settings. Local SQLite batches preserve rollback and request-identity protection; local customer restrictions must be passed explicitly by the UI.
+- Statement Reader caches normalized customer name signatures and transaction windows during preview, and uses lookup sets for existing payment identities. This changes lookup cost, not full-name matching, review rules, payment signs or import confirmation.
+- Web navigation cancels obsolete reads and ignores stale results/errors. Statement, quote and visit histories load in bounded pages, with full details fetched on selection. Reader rows show current/suggested customers and use a shared searchable customer picker instead of duplicating the entire customer list in every row.
+- Desktop login authenticates once and shares its HTTP client. Network-heavy screen loads and writes use background workers with visible failures and stale-result guards rather than blocking the Swing event thread.
+- Normal desktop customer browsing uses 50-row pages. **Reorder entire day** deliberately loads the complete accessible day; dragging is disabled on partial pages so hidden customers are not accidentally displaced. PDF generation, email attachments and SMS work run off the event thread; file dialogs remain on it.
+- Synthetic validation with 100 customers reduced the web Charged Summary from 101 requests to three (two 50-customer pages and one grouped balance request). This is a request-count measurement, not a guaranteed speed percentage.
 
 ---
 
@@ -175,13 +195,16 @@ Lists Active customers with a balance above $0.00, highest first, with a total.
 - Regression checks: run the canonical desktop `.\gradlew.bat test`, and from `cloudflare\worker` run `node --test test\quotes.sqlite.test.js test\quotes-web.test.js`. These cover stored quotes, numbering, permissions, conversion/retries/rollback, API contracts, PDF content/pagination, and form behavior.
 
 ### Statement Reader (desktop and web)
+- Preview shows only incoming deposit rows containing the whole word `Zelle` or `Zel`, ignoring capitalization. Other transactions, withdrawals, and outgoing Zelle/Zel transfers are hidden. Filtering preserves original PDF row identities for duplicate protection; customer matching and explicit import confirmation still apply.
 - Upload a **text/selectable PDF**, review the detected rows, and explicitly confirm which payments to import. The original PDF is parsed locally on the device; the API receives extracted transaction rows, not the PDF file. Scanned/image-only PDFs require a selectable-text version; there is no OCR service.
 - For a table-style bank statement, the reader uses column positions to distinguish **Deposits/Additions** from **Withdrawals/Subtractions** and **Ending daily balance**. A deposit need not have a dollar sign. Never use the ending balance as the payment amount.
 - Use the **posting date at the start of the transaction row**, not a different date embedded in its description. A date with only month/day uses the current year, even if the PDF's statement period is older. Full dates retain their year; invalid dates must be corrected before import.
+- Preview accepts single- or double-digit months/days (for example `9/8` and `09/08`) and normalizes valid dates to `MM/DD/YYYY` before customer matching. Import still requires the canonical full date.
 - Match accessible customers by normalized full name: ignore case, accents, punctuation/spacing, and first/last-name order. Partial names or multiple matching customers require explicit selection in the preview. No guessing or automatic writes.
 - The preview shows the original PDF row/page context, customer, date, amount, and warnings. Review uncertain matches and select the intended rows. Withdrawals, invalid rows, and already imported entries are not automatic payment candidates.
 - Confirmed amounts are stored as **negative `Zelle Payment`** statement entries to reduce the customer's balance, independent of configurable statement type keywords.
 - Suspected existing payments for the same customer/date/amount are unchecked by default and need an explicit duplicate override. A previously imported PDF row or bank reference cannot be imported again merely by enabling that override.
+- Extracted bank reference identifiers must contain a digit. Unrecognized or letter-only reference text is left blank rather than blocking preview; PDF-row identity and customer/date/amount duplicate checks still apply when a bank reference is unavailable.
 - Import history is a separate audit ledger so reloading/retrying does not double-charge or double-credit the ledger. Import errors are displayed; a preview alone does not alter balances. Only selected confirmed rows are written.
 - Employee access requires **Statement Reader**; importing also requires **Edit Statement Data**. Customer/day assignments remain enforced by the API. Other devices see new payments after reloading the statement.
 - Browser parsing uses pinned, self-hosted PDF.js 6.4.299; neither the PDF nor its contents are sent to a third-party PDF service. `npm.cmd run deploy` and `npm.cmd run dev` prepare the parser/worker/license assets automatically. If invoking Wrangler directly, run `npm.cmd run pdf-assets` first.

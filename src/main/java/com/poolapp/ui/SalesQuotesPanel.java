@@ -60,6 +60,12 @@ public final class SalesQuotesPanel extends JPanel {
     private Map<String, String> settings = Map.of();
     private boolean rebuilding;
     private boolean busy;
+    private long generation;
+    private int historyOffset;
+    private int historyTotal;
+    private final JButton previousHistory = new JButton("Previous 50");
+    private final JButton nextHistory = new JButton("Next 50");
+    private final JLabel historyPage = new JLabel(" ");
     private int editingLine = -1;
 
     public SalesQuotesPanel(DatabaseManager database, Predicate<Customer> accessible, boolean canConvert) {
@@ -114,7 +120,13 @@ public final class SalesQuotesPanel extends JPanel {
         form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
         heading.setFont(heading.getFont().deriveFont(Font.BOLD, 17));
         form.add(heading);
-        form.add(row("Saved quotes:", history)); form.add(number);
+        form.add(row("Saved quotes:", history));
+        JPanel paging = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        paging.add(previousHistory); paging.add(historyPage); paging.add(nextHistory);
+        form.add(paging);
+        previousHistory.addActionListener(e -> changeHistoryPage(-50));
+        nextHistory.addActionListener(e -> changeHistoryPage(50));
+        form.add(number);
         form.add(row("Quote date (MM/DD/YYYY):", quoteDate));
         form.add(new JLabel("Notes:")); form.add(new JScrollPane(notes));
         notes.setLineWrap(true); notes.setWrapStyleWord(true);
@@ -153,8 +165,8 @@ public final class SalesQuotesPanel extends JPanel {
         history.addActionListener(e -> {
             if (rebuilding || busy) return;
             Choice choice = (Choice) history.getSelectedItem();
-            if (choice != null && choice.quote != selected) {
-                if (discardChanges()) populate(choice.quote);
+            if (choice != null && (selected == null || choice.summary == null || choice.summary.id() != selected.quoteId())) {
+                if (discardChanges()) loadChoice(choice);
                 else selectHistory(selected);
             }
         });
@@ -186,38 +198,61 @@ public final class SalesQuotesPanel extends JPanel {
         }, result -> { customerModel.clear(); result.forEach(customerModel::addElement); });
     }
 
-    private record Loaded(List<SalesQuote> quotes, List<String> types, Map<String, String> settings) { }
+    private record Loaded(SalesQuoteStore.Page quotes, List<String> types, Map<String, String> settings) { }
 
     private void loadCustomer(Customer target) {
-        work("Loading quotations…", () -> new Loaded(store.list(target.getId()), database.getRecordTypes(),
+        historyOffset = 0;
+        work("Loading quotations…", () -> new Loaded(store.page(target.getId(), 50, 0), database.getRecordTypes(),
                 database.getAllPdfSettings()), loaded -> {
             customer = target; settings = loaded.settings;
             heading.setText(target.getFullName() + " — " + target.getId());
             type.removeAllItems(); loaded.types.forEach(type::addItem);
             if (type.getItemCount() == 0) { type.addItem("Bill"); type.addItem("Payment"); }
-            rebuildHistory(loaded.quotes, loaded.quotes.isEmpty() ? null : loaded.quotes.get(0));
+            rebuildHistory(loaded.quotes);
+            populate(null);
             cards.show(pages, "quote");
         });
     }
 
-    private record Choice(SalesQuote quote) {
+    private record Choice(SalesQuoteStore.Summary summary) {
         @Override public String toString() {
-            return quote == null ? "New quotation" : quote.quoteNumber() + " — " + quote.quoteDate()
-                    + (quote.converted() ? " — CONVERTED (read-only)" : "");
+            return summary == null ? "New quotation" : summary.number() + " — " + summary.date()
+                    + (summary.converted() ? " — CONVERTED (read-only)" : "");
         }
     }
 
-    private void rebuildHistory(List<SalesQuote> quotes, SalesQuote active) {
+    private void rebuildHistory(SalesQuoteStore.Page page) {
         rebuilding = true;
         history.removeAllItems(); history.addItem(new Choice(null));
-        quotes.forEach(q -> history.addItem(new Choice(q)));
-        rebuilding = false; selectHistory(active); populate(active);
+        page.rows().forEach(q -> history.addItem(new Choice(q)));
+        historyTotal = page.total();
+        historyPage.setText((historyTotal == 0 ? 0 : historyOffset + 1) + "–"
+                + Math.min(historyOffset + 50, historyTotal) + " of " + historyTotal);
+        rebuilding = false;
+        updateEnabled();
+    }
+
+    private void changeHistoryPage(int delta) {
+        if (busy || customer == null || !discardChanges()) return;
+        int offset = Math.max(0, historyOffset + delta);
+        String id = customer.getId();
+        work("Loading quotation page…", () -> store.page(id, 50, offset), page -> {
+            historyOffset = offset; rebuildHistory(page); populate(null);
+        });
+    }
+
+    private void loadChoice(Choice choice) {
+        if (choice.summary == null) { populate(null); return; }
+        String id = customer.getId();
+        work("Loading quotation details…", () -> store.get(id, choice.summary.id()), this::populate);
     }
 
     private void selectHistory(SalesQuote quote) {
         rebuilding = true;
         for (int i = 0; i < history.getItemCount(); i++)
-            if (history.getItemAt(i).quote == quote) { history.setSelectedIndex(i); break; }
+            if ((quote == null && history.getItemAt(i).summary == null)
+                    || (quote != null && history.getItemAt(i).summary != null
+                    && history.getItemAt(i).summary.id() == quote.quoteId())) { history.setSelectedIndex(i); break; }
         rebuilding = false;
     }
 
@@ -296,20 +331,25 @@ public final class SalesQuotesPanel extends JPanel {
                 "Unsaved quotation", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.YES_OPTION;
     }
 
-    private List<SalesQuote> historyQuotesExcept(long excludedId) {
-        List<SalesQuote> quotes = new ArrayList<>();
-        for (int i = 0; i < history.getItemCount(); i++) {
-            SalesQuote quote = history.getItemAt(i).quote;
-            if (quote != null && quote.quoteId() != excludedId) quotes.add(quote);
-        }
-        return quotes;
+    private record Saved(SalesQuote quote, SalesQuoteStore.Page page, int offset, String warning) { }
+
+    private Saved withPage(SalesQuote quote, int offset) {
+        try { return new Saved(quote, store.page(quote.customerId(), 50, offset), offset, null); }
+        catch (RuntimeException e) { return new Saved(quote, null, offset, e.getMessage()); }
     }
 
-    private void showSaved(SalesQuote saved) {
-        List<SalesQuote> quotes = historyQuotesExcept(saved.quoteId());
-        quotes.add(saved);
-        quotes.sort(java.util.Comparator.comparingLong(SalesQuote::quoteId).reversed());
-        rebuildHistory(quotes, saved);
+    private void showSaved(Saved saved) {
+        historyOffset = saved.offset();
+        SalesQuoteStore.Page page = saved.page();
+        if (page == null) {
+            List<SalesQuoteStore.Summary> summaries = new ArrayList<>();
+            summaries.add(new SalesQuoteStore.Summary(saved.quote().quoteId(), saved.quote().quoteNumber(),
+                    saved.quote().quoteDate(), saved.quote().converted()));
+            page = new SalesQuoteStore.Page(summaries, Math.max(1, historyTotal));
+        }
+        rebuildHistory(page);
+        selectHistory(saved.quote()); populate(saved.quote());
+        if (saved.warning() != null) status.setText("Quotation saved. Refresh history to reload the page: " + saved.warning());
     }
 
     private void save(boolean toStatement) {
@@ -320,15 +360,18 @@ public final class SalesQuotesPanel extends JPanel {
                     "Save this quotation and add all its signed lines to the statement?\n"
                             + "This can happen only once. The quotation will become permanently read-only.",
                     "Convert to Statement", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
-            work(toStatement ? "Saving before conversion…" : "Saving quotation…", () -> store.save(draft), saved -> {
+            int offset = draft.quoteId() == 0 ? 0 : historyOffset;
+            work(toStatement ? "Saving before conversion…" : "Saving quotation…",
+                    () -> withPage(store.save(draft), offset), saved -> {
                 showSaved(saved);
-                if (toStatement) convertSaved(saved);
+                if (toStatement) convertSaved(saved.quote());
             });
         } catch (RuntimeException e) { error(e); }
     }
 
     private void convertSaved(SalesQuote quote) {
-        work("Converting saved quotation…", () -> store.convert(quote.customerId(), quote.quoteId()), this::showSaved);
+        int offset = historyOffset;
+        work("Converting saved quotation…", () -> withPage(store.convert(quote.customerId(), quote.quoteId()), offset), this::showSaved);
     }
 
     private void delete() {
@@ -336,8 +379,8 @@ public final class SalesQuotesPanel extends JPanel {
         if (JOptionPane.showConfirmDialog(this, "Permanently delete " + selected.quoteNumber() + "?",
                 "Delete quotation", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
         String id = customer.getId(); long quoteId = selected.quoteId();
-        work("Deleting quotation…", () -> { store.delete(id, quoteId); return store.list(id); },
-                quotes -> rebuildHistory(quotes, quotes.isEmpty() ? null : quotes.get(0)));
+        work("Deleting quotation…", () -> { store.delete(id, quoteId); return store.page(id, 50, 0); },
+                page -> { historyOffset = 0; rebuildHistory(page); populate(null); });
     }
 
     private void export() {
@@ -363,14 +406,18 @@ public final class SalesQuotesPanel extends JPanel {
         save.setEnabled(editable); delete.setEnabled(editable && selected != null);
         convert.setEnabled(editable && canConvert); pdf.setEnabled(!busy && selected != null);
         history.setEnabled(!busy); back.setEnabled(!busy); newQuote.setEnabled(!busy);
+        previousHistory.setEnabled(!busy && historyOffset > 0);
+        nextHistory.setEnabled(!busy && historyOffset + 50 < historyTotal);
     }
 
     private <T> void work(String message, Callable<T> task, Consumer<T> completed) {
         if (busy) return;
+        long taskGeneration = ++generation;
         busy = true; updateEnabled(); status.setText(message);
         new SwingWorker<T, Void>() {
             @Override protected T doInBackground() throws Exception { return task.call(); }
             @Override protected void done() {
+                if (taskGeneration != generation) return;
                 busy = false;
                 try { T result = get(); status.setText("Ready"); completed.accept(result); }
                 catch (InterruptedException e) { Thread.currentThread().interrupt(); error(e); }

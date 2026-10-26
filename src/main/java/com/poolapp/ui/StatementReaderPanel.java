@@ -7,6 +7,7 @@ import com.poolapp.service.StatementPdfReader;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultCellEditor;
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
@@ -119,7 +120,9 @@ public final class StatementReaderPanel extends JPanel {
             @Override protected void done() {
                 if (task != generation) return;
                 try {
-                    extraction = get();
+                    StatementPdfReader.Extraction parsed = get();
+                    extraction = new StatementPdfReader.Extraction(parsed.documentHash(), parsed.pageCount(),
+                            StatementPdfReader.zelleDepositRows(parsed.rows()));
                     documentLabel.setText(file.getName() + " - " + extraction.pageCount() + " page(s), " + extraction.rows().size() + " row(s)");
                     preview(extraction, task, documentLabel.getText());
                 } catch (InterruptedException e) {
@@ -148,8 +151,8 @@ public final class StatementReaderPanel extends JPanel {
                     buildCustomerChoices(customers);
                     tableModel.setRows(data.rows());
                     setBusy(false, data.rows().isEmpty()
-                            ? "No dated transaction rows were found. Verify that this PDF contains selectable text."
-                            : "Review dates, positive deposit amounts, customer matches, and duplicate warnings before importing.");
+                            ? "No incoming Zelle or Zel deposit rows were found. Other transactions are hidden."
+                            : "Only incoming Zelle/Zel deposits are shown. Review dates, customer matches, and duplicate warnings before importing.");
                     importSelected.setEnabled(canImport && tableModel.hasSelectedRows());
                     documentLabel.setText(label);
                 } catch (InterruptedException e) {
@@ -205,6 +208,10 @@ public final class StatementReaderPanel extends JPanel {
             customerIdsByDisplay.put(display, customer.getId());
             customerDisplayById.put(customer.getId(), display);
         }
+        DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
+        model.addElement("-- Select customer manually --");
+        customerDisplayById.values().forEach(model::addElement);
+        customerChoices.setModel(model);
     }
 
     private void failTask(String message, Throwable cause) {
@@ -240,9 +247,6 @@ public final class StatementReaderPanel extends JPanel {
             choices.addItem("-- Select customer manually --");
         }
         @Override public Component getTableCellEditorComponent(JTable table, Object value, boolean selected, int row, int column) {
-            choices.removeAllItems();
-            choices.addItem("-- Select customer manually --");
-            customerDisplayById.values().forEach(choices::addItem);
             choices.setSelectedItem(value == null || value.toString().isBlank()
                     ? "-- Select customer manually --" : value.toString());
             return choices;

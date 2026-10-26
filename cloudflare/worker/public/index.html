@@ -60,6 +60,21 @@ td.r,th.r{text-align:right}.scroll{overflow-x:auto}
  #drawer nav{width:15rem}#menuBtn{display:none}body.authed main,body.authed #quick{margin-left:16rem;max-width:none}}
 button.b{max-width:100%}.card{overflow-wrap:anywhere}
 .reader-row{border:1px solid var(--line);border-radius:10px;padding:12px;margin:12px 0;min-width:0}.reader-row pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.875rem;background:var(--bg);padding:8px;border-radius:6px}.reader-row input[type=checkbox]{width:auto;min-width:1.2rem;min-height:1.2rem}button:disabled{opacity:.55;cursor:not-allowed}
+.record-scroll{overflow:auto;max-width:100%;border:1px solid #cbd5e1;border-radius:8px;margin:12px 0}
+.record-table{min-width:42rem;font-size:1rem;border-collapse:separate;border-spacing:0}
+.record-table th{background:#e2e8f0;color:var(--ink);font-weight:700;white-space:nowrap}
+.record-table th,.record-table td{padding:10px 12px;border-right:1px solid var(--line);vertical-align:top}
+.record-table tbody tr:nth-child(even){background:#f8fafc}.record-table tbody tr:hover{background:#eff6ff}
+.record-table td{overflow-wrap:anywhere}.record-table .r{white-space:nowrap;font-variant-numeric:tabular-nums}
+.record-table .b{margin:2px;padding:8px 12px}.record-table input,.record-table select,.record-table textarea{min-width:9rem;padding:8px}
+.record-table label{margin:4px 0}.record-table .chk{white-space:normal}.record-table input[type=checkbox]{min-width:1.2rem;width:auto}
+.record-table .reader-row{border:0;border-radius:0;padding:0;margin:0}.reader-table{min-width:88rem}
+.reader-table td:nth-child(4){min-width:18rem}.reader-table td:last-child{min-width:24rem}
+.reader-table pre{white-space:pre-wrap;font:inherit;margin:6px 0}.reader-table [data-reason]{margin:4px 0}
+.quote-lines{min-width:60rem}.record-date{white-space:nowrap;font-variant-numeric:tabular-nums}
+.record-scroll:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+#sr-picker{width:36rem;max-width:calc(100vw - 24px);max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:12px;color:var(--ink);overflow-wrap:anywhere}
+#sr-picker::backdrop{background:rgba(0,0,0,.5)}#sr-matches .b{display:block;width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left}
 </style>
 </head>
 <body>
@@ -81,18 +96,43 @@ function mapLink(c){var a=[c.address,c.city,c.state,c.zip].filter(Boolean).join(
 function esc(v){return String(v==null?"":v).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
 function money(n){n=Number(n)||0;return (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
 function $(id){return document.getElementById(id)}
-function flash(kind,text){var e=$("flash");if(e)e.innerHTML=text?'<div class="'+kind+'">'+esc(text)+'</div>':""}
+function recordTable(headers,body,caption,extra){
+  return '<div class="record-scroll" role="region" aria-label="'+esc(caption)+'" tabindex="0"><table class="record-table '+(extra||"")+'"><caption style="text-align:left;padding:8px 12px;font-weight:700">'+esc(caption)+'</caption><thead><tr>'+headers.map(function(h){return '<th scope="col">'+esc(h)+'</th>'}).join("")+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+}
+function customerTable(rows,actions,reorder){
+  return recordTable(["Order","Customer","ID","Service day","Address","Monthly charge","Actions"],rows.map(function(c){
+    return '<tr data-id="'+esc(c.customer_id)+'"><td>'+esc(c.route_order||"")+(reorder?'<span class="mv"><button class="b alt" data-mv="-1" aria-label="Move up">&#9650;</button><button class="b alt" data-mv="1" aria-label="Move down">&#9660;</button></span>':'')+'</td><td><b>'+esc(c.last_name)+', '+esc(c.first_name)+'</b>'+(c.status==="Inactive"?' (inactive)':'')+'</td><td>'+esc(c.customer_id)+'</td><td>'+esc(c.service_day)+'</td><td>'+mapLink(c)+'</td><td class="r">'+money(c.amount_charged)+'</td><td>'+actions(c)+'</td></tr>';
+  }).join(""),"Customers");
+}
+function flash(kind,text){if(text==="Obsolete view")return;var e=$("flash");if(e)e.innerHTML=text?'<div class="'+kind+'">'+esc(text)+'</div>':""}
 
 async function api(path,opts){
-  opts=opts||{};var h={"Content-Type":"application/json"};
+  opts=opts||{};var h={"Content-Type":"application/json"},nav=S.nav,read=(!opts.method||opts.method==="GET"),controller=read?new AbortController():null;
+  if(controller)(S.reads||(S.reads=new Set())).add(controller);
+  if(controller&&opts.readKey){if(!S.readKeys)S.readKeys=new Map();var old=S.readKeys.get(opts.readKey);if(old)old.abort();S.readKeys.set(opts.readKey,controller)}
   if(S.token)h.Authorization="Bearer "+S.token;
-  var r=await fetch(path,{method:opts.method||"GET",headers:h,body:opts.body!==undefined?JSON.stringify(opts.body):undefined});
-  var data=null;try{data=await r.json()}catch(e){}
+  var r,data=null;
+  try{
+    r=await fetch(path,{method:opts.method||"GET",headers:h,signal:controller?controller.signal:undefined,body:opts.body!==undefined?JSON.stringify(opts.body):undefined});
+    try{data=await r.json()}catch(e){}
+  }catch(e){if(nav!==S.nav||(controller&&controller.signal.aborted))throw new Error("Obsolete view");throw e}
+  finally{if(controller){S.reads.delete(controller);if(opts.readKey&&S.readKeys.get(opts.readKey)===controller)S.readKeys.delete(opts.readKey)}}
+  if(nav!==S.nav||(controller&&controller.signal.aborted))throw new Error("Obsolete view");
   if(!r.ok){
     if(r.status===401&&S.token&&path.indexOf("/auth/")<0){signOut();throw new Error("Session expired. Please log in again.")}
     throw new Error((data&&data.error)||("Request failed ("+r.status+")"));
   }
   return data;
+}
+function cancelReads(){if(S.reads)S.reads.forEach(function(c){c.abort()});S.reads=new Set()}
+function cancelReadKey(key){if(S.readKeys){var c=S.readKeys.get(key);if(c)c.abort()}}
+function pagePath(path,offset,extra){return path+"?limit=50&offset="+(offset||0)+(extra||"")}
+function pager(id,offset,total){return '<div class="row" aria-label="Record pages"><button class="b alt" id="'+id+'prev"'+(!offset?' disabled':'')+'>Previous</button><span role="status">'+(total?offset+1:0)+'–'+Math.min(offset+50,total)+' of '+total+'</span><button class="b alt" id="'+id+'next"'+(offset+50>=total?' disabled':'')+'>Next</button></div>'}
+function bindPager(id,offset,total,load){$(id+"prev").onclick=function(){if(offset)load(Math.max(0,offset-50))};$(id+"next").onclick=function(){if(offset+50<total)load(offset+50)}}
+async function allCustomers(extra){
+  var rows=[],offset=0,page;
+  do{page=await api(pagePath("/v1/customers",offset,extra));if(Array.isArray(page))return page;rows=rows.concat(page.rows);offset+=page.rows.length}while(page.rows.length&&offset<page.total);
+  return rows;
 }
 function can(p){var a=S.account;if(!a)return false;if(a.role!=="EMPLOYEE")return true;return !!(a.permissions&&a.permissions[p])}
 function isManager(){return S.account&&S.account.role!=="EMPLOYEE"}
@@ -120,8 +160,9 @@ function cmpRecords(a,b){
 
 /* ---------- classification ---------- */
 async function loadKw(){
-  if(S.kw)return S.kw;var s={};
-  if(can("canViewPdf")||isManager()){try{s=await api("/v1/settings")}catch(e){}}
+  if(S.kw)return S.kw;var nav=S.nav,s={};
+  if(can("canViewPdf")||isManager()){s=await api("/v1/settings")}
+  if(nav!==S.nav)throw new Error("Obsolete view");
   S.kw={credit:kwList(s.recordTypeCreditKeywords||DEF_CREDIT),debit:kwList(s.recordTypeDebitKeywords||DEF_DEBIT),settings:s};
   return S.kw;
 }
@@ -185,14 +226,14 @@ $("menuBtn").onclick=function(){$("drawer").classList.toggle("open")};
 $("logout").onclick=function(){signOut()};
 
 function clearTimers(){(S.timers||[]).forEach(function(t){clearInterval(t)});S.timers=[]}
-function signOut(){clearTimers();S.nav=(S.nav||0)+1;S.token="";S.account=null;S.kw=null;S.master=false;localStorage.removeItem("cm.token");localStorage.removeItem("cm.account");localStorage.removeItem("cm.master");renderChrome();showLogin()}
+function signOut(){clearTimers();cancelReads();S.nav=(S.nav||0)+1;S.token="";S.account=null;S.kw=null;S.master=false;localStorage.removeItem("cm.token");localStorage.removeItem("cm.account");localStorage.removeItem("cm.master");renderChrome();showLogin()}
 function backToMaster(){
   var m=JSON.parse(localStorage.getItem("cm.master")||"null");if(!m)return signOut();
   S.token=m.token;S.account=m.account;S.master=true;S.kw=null;localStorage.setItem("cm.token",S.token);localStorage.setItem("cm.account",JSON.stringify(S.account));
   renderChrome();go("companies");
 }
 function go(view,arg){
-  clearTimers();S.nav=(S.nav||0)+1;
+  clearTimers();cancelReads();S.nav=(S.nav||0)+1;var nav=S.nav;
   if(view==="reader"&&!can("canAccessStatementReader")){
     S.view="";S.arg=null;app.innerHTML='<div class="err">Statement Reader access is not permitted.</div>';return;
   }
@@ -205,7 +246,7 @@ function go(view,arg){
   var v=VIEWS.filter(function(x){return x.id===(view==="quote"?"quotes":view==="visit"?"visits":view)})[0];
   $("title").textContent=(S.account&&S.account.companyName&&!S.master?S.account.companyName+" \u2022 ":"")+(v?v.label:(view==="companies"?"Companies":"Comp Manager"));
   app.innerHTML='<div id="flash"></div><div class="card">Loading...</div>';
-  Promise.resolve().then(fn).catch(function(e){app.innerHTML='<div class="err">'+esc(e.message)+'</div>'});
+  Promise.resolve().then(function(){if(nav===S.nav)return fn()}).catch(function(e){if(nav===S.nav)app.innerHTML='<div class="err">'+esc(e.message)+'</div>'});
 }
 
 /* ---------- local statement reader ---------- */
@@ -216,10 +257,31 @@ async function vStatementReader(){
   function editable(){return can("canEditStatements")&&can("canAccessStatementReader")}
   app.innerHTML='<div id="flash" role="status" aria-live="polite"></div><div class="card"><h2>Statement Reader</h2>'+
     '<p>The PDF is read locally on this device; the original file is never uploaded. Only extracted transaction lines are sent to your company API for matching and duplicate checks.</p>'+
-    '<p>Use a selectable-text PDF (no OCR), up to 25 MB, 100 pages and 1,000 transactions. Choose the bank <b>posting date</b>, not a date inside the description.</p>'+
+    '<p>Only incoming deposits containing <b>Zelle</b> or <b>Zel</b> are shown (case-insensitive). Other transactions and outgoing payments are hidden. Use a selectable-text PDF (no OCR), up to 25 MB, 100 pages and 1,000 transactions. Choose the bank <b>posting date</b>, not a date inside the description.</p>'+
     '<p id="sr-year"></p><label for="sr-file">Bank statement PDF</label><input id="sr-file" type="file" accept=".pdf,application/pdf">'+
     '<p id="sr-progress" role="status" aria-live="polite"></p><p id="sr-rights">'+(editable()?'Import creates <b>Zelle Payment</b> records as negative amounts. You must confirm the selected rows first.':'Preview only: importing also requires Edit statements permission.')+'</p>'+
-    '<div id="sr-preview"></div></div>';
+    '<dialog id="sr-picker" aria-labelledby="sr-picker-title"><h3 id="sr-picker-title">Find an accessible customer</h3><label for="sr-search">Name, ID, address or phone</label><input id="sr-search" type="search" autocomplete="off"><div id="sr-matches" role="status" aria-live="polite"></div><button class="b alt" id="sr-close" type="button">Close</button></dialog><div id="sr-preview"></div></div>';
+  var pickerRow=null,pickerSeq=0,pickerTimer;
+  $("sr-close").onclick=function(){++pickerSeq;cancelReadKey("reader-search");$("sr-picker").close()};
+  $("sr-search").oninput=function(){
+    clearTimeout(pickerTimer);cancelReadKey("reader-search");var token=++pickerSeq,query=this.value.trim();$("sr-matches").textContent=query?"Searching…":"Type to search customers.";
+    if(!query)return;
+    pickerTimer=setTimeout(async function(){
+      if(!current()||token!==pickerSeq)return;
+      try{
+        var page=await api(pagePath("/v1/customers",0,"&q="+encodeURIComponent(query)),{readKey:"reader-search"});
+        if(!current()||token!==pickerSeq)return;
+        var found=Array.isArray(page)?page:page.rows;
+        $("sr-matches").innerHTML=found.map(function(c,i){return '<button type="button" class="b alt" data-match="'+i+'">'+esc(c.first_name+" "+c.last_name+" (#"+c.customer_id+")")+'</button>'}).join("")+(found.length?'<p>First 50 matches. Refine your search if needed.</p>':'<p>No accessible customers found.</p>');
+        $("sr-matches").querySelectorAll("[data-match]").forEach(function(b){b.onclick=function(){
+          if(!current()||busy||pickerRow==null)return;var c=found[Number(b.getAttribute("data-match"))],r=rows[pickerRow];
+          if(!customers.some(function(x){return String(x.customer_id)===String(c.customer_id)}))customers.push(c);
+          r.customer_id=c.customer_id;if(r.status==="duplicate"){r.override_duplicate=false;r.selected=false}if(!eligible(r))r.selected=false;
+          ++pickerSeq;$("sr-picker").close();render();
+        }});
+      }catch(e){if(current()&&token===pickerSeq)$("sr-matches").textContent=e.message}
+    },180);
+  };
   function notice(){$("sr-year").textContent="Dates without a year use the current server year ("+year+"), not the statement year. Review and edit dates before importing."}
   notice();
   function valid(r){
@@ -239,20 +301,19 @@ async function vStatementReader(){
     notice();
     var counts={};rows.forEach(function(r){counts[r.status]=(counts[r.status]||0)+1});
     $("sr-preview").innerHTML='<h3>Preview — '+rows.length+' rows</h3><p id="sr-counts">'+Object.keys(counts).map(function(k){return esc(k)+": "+counts[k]}).join(" · ")+'</p>'+
-      '<p>Only ready rows are selected automatically. Review rows need a valid posting date, customer and positive deposit amount. Duplicates require a separate explicit override; already-imported source/reference rows can never be overridden.</p>'+
-      '<div id="sr-rows">'+rows.map(function(r,i){
+      '<p>Only ready rows are selected automatically. Customer lists show current and suggested matches only; use Find customer to search other accessible customers. Review rows need a valid posting date, customer and positive deposit amount. Duplicates require a separate explicit override; already-imported source/reference rows can never be overridden.</p>'+
+      '<div id="sr-rows">'+recordTable(["Import","Posting date","Deposit amount","Customer","Override duplicate","Status","Page / original transaction / reason"],rows.map(function(r,i){
         var raw=rawRows.find(function(x){return x.source_id===r.source_id})||{},disable=locked(r)?" disabled":"";
         var candidates=(r.candidate_ids||[]).map(String);
-        return '<section class="reader-row" data-row="'+i+'"><h3>Page '+esc(r.page)+' · Line '+esc(r.line)+' — <span data-status>'+esc(r.status)+'</span></h3>'+
-          '<p data-reason>'+esc(r.reason||"")+'</p><p class="s">Source posting date: '+esc(raw.date_text||"—")+' · Deposit: '+esc(raw.deposit_text||"not confidently identified")+' · Direction: '+esc(raw.direction||"unknown")+'</p>'+
-          '<details><summary>Original PDF transaction line</summary><pre>'+esc(raw.text||r.text)+'</pre></details>'+
-          '<label for="sr-date-'+i+'">Posting date (MM/DD/YYYY)</label><input id="sr-date-'+i+'" data-field="date" value="'+esc(r.date)+'" placeholder="MM/DD/YYYY"'+disable+'>'+
-          '<label for="sr-customer-'+i+'">Customer'+(candidates.length?' — suggested matches marked *':'')+'</label><select id="sr-customer-'+i+'" data-field="customer_id"'+disable+'><option value="">Choose customer…</option>'+
-          customers.map(function(c){return '<option value="'+esc(c.customer_id)+'"'+(String(c.customer_id)===String(r.customer_id)?' selected':'')+'>'+esc((candidates.indexOf(String(c.customer_id))>=0?"* ":"")+c.first_name+" "+c.last_name+" (#"+c.customer_id+")")+'</option>'}).join("")+'</select>'+
-          '<label for="sr-amount-'+i+'">Deposit amount (positive)</label><input id="sr-amount-'+i+'" data-field="amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="'+esc(r.amount==null?"":r.amount)+'"'+disable+'>'+
-          (canOverride(r)?'<label class="chk"><input data-field="override_duplicate" type="checkbox"'+(r.override_duplicate?' checked':'')+'> Override suspected same date/customer/amount duplicate (not an already-imported row/reference)</label>':'')+
-          '<label class="chk"><input data-field="selected" type="checkbox"'+(r.selected?' checked':'')+(!eligible(r)?' disabled':'')+'> Select for import</label><p data-validation class="s">'+(!locked(r)&&!valid(r)?'Choose a valid date, accessible customer and positive amount.':'')+'</p></section>';
-      }).join("")+'</div><button class="b ok" id="sr-import">Confirm import</button><div id="sr-result" role="status" aria-live="polite"></div>';
+        return '<tr class="reader-row" data-row="'+i+'"><td><label class="chk"><input data-field="selected" type="checkbox"'+(r.selected?' checked':'')+(!eligible(r)?' disabled':'')+'> Select for import</label></td>'+
+          '<td><label for="sr-date-'+i+'">MM/DD/YYYY</label><input id="sr-date-'+i+'" data-field="date" value="'+esc(r.date)+'" placeholder="MM/DD/YYYY"'+disable+'></td>'+
+          '<td><label for="sr-amount-'+i+'">Positive amount</label><input id="sr-amount-'+i+'" data-field="amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="'+esc(r.amount==null?"":r.amount)+'"'+disable+'></td>'+
+          '<td><label for="sr-customer-'+i+'">Customer'+(candidates.length?' — suggestions marked *':'')+'</label><select id="sr-customer-'+i+'" data-field="customer_id"'+disable+'><option value="">Choose customer…</option>'+
+          customers.filter(function(c){return String(c.customer_id)===String(r.customer_id)||candidates.indexOf(String(c.customer_id))>=0}).map(function(c){return '<option value="'+esc(c.customer_id)+'"'+(String(c.customer_id)===String(r.customer_id)?' selected':'')+'>'+esc((candidates.indexOf(String(c.customer_id))>=0?"* ":"")+c.first_name+" "+c.last_name+" (#"+c.customer_id+")")+'</option>'}).join("")+'</select><button type="button" class="b alt" data-find="'+i+'"'+disable+'>Find customer…</button></td>'+
+          '<td>'+(canOverride(r)?'<label class="chk"><input data-field="override_duplicate" type="checkbox"'+(r.override_duplicate?' checked':'')+'> Override suspected same date/customer/amount duplicate (not an already-imported row/reference)</label>':'Not available')+'</td>'+
+          '<td><b data-status>'+esc(r.status)+'</b><p data-validation class="s">'+(!locked(r)&&!valid(r)?'Choose a valid date, accessible customer and positive amount.':'')+'</p></td>'+
+          '<td><b>Page '+esc(r.page)+' · Line '+esc(r.line)+'</b><p data-reason>'+esc(r.reason||"")+'</p><p class="s">Source date: '+esc(raw.date_text||"—")+' · Deposit: '+esc(raw.deposit_text||"not confidently identified")+' · Direction: '+esc(raw.direction||"unknown")+'</p><details><summary>Original PDF transaction line</summary><pre>'+esc(raw.text||r.text)+'</pre></details></td></tr>';
+      }).join(""),"Statement Reader preview","reader-table")+'</div><button class="b ok" id="sr-import">Confirm import</button><div id="sr-result" role="status" aria-live="polite"></div>';
     $("sr-rows").oninput=function(e){
       var el=e.target,section=el.closest("[data-row]"),field=el.getAttribute("data-field");
       if(!section||!field||busy)return;
@@ -267,6 +328,9 @@ async function vStatementReader(){
       buttonState();
     };
     $("sr-import").onclick=importRows;
+    $("sr-rows").querySelectorAll("[data-find]").forEach(function(b){b.onclick=function(){
+      if(busy)return;pickerRow=Number(b.getAttribute("data-find"));$("sr-search").value="";$("sr-matches").textContent="Type to search customers.";$("sr-picker").showModal();$("sr-search").focus();
+    }});
     buttonState();
   }
   async function importRows(){
@@ -292,6 +356,7 @@ async function vStatementReader(){
   }
   $("sr-file").onchange=async function(){
     if(busy||!current())return;
+    ++pickerSeq;cancelReadKey("reader-search");$("sr-picker").close();pickerRow=null;
     var file=this.files[0],sequence=++upload;rows=[];rawRows=[];hash="";$("sr-preview").innerHTML="";flash("","");
     if(!file){$("sr-progress").textContent="";return}
     function fresh(){return current()&&sequence===upload}
@@ -300,19 +365,20 @@ async function vStatementReader(){
       var module=await import("/statement-reader.mjs");
       var parsed=await module.parseStatementPdf(file,{isCurrent:fresh});
       if(!fresh())return;
-      hash=parsed.document_hash;rawRows=parsed.rows;
-      if(!rawRows.length){$("sr-progress").textContent="No transaction rows found. No rows were sent or imported.";return}
+      hash=parsed.document_hash;rawRows=module.zelleDepositRows(parsed.rows);
+      if(!rawRows.length){$("sr-progress").textContent="No incoming Zelle or Zel deposit rows found. No rows were sent or imported.";return}
       $("sr-progress").textContent="Matching extracted transaction rows…";
       var preview=await api("/v1/statement-reader/preview",{method:"POST",body:{document_hash:hash,rows:rawRows}});
       if(!fresh())return;
       year=preview.year;rows=preview.rows.map(function(r){return Object.assign({},r,{selected:r.status==="ready",override_duplicate:false})});
+      var ids=Array.from(new Set(rows.flatMap(function(r){return (r.candidate_ids||[]).concat(r.customer_id?[r.customer_id]:[])}).map(String)));
+      customers=Array.isArray(preview.customers)?preview.customers:(ids.length?(await allCustomers()).filter(function(c){return ids.indexOf(String(c.customer_id))>=0}):[]);
+      if(!fresh())return;
       $("sr-progress").textContent="PDF parsed locally. Review every selected row before confirming.";
       render();
     }catch(e){if(fresh()){$("sr-progress").textContent="";flash("err",e.message)}}
   };
-  $("sr-file").disabled=true;
-  try{customers=await api("/v1/customers");if(current())$("sr-file").disabled=false}
-  catch(e){if(current())flash("err","Could not load accessible customers: "+e.message)}
+  $("sr-file").disabled=false;
 }
 
 /* ---------- login ---------- */
@@ -341,13 +407,13 @@ function start(){
 
 /* ---------- master: companies ---------- */
 async function vCompanies(){
-  var rows=await api("/v1/admin/companies");
+  var nav=S.nav,rows=await api("/v1/admin/companies");if(nav!==S.nav)return;
   app.innerHTML='<div id="flash"></div><div class="card"><h2>Phone web app link</h2><p class="s">Send this link to phones. They log in with their normal username and password.</p><input id="lk" readonly value="'+esc(location.origin)+'"><button class="b" id="cp">Copy link</button><button class="b alt" id="sh">Share</button></div>'+
    '<div class="card"><div class="row"><button class="b" id="newc">+ New company</button></div>'+
-   rows.map(function(c){return '<div class="item"><div class="t"><b>'+esc(c.company_name)+'</b><span class="s">'+esc(c.username)+' \u2022 '+esc(c.phone||"")+'</span></div>'+
-   '<button class="b" data-open="'+c.company_id+'">Open</button><button class="b alt" data-edit="'+c.company_id+'">Edit</button></div>'}).join("")+'</div>';
+   recordTable(["Company","Username","Phone","Actions"],rows.map(function(c){return '<tr><td><b>'+esc(c.company_name)+'</b></td><td>'+esc(c.username)+'</td><td>'+esc(c.phone||"")+'</td><td>'+
+   '<button class="b" data-open="'+c.company_id+'">Open</button><button class="b alt" data-edit="'+c.company_id+'">Edit</button></td></tr>'}).join(""),"Companies")+'</div>';
   $("newc").onclick=function(){go("company",{})};
-  $("cp").onclick=function(){var l=$("lk");l.select();(navigator.clipboard?navigator.clipboard.writeText(l.value):Promise.reject()).catch(function(){document.execCommand("copy")}).then(function(){flash("msg","Link copied.")},function(){flash("msg","Link copied.")})};
+  $("cp").onclick=function(){var l=$("lk");l.select();(navigator.clipboard?navigator.clipboard.writeText(l.value):Promise.reject()).catch(function(){if(nav===S.nav)document.execCommand("copy")}).then(function(){if(nav===S.nav)flash("msg","Link copied.")},function(){if(nav===S.nav)flash("msg","Link copied.")})};
   $("sh").onclick=function(){if(navigator.share)navigator.share({title:"Comp Manager",url:location.origin}).catch(function(){});else $("cp").click()};
   app.querySelectorAll("[data-open]").forEach(function(b){b.onclick=async function(){
     var id=b.getAttribute("data-open"),r=await api("/v1/admin/companies/"+id+"/session",{method:"POST"});
@@ -377,30 +443,40 @@ function vCompany(){
 
 /* ---------- customers ---------- */
 async function vCustomers(){
-  var list=await api("/v1/customers");
-  var active=S.arg&&S.arg.pick;
-  app.innerHTML='<div id="flash"></div><div class="card"><div class="row"><input id="q" placeholder="Search name, address, city..."><select id="df"><option value="">All days</option>'+DAYS.map(function(d){return "<option>"+d+"</option>"}).join("")+'</select></div>'+
-   (can("canEditCustomers")&&!active?'<button class="b ok" id="nc">+ New customer</button>':'')+'<p class="s" id="hint" style="display:none">Tap \u25B2\u25BC to set the route order for this day.</p><div id="lst"></div></div>';
-  function draw(){
+  var nav=S.nav,list=[],offset=0,total=0,seq=0,timer;
+  var mode=S.view==="quotes"?"quote":S.view==="visits"?"visit":"",active=!!mode||(S.arg&&S.arg.pick);
+  function $(id){return document.getElementById(mode==="quote"?({q:"qq",df:"qd",lst:"qlist"}[id]||id):id)}
+  app.innerHTML='<div id="flash"></div><div class="card"><div class="row"><input id="'+(mode==="quote"?"qq":"q")+'" aria-label="Search customers" placeholder="Search name, address, city..."><select id="'+(mode==="quote"?"qd":"df")+'" aria-label="Service day"><option value="">All days</option>'+DAYS.map(function(d){return "<option>"+d+"</option>"}).join("")+'</select></div>'+
+   (can("canEditCustomers")&&!active?'<button class="b ok" id="nc">+ New customer</button>':'')+'<p class="s" id="hint" style="display:none">Tap \u25B2\u25BC to set the route order for this day.</p><div id="'+(mode==="quote"?"qlist":"lst")+'"></div></div>';
+  async function draw(next){
+    offset=typeof next==="number"?next:0;var tok=++seq;
     var q=$("q").value.toLowerCase(),d=$("df").value;
-    var rows=list.filter(function(c){return (!d||c.service_day===d)&&(!q||(c.customer_id+" "+c.first_name+" "+c.last_name+" "+c.address+" "+c.city+" "+c.phone).toLowerCase().indexOf(q)>=0)});
+    try{
+    var page=await api(pagePath("/v1/customers",offset,"&q="+encodeURIComponent(q)+"&service_day="+encodeURIComponent(d)),{readKey:"customer-list"});
+    if(nav!==S.nav||tok!==seq)return;
+    list=Array.isArray(page)?page:page.rows;total=Array.isArray(page)?page.length:page.total;
+    var rows=list;
     var canDrag=!!d&&!q&&!active&&can("canEditCustomers");
-    $("lst").innerHTML=rows.length?rows.map(function(c){return '<div class="item" data-id="'+esc(c.customer_id)+'">'+(canDrag?'<span class="mv"><button class="b alt" data-mv="-1" aria-label="Move up">\u25B2</button><button class="b alt" data-mv="1" aria-label="Move down">\u25BC</button></span>':'')+'<div class="t"><b>'+(d&&c.route_order>0?esc(c.route_order)+'. ':'')+esc(c.last_name)+', '+esc(c.first_name)+(c.status==="Inactive"?' (inactive)':'')+'</b><span class="s">#'+esc(c.customer_id)+' \u2022 '+esc(c.service_day)+' \u2022 '+mapLink(c)+' \u2022 '+money(c.amount_charged)+'</span></div>'+
-      (can("canViewStatements")?'<button class="b" data-st="'+esc(c.customer_id)+'">Statement</button>':'')+
-      (!active&&(can("canViewCustomerDetails")||can("canEditCustomers"))?'<button class="b alt" data-cu="'+esc(c.customer_id)+'">Details</button>':'')+'</div>'}).join(""):'<p class="s">No customers found.</p>';
+    if(canDrag){rows=await allCustomers("&service_day="+encodeURIComponent(d));if(nav!==S.nav||tok!==seq)return;list=rows}
+    $("lst").innerHTML=rows.length?customerTable(rows,function(c){if(mode)return '<button class="b" '+(mode==="quote"?'data-qc':'data-vc')+'="'+esc(c.customer_id)+'">'+(mode==="quote"?"Quotes":"Visits")+'</button>';return (can("canViewStatements")?'<button class="b" data-st="'+esc(c.customer_id)+'">Statement</button>':'')+
+      (!active&&(can("canViewCustomerDetails")||can("canEditCustomers"))?'<button class="b alt" data-cu="'+esc(c.customer_id)+'">Details</button>':'')},canDrag):'<p class="s">No customers found.</p>';
+    if(!canDrag){$("lst").innerHTML+=pager("cu",offset,total);bindPager("cu",offset,total,draw)}
     app.querySelectorAll("[data-st]").forEach(function(b){b.onclick=function(){go("statement",b.getAttribute("data-st"))}});
+    app.querySelectorAll("[data-qc],[data-vc]").forEach(function(b){b.onclick=function(){var id=b.getAttribute(mode==="quote"?"data-qc":"data-vc");go(mode,mode==="quote"?{id:id}:id)}});
     app.querySelectorAll("[data-cu]").forEach(function(b){b.onclick=function(){go("customer",b.getAttribute("data-cu"))}});
     if(canDrag)enableDrag(d);
     $("hint").style.display=(d&&!q&&!active&&can("canEditCustomers"))?"block":"none";
+    }catch(e){if(nav===S.nav&&tok===seq)flash("err",e.message)}
   }
   async function saveOrder(day){
-    var ids=[].map.call($("lst").querySelectorAll(".item"),function(r){return r.getAttribute("data-id")});
-    try{await api("/v1/customers/reorder",{method:"POST",body:{service_day:day,customer_ids:ids}});list=await api("/v1/customers");draw()}catch(e){flash("err",e.message)}
+    var ids=[].map.call($("lst").querySelectorAll("[data-id]"),function(r){return r.getAttribute("data-id")});
+    try{await api("/v1/customers/reorder",{method:"POST",body:{service_day:day,customer_ids:ids}});draw()}catch(e){flash("err",e.message)}
   }
   function enableDrag(day){
-    var box=$("lst");
+    var box=$("lst").querySelector("tbody");
+    if(!box)return;
     box.querySelectorAll("[data-mv]").forEach(function(b){b.onclick=function(){
-      var row=b.closest(".item"),dir=Number(b.getAttribute("data-mv"));
+      var row=b.closest("[data-id]"),dir=Number(b.getAttribute("data-mv"));
       if(dir<0&&row.previousElementSibling)box.insertBefore(row,row.previousElementSibling);
       else if(dir>0&&row.nextElementSibling)box.insertBefore(row.nextElementSibling,row);else return;
       saveOrder(day);
@@ -408,9 +484,9 @@ async function vCustomers(){
     box.querySelectorAll(".grip").forEach(function(g){
       g.onpointerdown=function(ev){
         ev.preventDefault();
-        var row=g.closest(".item");row.classList.add("drag");g.setPointerCapture(ev.pointerId);
+        var row=g.closest("[data-id]");row.classList.add("drag");g.setPointerCapture(ev.pointerId);
         g.onpointermove=function(e){
-          var over=document.elementFromPoint(e.clientX,e.clientY);over=over&&over.closest&&over.closest(".item");
+          var over=document.elementFromPoint(e.clientX,e.clientY);over=over&&over.closest&&over.closest("[data-id]");
           if(!over||over===row||over.parentNode!==box)return;
           var r=over.getBoundingClientRect();
           if(e.clientY<r.top+r.height/2)box.insertBefore(row,over);else box.insertBefore(row,over.nextSibling);
@@ -422,13 +498,14 @@ async function vCustomers(){
       };
     });
   }
-  $("q").oninput=draw;$("df").onchange=draw;draw();
+  $("q").oninput=function(){clearTimeout(timer);++seq;cancelReadKey("customer-list");timer=setTimeout(function(){if(nav===S.nav)draw()},180)};$("df").onchange=function(){clearTimeout(timer);return draw()};await draw();
   if($("nc"))$("nc").onclick=function(){go("customer","")};
 }
 function vPickCustomer(){S.arg={pick:true};return vCustomers()}
 async function vCustomer(){
-  var id=S.arg,c={customer_id:"",first_name:"",last_name:"",address:"",city:"",state:"",zip:"",phone:"",email:"",service_day:"Monday",amount_charged:0,notes:"",starting_date:"",status:"Active",route_order:0};
-  if(id)c=await api("/v1/customers/"+encodeURIComponent(id));else{try{c.customer_id=(await api("/v1/customers/next-id")).customer_id}catch(e){}}
+  var nav=S.nav,id=S.arg,c={customer_id:"",first_name:"",last_name:"",address:"",city:"",state:"",zip:"",phone:"",email:"",service_day:"Monday",amount_charged:0,notes:"",starting_date:"",status:"Active",route_order:0};
+  if(id)c=await api("/v1/customers/"+encodeURIComponent(id));else{try{c.customer_id=(await api("/v1/customers/next-id")).customer_id}catch(e){if(e.message==="Obsolete view")throw e}}
+  if(nav!==S.nav)return;
   var ro=!can("canEditCustomers")?" disabled":"";
   function f(k,l,t){return '<div><label>'+l+'</label><input id="f_'+k+'" value="'+esc(c[k])+'"'+(t?' type="'+t+'"':"")+ro+'></div>'}
   app.innerHTML='<div id="flash"></div><div class="card"><h2>'+(id?"Customer #"+esc(id):"New customer")+'</h2><div class="row">'+f("customer_id","Customer ID")+f("first_name","First name")+f("last_name","Last name")+'</div>'+
@@ -457,10 +534,11 @@ async function vCustomer(){
 
 /* ---------- statement ---------- */
 async function vStatement(){
-  S.kw=null;await loadKw();var id=S.arg;
-  var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api("/v1/customers/"+encodeURIComponent(id)+"/statements"),api("/v1/record-types")]);
-  var c=res[0],recs=res[1].slice().sort(cmpRecords),types=res[2];
-  var run=0;recs.forEach(function(r){run+=r.amount;r.run=run});recs.reverse();
+  var nav=S.nav;await loadKw();if(nav!==S.nav)return;var arg=S.arg,id=typeof arg==="object"?arg.id:arg,offset=arg&&arg.offset||0,path="/v1/customers/"+encodeURIComponent(id)+"/statements";
+  var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api(pagePath(path,offset)),api("/v1/record-types")]);if(nav!==S.nav)return;
+  var c=res[0],page=res[1],recs=Array.isArray(page)?page.slice().sort(cmpRecords):page.rows,types=res[2],run=Array.isArray(page)?0:Number(page.balance),total=Array.isArray(page)?page.length:page.total;
+  if(!Array.isArray(page)&&(page.balance==null||!Number.isFinite(run)||recs.some(function(r){return r.run==null||!Number.isFinite(Number(r.run))})))throw new Error("Statement balances are unavailable. Refresh to retry.");
+  if(Array.isArray(page)){recs.forEach(function(r){run+=r.amount;r.run=run});recs.reverse()}
   var edit=can("canEditStatements");
   app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc(c.first_name)+' '+esc(c.last_name)+' <span class="s">#'+esc(c.customer_id)+'</span></h2>'+
    '<div class="s">'+mapLink(c)+'</div><h2 class="'+(run>0?"pos":run<0?"neg":"")+'">Balance: '+money(run)+'</h2>'+
@@ -468,11 +546,18 @@ async function vStatement(){
    (edit?'<div class="card"><h2>Add record</h2><div class="row"><div><label>Date</label><input id="rd"></div><div><label>Type</label><select id="rt">'+types.map(function(t){return "<option>"+esc(t)+"</option>"}).join("")+'</select></div>'+
    '<div id="ckw" class="hide"><label>Check #</label><input id="rc" inputmode="numeric"></div><div><label>Amount</label><input id="ra" type="number" step="0.01" min="0" inputmode="decimal"></div></div>'+
    '<p class="s" id="hint"></p><button class="b ok" id="add">Add record</button></div>':'')+
-   '<div class="card scroll"><table><thead><tr><th>Date</th><th>Type</th><th class="r">Amount</th><th class="r">Balance</th><th></th></tr></thead><tbody>'+
-   recs.map(function(r){return '<tr><td>'+esc(r.record_date)+'</td><td>'+esc(r.type)+'</td><td class="r '+(r.amount<0?"neg":"pos")+'">'+money(r.amount)+'</td><td class="r">'+money(r.run)+'</td><td>'+(edit?'<button class="b bad" data-del="'+r.record_id+'" style="margin:0;padding:6px 10px">\u2715</button>':"")+'</td></tr>'}).join("")+
-   '</tbody></table>'+(recs.length?"":'<p class="s">No records yet.</p>')+'</div>';
+   '<div class="card"><div class="record-scroll" role="region" aria-label="Statement records" tabindex="0"><table class="record-table"><caption style="text-align:left;padding:8px 12px;font-weight:700">Statement records — newest first</caption><thead><tr><th scope="col">Date</th><th scope="col">Type / Description</th><th scope="col" class="r">Amount</th><th scope="col" class="r">Balance</th><th scope="col">Actions</th></tr></thead><tbody>'+
+   recs.map(function(r){return '<tr><td class="record-date">'+esc(r.record_date)+'</td><td>'+esc(r.type)+'</td><td class="r '+(r.amount<0?"neg":"pos")+'">'+money(r.amount)+'</td><td class="r">'+money(r.run)+'</td><td>'+(edit?'<button class="b bad" data-del="'+r.record_id+'">Delete</button>':"")+'</td></tr>'}).join("")+
+   '</tbody></table></div>'+(recs.length?"":'<p class="s">No records yet.</p>')+pager("st",offset,total)+'</div>';
+  bindPager("st",offset,total,function(n){go("statement",{id:id,offset:n})});
   $("bk").onclick=function(){go("statements")};
-  $("pr").onclick=function(){printStatement(c,recs,run)};
+  $("pr").onclick=async function(){
+    var button=$("pr");button.disabled=true;
+    try{var print=await Promise.all([api(path),api("/v1/settings")]);if(nav!==S.nav)return;
+      S.kw.settings=print[1];var all=print[0].slice().sort(cmpRecords),balance=all.reduce(function(s,r){return s+Number(r.amount)},0);
+      printStatement(c,all.reverse(),balance);
+    }catch(e){flash("err",e.message)}finally{if(nav===S.nav)button.disabled=false}
+  };
   app.querySelectorAll("[data-del]").forEach(function(b){b.onclick=async function(){if(!confirm("Delete this record?"))return;
     try{await api("/v1/statements/"+b.getAttribute("data-del"),{method:"DELETE"});go("statement",id)}catch(e){flash("err",e.message)}}});
   if(edit){
@@ -493,7 +578,7 @@ function stmtPhone(p){var d=String(p||"").replace(/\D/g,"");if(d.length===11&&d[
 function stmtAmt(n){n=Number(n)||0;var v="$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});return n<0?"("+v+")":v}
 function stmtAddr(a){a=String(a||"").trim();if(!a)return[];var p=a.split(/\r?\n|\|/).map(function(x){return x.trim()}).filter(Boolean);if(p.length>1)return p;var i=a.indexOf(",");return i>0?[a.slice(0,i).trim(),a.slice(i+1).trim()]:[a]}
 function printStatement(c,recs,bal){
-  var st=(S.kw&&S.kw.settings)||{};
+  var nav=S.nav,st=(S.kw&&S.kw.settings)||{};
   var name=(st.companyName||S.account.companyName||"").trim(),email=(st.companyEmail||"").trim(),pay=(st.paymentInfo||"").trim();
   var head=stmtAddr(st.companyAddress).map(esc);
   if(st.companyPhone)head.push(esc(stmtPhone(st.companyPhone)));
@@ -544,7 +629,7 @@ function printStatement(c,recs,bal){
   function restore(){if(restored)return;restored=true;document.title=oldTitle;window.removeEventListener("afterprint",restore)}
   window.addEventListener("afterprint",restore);
   document.title=base;
-  var imgs=[].slice.call($("printarea").querySelectorAll("img")),go2=function(){window.print()};
+  var imgs=[].slice.call($("printarea").querySelectorAll("img")),go2=function(){if(nav===S.nav)window.print()};
   if(!imgs.length)go2();
   else Promise.all(imgs.map(function(im){return im.decode?im.decode().catch(function(){}):new Promise(function(r){if(im.complete)r();else{im.onload=im.onerror=r}})})).then(go2);
   setTimeout(restore,60000);
@@ -571,32 +656,25 @@ function quoteValidate(q){
 }
 async function vQuotes(){
   if(!can("canAccessSalesQuote"))throw new Error("Sales Quote access is not permitted.");
-  var nav=S.nav,list=await api("/v1/customers");if(nav!==S.nav)return;
-  app.innerHTML='<div id="flash"></div><div class="card"><h2>Sales Quote — Customers</h2><label for="qq">Search customers</label><input id="qq" type="search"><label for="qd">Service day</label><select id="qd"><option value="">All days</option>'+DAYS.map(function(d){return '<option>'+d+'</option>'}).join("")+'</select><div id="qlist"></div></div>';
-  function draw(){
-    var q=$("qq").value.trim().toLowerCase(),d=$("qd").value;
-    var rows=list.filter(function(c){return (!d||c.service_day===d)&&(!q||[c.customer_id,c.first_name,c.last_name,c.address,c.city,c.phone].join(" ").toLowerCase().indexOf(q)>=0)});
-    $("qlist").innerHTML=rows.length?rows.map(function(c){return '<div class="item"><div class="t"><b>'+esc(c.first_name)+' '+esc(c.last_name)+'</b><span class="s">#'+esc(c.customer_id)+' · '+esc(c.service_day)+' · '+esc(c.address)+'</span></div><button class="b" data-qc="'+esc(c.customer_id)+'">Quotes</button></div>'}).join(""):'<p>No customers found.</p>';
-    app.querySelectorAll("[data-qc]").forEach(function(b){b.onclick=function(){go("quote",{id:b.getAttribute("data-qc")})}});
-  }
-  $("qq").oninput=draw;$("qd").onchange=draw;draw();
+  return vCustomers();
 }
 async function vQuote(){
   if(!can("canAccessSalesQuote"))throw new Error("Sales Quote access is not permitted.");
-  var nav=S.nav,arg=S.arg||{},id=arg.id,path="/v1/customers/"+encodeURIComponent(id)+"/quotes";
-  var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api(path),api("/v1/record-types"),api("/v1/settings")]);if(nav!==S.nav)return;
-  var c=res[0],quotes=res[1],types=res[2],settings=res[3],busy=false;
+  var nav=S.nav,arg=S.arg||{},id=arg.id,offset=arg.offset||0,path="/v1/customers/"+encodeURIComponent(id)+"/quotes";
+  var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api(pagePath(path,offset,"&summary=1")),api("/v1/record-types"),api("/v1/settings"),arg.qid?api("/v1/quotes/"+encodeURIComponent(arg.qid)):Promise.resolve(null)]);if(nav!==S.nav)return;
+  var c=res[0],quotes=Array.isArray(res[1])?res[1]:res[1].rows,total=Array.isArray(res[1])?quotes.length:res[1].total,types=res[2],settings=res[3],busy=false;
   // Quote-only employees also receive settings for the shared type classification and PDF.
   S.kw={credit:kwList(settings.recordTypeCreditKeywords||DEF_CREDIT),debit:kwList(settings.recordTypeDebitKeywords||DEF_DEBIT),settings:settings};
-  var saved=quotes.filter(function(q){return String(q.quote_id)===String(arg.qid)})[0]||null;
+  var saved=res[4];
   var q=saved?JSON.parse(JSON.stringify(saved)):{quote_date:fmtDate(new Date()),notes:"",terms:quoteTerms(c),lines:[{date:fmtDate(new Date()),type:types[0]||"",description:"",amount:""}]};
   var locked=!!q.converted_at,dirty=!saved;
   app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc(c.first_name)+' '+esc(c.last_name)+' — Sales Quote</h2><button class="b alt" id="qback">Customers</button><button class="b" id="qnew">New quote</button><div id="qsaved">'+
-    (quotes.length?quotes.map(function(r){return '<div class="item"><div class="t"><b>'+esc(r.quote_number)+'</b><span class="s">'+esc(r.quote_date)+(r.converted_at?' · Converted — locked':'')+'</span></div><button class="b alt" data-qid="'+esc(r.quote_id)+'">View / Edit</button></div>'}).join(""):'<p>No saved quotes.</p>')+'</div></div>'+
+    (quotes.length?recordTable(["Quote number","Date","Status","Actions"],quotes.map(function(r){return '<tr><td><b>'+esc(r.quote_number)+'</b></td><td class="record-date">'+esc(r.quote_date)+'</td><td>'+(r.converted_at?'Converted — locked':'Saved')+'</td><td><button class="b alt" data-qid="'+esc(r.quote_id)+'">View / Edit</button></td></tr>'}).join(""),"Saved quotes"):'<p>No saved quotes.</p>')+'</div></div>'+
     '<div class="card"><h2>'+esc(saved?q.quote_number:"New quote — number assigned on save")+'</h2><p>'+(locked?'Converted to Statement — this quote is locked.':'Quotes do not affect the statement balance. Save before PDF or conversion.')+'</p>'+
     '<fieldset id="qfields" style="border:0;padding:0;min-width:0"'+(locked?' disabled':'')+'><label for="qdate">Quote date</label><input id="qdate" value="'+esc(q.quote_date)+'"><label for="qnotes">Notes</label><textarea id="qnotes" maxlength="16000" rows="3">'+esc(q.notes)+'</textarea><div id="qlines"></div><button class="b alt" id="qadd">Add line</button></fieldset>'+
     '<p id="qtotal"></p><p id="qstate" role="status"></p>'+(!locked?'<button class="b" id="qsave">Save quote</button>':'')+'<button class="b alt" id="qpdf">PDF / Print</button>'+
     (saved&&!locked?'<button class="b bad" id="qdelete">Delete quote</button>'+(can("canEditStatements")?'<button class="b ok" id="qconvert">Convert to Statement</button>':''):'')+'</div>';
+  $("qsaved").innerHTML+=pager("qu",offset,total);bindPager("qu",offset,total,function(n){go("quote",{id:id,offset:n,qid:arg.qid})});
   $("qback").onclick=function(){go("quotes")};$("qnew").onclick=function(){go("quote",{id:id})};
   app.querySelectorAll("[data-qid]").forEach(function(b){b.onclick=function(){go("quote",{id:id,qid:b.getAttribute("data-qid")})}});
   function status(){
@@ -613,11 +691,11 @@ async function vQuote(){
   }
   function changed(){dirty=true;status()}
   function drawLines(){
-    $("qlines").innerHTML=q.lines.map(function(l,i){
+    $("qlines").innerHTML=recordTable(["Line","Date","Type","Description","Amount / Sign","Actions"],q.lines.map(function(l,i){
       var opts=types.slice();if(l.type&&opts.indexOf(l.type)<0)opts.push(l.type);
-      return '<div class="card" style="border:1px solid var(--line)"><b>Line '+(i+1)+'</b><div class="row"><div><label for="qld'+i+'">Date</label><input id="qld'+i+'" data-qi="'+i+'" data-qkey="date" value="'+esc(l.date)+'"></div><div><label for="qlt'+i+'">Type</label><select id="qlt'+i+'" data-qi="'+i+'" data-qkey="type"><option value="">Choose type</option>'+opts.map(function(t){return '<option value="'+esc(t)+'"'+(t===l.type?' selected':'')+'>'+esc(t)+' — '+(isCredit(t)?"CREDIT (+)":"DEBIT (−)")+'</option>'}).join("")+'</select></div></div><p id="qlsign'+i+'"></p>'+
-        '<label for="qls'+i+'">Description</label><textarea id="qls'+i+'" data-qi="'+i+'" data-qkey="description" rows="2">'+esc(l.description)+'</textarea><label for="qla'+i+'">Amount (sign determined by type)</label><input id="qla'+i+'" data-qi="'+i+'" data-qkey="amount" type="number" step="0.01" inputmode="decimal" value="'+esc(l.amount===""?"":Math.abs(Number(l.amount)))+'"><button class="b bad" data-qremove="'+i+'">Remove line '+(i+1)+'</button></div>';
-    }).join("");
+      return '<tr><td>'+(i+1)+'</td><td><label for="qld'+i+'">Date</label><input id="qld'+i+'" data-qi="'+i+'" data-qkey="date" value="'+esc(l.date)+'"></td><td><label for="qlt'+i+'">Type</label><select id="qlt'+i+'" data-qi="'+i+'" data-qkey="type"><option value="">Choose type</option>'+opts.map(function(t){return '<option value="'+esc(t)+'"'+(t===l.type?' selected':'')+'>'+esc(t)+' — '+(isCredit(t)?"CREDIT (+)":"DEBIT (−)")+'</option>'}).join("")+'</select></td>'+
+        '<td><label for="qls'+i+'">Description</label><textarea id="qls'+i+'" data-qi="'+i+'" data-qkey="description" rows="2">'+esc(l.description)+'</textarea></td><td><label for="qla'+i+'">Amount (sign determined by type)</label><input id="qla'+i+'" data-qi="'+i+'" data-qkey="amount" type="number" step="0.01" inputmode="decimal" value="'+esc(l.amount===""?"":Math.abs(Number(l.amount)))+'"><p id="qlsign'+i+'"></p></td><td><button class="b bad" data-qremove="'+i+'">Remove line '+(i+1)+'</button></td></tr>';
+    }).join(""),"Quote lines","quote-lines");
     q.lines.forEach(function(l,i){dateInput($("qld"+i))});
     app.querySelectorAll("[data-qi]").forEach(function(el){el.addEventListener("input",function(){q.lines[Number(el.getAttribute("data-qi"))][el.getAttribute("data-qkey")]=el.value;changed()})});
     app.querySelectorAll("[data-qremove]").forEach(function(b){b.onclick=function(){q.lines.splice(Number(b.getAttribute("data-qremove")),1);changed();drawLines()}});
@@ -641,11 +719,11 @@ async function vQuote(){
     if(!saved||dirty||!can("canEditStatements"))return;
     if(confirm("Convert "+saved.quote_number+" to Statement? This adds its lines to the statement exactly once and permanently locks the quote."))mutate("POST","/convert");
   };
-  $("qpdf").onclick=function(){if(saved&&!dirty)printQuote(c,saved,settings)};
+  $("qpdf").onclick=async function(){if(!saved||dirty||busy)return;busy=true;status();try{var latest=await api("/v1/settings");if(nav===S.nav)printQuote(c,saved,latest)}catch(e){flash("err",e.message)}finally{busy=false;if(nav===S.nav)status()}};
   drawLines();
 }
 function printQuote(c,q,st){
-  var name=[c.first_name,c.last_name].filter(Boolean).join(" "),addr=[c.city,c.state,c.zip].filter(Boolean).join(" ");
+  var nav=S.nav,name=[c.first_name,c.last_name].filter(Boolean).join(" "),addr=[c.city,c.state,c.zip].filter(Boolean).join(" ");
   var logo=String(st.showLogo)!=="false"&&/^data:image\/(png|jpeg);base64,/.test(st.logoData||"")?'<img alt="Company logo" src="'+esc(st.logoData)+'">':"";
   var total=q.lines.reduce(function(s,l){return s+Number(l.amount)},0);
   $("printarea").innerHTML='<style>@page{size:letter;margin:.5in}@media print{body{background:#fff}}#printarea{background:#fff}'+
@@ -670,67 +748,86 @@ function printQuote(c,q,st){
   function restore(){if(restored)return;restored=true;document.title=old;window.removeEventListener("afterprint",restore)}
   window.addEventListener("afterprint",restore);document.title=base;
   var imgs=[].slice.call($("printarea").querySelectorAll("img"));
-  Promise.all(imgs.map(function(im){return im.decode?im.decode().catch(function(){}):new Promise(function(r){if(im.complete)r();else im.onload=im.onerror=r})})).then(function(){window.print()}).catch(restore);
+  Promise.all(imgs.map(function(im){return im.decode?im.decode().catch(function(){}):new Promise(function(r){if(im.complete)r();else im.onload=im.onerror=r})})).then(function(){if(nav===S.nav)window.print()}).catch(restore);
   setTimeout(restore,60000);
 }
 /* ---------- monthly statement ---------- */
 async function vMonthly(){
-  await loadKw();
+  var nav=S.nav;await loadKw();if(nav!==S.nav)return;
   var types=(await api("/v1/record-types")).filter(isCredit);
-  app.innerHTML='<div id="flash"></div><div class="card"><h2>Monthly Statement</h2><p class="s">Adds one record for every active customer using their amount charged, dated the last day of the current month.</p>'+
-   (types.length?'<label>Credit type</label><select id="mt">'+types.map(function(t){return "<option>"+esc(t)+"</option>"}).join("")+'</select><button class="b ok" id="go" style="margin-top:12px">Apply to active customers</button>':'<p class="neg">No credit record types exist. Add one under Record Types first.</p>')+'</div>';
+  if(nav!==S.nav)return;
+  app.innerHTML='<div id="flash"></div><div class="card"><h2>Monthly Statement</h2><p class="s">Atomically adds one record for every accessible active customer using their current amount charged. The posting date defaults to the last day of this month. Unconfirmed requests are saved on this device for same-request manual retry; nothing retries automatically.</p>'+
+   (types.length?'<label>Credit type</label><select id="mt">'+types.map(function(t){return "<option>"+esc(t)+"</option>"}).join("")+'</select><label for="md">Posting date</label><input id="md"><button class="b ok" id="go" style="margin-top:12px">Apply to active customers</button>':'<p class="neg">No credit record types exist. Add one under Record Types first.</p>')+'</div>';
   if(!$("go"))return;
+  var now=new Date(),request=null,busy=false,completed=false;dateInput($("md"));$("md").value=fmtDate(new Date(now.getFullYear(),now.getMonth()+1,0));
+  function pendingKey(){return "cm.monthly.pending."+JSON.stringify([S.account.companyId||0,S.account.username||"",S.account.role,$("md").value,$("mt").value])}
+  function pending(value){
+    try{if(typeof localStorage==="undefined")return null;if(value===null){localStorage.removeItem(pendingKey());return null}if(value){localStorage.setItem(pendingKey(),JSON.stringify(value));return value}
+      var saved=JSON.parse(localStorage.getItem(pendingKey())||"null");return saved&&/^[a-f0-9-]{36}$/i.test(saved.request_id)?saved:null;
+    }catch(e){return null}
+  }
+  function reset(){if(busy)return;request=pending();completed=false;$("go").disabled=false;$("go").textContent=request?"Retry same billing request":"Apply to active customers";
+    if(request)flash("msg","An unconfirmed billing request is pending for this date and type. Retry uses the same request ID; no records are added automatically.");
+  }
+  $("mt").onchange=reset;$("md").addEventListener("input",reset);
+  reset();
   $("go").onclick=async function(){
-    var list=(await api("/v1/customers")).filter(function(c){return c.status!=="Inactive"});
-    var now=new Date(),last=new Date(now.getFullYear(),now.getMonth()+1,0),date=fmtDate(last),type=$("mt").value;
-    if(!confirm("Add a "+type+" record dated "+date+" to "+list.length+" active customers?"))return;
-    var ok=0,fail=0;$("go").disabled=true;
-    for(var i=0;i<list.length;i++){try{await api("/v1/customers/"+encodeURIComponent(list[i].customer_id)+"/statements",{method:"POST",body:{record_date:date,type:type,amount:Math.abs(Number(list[i].amount_charged)||0)}});ok++}catch(e){fail++}}
-    flash(fail?"err":"msg","Added "+ok+" records"+(fail?"; "+fail+" failed.":"."));$("go").disabled=false;
+    if(busy)return;var date=$("md").value,type=$("mt").value;
+    if(!parseDate(date))return flash("err","Date must be a valid MM/DD/YYYY date.");
+    date=fmtDate(parseDate(date));$("md").value=date;
+    if(!request)request=pending();
+    if(!confirm((request?"Retry the SAME billing request? ":completed?"Create ANOTHER billing request? This intentionally bills customers again. ":"")+"Add a "+type+" record dated "+date+" to accessible active customers?"))return;
+    if(!request)request={request_id:crypto.randomUUID(),date:date,type:type};
+    pending(request);
+    busy=true;$("go").disabled=true;$("mt").disabled=true;$("md").disabled=true;
+    try{var result=await api("/v1/statements/monthly",{method:"POST",body:{request_id:request.request_id,date:request.date,type:request.type}});pending(null);request=null;completed=true;flash("msg","Added "+result.added+" records. Confirmed complete. Applying again creates a new billing request.")}
+    catch(e){if(nav===S.nav)flash("err",e.message+" Retry manually with the same request; do not change the date or type.")}
+    finally{busy=false;if(nav===S.nav){$("go").disabled=false;$("go").textContent=request?"Retry same billing request":completed?"Apply again (new request)":"Apply to active customers";$("mt").disabled=false;$("md").disabled=false}}
   };
 }
 
 /* ---------- charged summary ---------- */
 async function vCharged(){
-  var list=(await api("/v1/customers")).filter(function(c){return c.status!=="Inactive"});
-  var rows=await Promise.all(list.map(async function(c){try{return {c:c,b:(await api("/v1/customers/"+encodeURIComponent(c.customer_id)+"/balance")).balance}}catch(e){return {c:c,b:0}}}));
+  var nav=S.nav,result=await Promise.all([allCustomers(),api("/v1/balances")]);if(nav!==S.nav)return;
+  var list=result[0].filter(function(c){return c.status!=="Inactive"}),balances=new Map(result[1].rows.map(function(r){if(r.balance==null||!Number.isFinite(Number(r.balance)))throw new Error("Balance unavailable for customer "+r.customer_id);return [String(r.customer_id),Number(r.balance)]}));
+  var rows=list.map(function(c){var balance=balances.get(String(c.customer_id));if(!Number.isFinite(balance))throw new Error("Balance unavailable for customer "+c.customer_id);return {c:c,b:balance}});
   rows=rows.filter(function(r){return r.b>0}).sort(function(a,b){return b.b-a.b});
   var total=rows.reduce(function(s,r){return s+r.b},0);
   app.innerHTML='<div id="flash"></div><div class="card"><h2>Charged Summary</h2><p class="s">Active customers with a balance above $0.00</p><button class="b alt" id="rf">Refresh</button><h3>Total: '+money(total)+' ('+rows.length+')</h3>'+
-   (rows.length?rows.map(function(r){return '<div class="item"><div class="t"><b>'+esc(r.c.last_name)+', '+esc(r.c.first_name)+'</b><span class="s">#'+esc(r.c.customer_id)+' \u2022 '+esc(r.c.service_day)+'</span></div><b class="pos">'+money(r.b)+'</b><button class="b alt" data-st="'+esc(r.c.customer_id)+'">Open</button></div>'}).join(""):'<p class="s">Nobody currently owes a balance.</p>')+'</div>';
+   (rows.length?recordTable(["Customer","ID","Service day","Balance","Actions"],rows.map(function(r){return '<tr><td><b>'+esc(r.c.last_name)+', '+esc(r.c.first_name)+'</b></td><td>'+esc(r.c.customer_id)+'</td><td>'+esc(r.c.service_day)+'</td><td class="r pos">'+money(r.b)+'</td><td><button class="b alt" data-st="'+esc(r.c.customer_id)+'">Open</button></td></tr>'}).join(""),"Outstanding balances"):'<p class="s">Nobody currently owes a balance.</p>')+'</div>';
   $("rf").onclick=function(){go("charged")};
   app.querySelectorAll("[data-st]").forEach(function(b){b.onclick=function(){go("statement",b.getAttribute("data-st"))}});
 }
 
 /* ---------- revenue ---------- */
 async function vRevenue(){
-  var r=await api("/v1/revenue");
+  var nav=S.nav,r=await api("/v1/revenue");if(nav!==S.nav)return;
   var by={};r.by_day.forEach(function(x){by[x.service_day]=Number(x.total)||0});
   app.innerHTML='<div class="card"><h2>Revenue Summary</h2><p class="s">Inactive customers are not included.</p>'+
-   DAYS.concat(Object.keys(by).filter(function(k){return DAYS.indexOf(k)<0})).filter(function(d){return d in by}).map(function(d){return '<div class="item"><span>'+esc(d)+'</span><b>'+money(by[d])+'</b></div>'}).join("")+
-   '<div class="item"><b>Total</b><b>'+money(r.total)+'</b></div></div>';
+   recordTable(["Service day","Revenue"],DAYS.concat(Object.keys(by).filter(function(k){return DAYS.indexOf(k)<0})).filter(function(d){return d in by}).map(function(d){return '<tr><td>'+esc(d)+'</td><td class="r">'+money(by[d])+'</td></tr>'}).join("")+
+   '<tr><td><b>Total</b></td><td class="r"><b>'+money(r.total)+'</b></td></tr>',"Revenue by day")+'</div>';
 }
 
 /* ---------- record types ---------- */
 async function vTypes(){
-  await loadKw();var types=await api("/v1/record-types"),edit=can("canEditStatements");
+  var nav=S.nav;await loadKw();if(nav!==S.nav)return;var types=await api("/v1/record-types"),edit=can("canEditStatements");
+  if(nav!==S.nav)return;
   app.innerHTML='<div id="flash"></div><div class="card"><h2>Record Types</h2>'+
    (edit?'<div class="row"><input id="nt" placeholder="New type name"><button class="b ok" id="ad" style="flex:0 0 auto">Add</button></div>':'')+
-   types.map(function(t){return '<div class="item"><div class="t"><b>'+esc(t)+'</b><span class="s">'+(isCredit(t)?"Credit":"Debit")+'</span></div>'+(edit?'<button class="b alt" data-rn="'+esc(t)+'">Rename</button><button class="b bad" data-rm="'+esc(t)+'">Delete</button>':'')+'</div>'}).join("")+'</div>'+
+   recordTable(["Record type","Classification","Actions"],types.map(function(t){return '<tr><td><b>'+esc(t)+'</b></td><td>'+(isCredit(t)?"Credit":"Debit")+'</td><td>'+(edit?'<button class="b alt" data-rn="'+esc(t)+'">Rename</button><button class="b bad" data-rm="'+esc(t)+'">Delete</button>':'')+'</td></tr>'}).join(""),"Record types")+'</div>'+
    (edit&&(can("canEditPdf")||isManager())?'<div class="card"><h2>Credit / Debit keywords</h2><p class="s">A type containing a credit keyword adds to the balance; anything else is a debit.</p><label>Credit keywords</label><textarea id="kc" rows="3">'+esc(S.kw.credit.join(", "))+'</textarea><label>Debit keywords</label><textarea id="kd" rows="3">'+esc(S.kw.debit.join(", "))+'</textarea><button class="b" id="sk">Save keywords</button></div>':"");
   if(edit){
     $("ad").onclick=async function(){var n=$("nt").value.trim();if(!n)return;try{await api("/v1/record-types",{method:"POST",body:{type_name:n}});go("types")}catch(e){flash("err",e.message)}};
     app.querySelectorAll("[data-rm]").forEach(function(b){b.onclick=async function(){if(!confirm("Delete this type?"))return;try{await api("/v1/record-types/"+encodeURIComponent(b.getAttribute("data-rm")),{method:"DELETE"});go("types")}catch(e){flash("err",e.message)}}});
     app.querySelectorAll("[data-rn]").forEach(function(b){b.onclick=async function(){var o=b.getAttribute("data-rn"),n=prompt("New name",o);if(!n||n===o)return;try{await api("/v1/record-types",{method:"PUT",body:{old_name:o,new_name:n}});go("types")}catch(e){flash("err",e.message)}}});
     if($("sk"))$("sk").onclick=async function(){try{
-      await api("/v1/settings",{method:"PUT",body:{key:"recordTypeCreditKeywords",value:$("kc").value}});
-      await api("/v1/settings",{method:"PUT",body:{key:"recordTypeDebitKeywords",value:$("kd").value}});S.kw=null;go("types")}catch(e){flash("err",e.message)}};
+      await api("/v1/settings/batch",{method:"PUT",body:{settings:{recordTypeCreditKeywords:$("kc").value,recordTypeDebitKeywords:$("kd").value}}});S.kw=null;go("types")}catch(e){flash("err",e.message)}};
   }
 }
 
 /* ---------- pdf settings (company details used on printed statements) ---------- */
 async function vPdf(){
-  await loadKw();var s=S.kw.settings,edit=can("canEditPdf");
+  var nav=S.nav;await loadKw();if(nav!==S.nav)return;var s=S.kw.settings,edit=can("canEditPdf");
   var F=[["companyName","Company name"],["companyAddress","Address"],["companyPhone","Phone"],["companyEmail","Email"],["paymentInfo","Payment info (separate items with |)"],["footerText","Footer text"]];
   app.innerHTML='<div id="flash"></div><div class="card"><h2>PDF Settings</h2><p class="s">Used on printed / saved statements. Fonts, margins and logo size are managed in the desktop app.</p>'+
    F.map(function(f){return '<label>'+f[1]+'</label><input id="s_'+f[0]+'" value="'+esc(s[f[0]]||"")+'"'+(edit?"":" disabled")+'>'}).join("")+
@@ -742,21 +839,23 @@ async function vPdf(){
   var logoData=s.logoData||"";
   if(edit){
     $("lgf").onchange=function(){var f=this.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){var im=new Image();im.onload=function(){
-      var k=Math.min(1,320/Math.max(im.width,im.height)),cv=document.createElement("canvas");cv.width=Math.max(1,Math.round(im.width*k));cv.height=Math.max(1,Math.round(im.height*k));
+      if(nav!==S.nav)return;var k=Math.min(1,320/Math.max(im.width,im.height)),cv=document.createElement("canvas");cv.width=Math.max(1,Math.round(im.width*k));cv.height=Math.max(1,Math.round(im.height*k));
       cv.getContext("2d").drawImage(im,0,0,cv.width,cv.height);logoData=cv.toDataURL("image/png");$("lgp").innerHTML='<img src="'+logoData+'" style="max-width:160px;max-height:90px">'};
-      im.onerror=function(){flash("err","That image could not be read.")};im.src=rd.result};rd.readAsDataURL(f)};
+      im.onerror=function(){if(nav===S.nav)flash("err","That image could not be read.")};im.src=rd.result};rd.readAsDataURL(f)};
     $("lgx").onclick=function(){logoData="";$("lgf").value="";$("lgp").innerHTML='<span class="s">No logo yet.</span>'};
   }
   if(edit)$("sv").onclick=async function(){try{
-    for(var i=0;i<F.length;i++)await api("/v1/settings",{method:"PUT",body:{key:F[i][0],value:$("s_"+F[i][0]).value}});
-    await api("/v1/settings",{method:"PUT",body:{key:"showGenerationDate",value:String($("s_gen").checked)}});await api("/v1/settings",{method:"PUT",body:{key:"showLogo",value:String($("s_logo").checked)}});if(logoData!==(s.logoData||""))await api("/v1/settings",{method:"PUT",body:{key:"logoData",value:logoData}});S.kw=null;flash("msg","Saved.")}catch(e){flash("err",e.message)}};
+    var settings={};F.forEach(function(f){settings[f[0]]=$("s_"+f[0]).value});
+    settings.showGenerationDate=String($("s_gen").checked);settings.showLogo=String($("s_logo").checked);
+    if(logoData!==(s.logoData||""))settings.logoData=logoData;
+    await api("/v1/settings/batch",{method:"PUT",body:{settings:settings}});S.kw=null;flash("msg","Saved.")}catch(e){flash("err",e.message)}};
 }
 
 /* ---------- employees ---------- */
 async function vEmployees(){
-  var list=await api("/v1/admin/companies/"+S.account.companyId+"/employees");
+  var nav=S.nav,list=await api("/v1/admin/companies/"+S.account.companyId+"/employees");if(nav!==S.nav)return;
   app.innerHTML='<div id="flash"></div><div class="card"><h2>Employees</h2><button class="b ok" id="ne">+ New employee</button>'+
-   list.map(function(e){return '<div class="item"><div class="t"><b>'+esc(e.first_name)+' '+esc(e.last_name)+'</b><span class="s">'+esc(e.username)+'</span></div><button class="b alt" data-e="'+e.employee_id+'">Edit</button></div>'}).join("")+'</div>';
+   recordTable(["Employee","Username","Actions"],list.map(function(e){return '<tr><td><b>'+esc(e.first_name)+' '+esc(e.last_name)+'</b></td><td>'+esc(e.username)+'</td><td><button class="b alt" data-e="'+e.employee_id+'">Edit</button></td></tr>'}).join(""),"Employees")+'</div>';
   $("ne").onclick=function(){go("employee",{})};
   app.querySelectorAll("[data-e]").forEach(function(b){b.onclick=function(){go("employee",list.filter(function(e){return String(e.employee_id)===b.getAttribute("data-e")})[0])}});
 }
@@ -855,15 +954,7 @@ function visitReadPhoto(file){
 }
 function visitStamp(iso){var d=new Date(iso);if(isNaN(d))return String(iso||"");return fmtDate(d)+" "+d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}
 async function vVisits(){
-  var list=await api("/v1/customers");
-  app.innerHTML='<div id="flash"></div><div class="card"><h2>Visits</h2><div class="row"><input id="q" placeholder="Search customers..."><select id="df"><option value="">All days</option>'+DAYS.map(function(d){return "<option>"+d+"</option>"}).join("")+'</select></div><div id="lst"></div></div>';
-  function draw(){
-    var q=$("q").value.toLowerCase(),d=$("df").value;
-    var rows=list.filter(function(c){return (!d||c.service_day===d)&&(!q||(c.customer_id+" "+c.first_name+" "+c.last_name+" "+c.address+" "+c.city+" "+c.phone).toLowerCase().indexOf(q)>=0)});
-    $("lst").innerHTML=rows.length?rows.map(function(c){return '<div class="item"><div class="t"><b>'+esc(c.first_name)+' '+esc(c.last_name)+'</b><span class="s">#'+esc(c.customer_id)+' \u2022 '+esc(c.service_day)+' \u2022 '+esc([c.address,c.city].filter(Boolean).join(", "))+'</span></div><button class="b" data-vc="'+esc(c.customer_id)+'">Visits</button></div>'}).join(""):'<p class="s">No customers found.</p>';
-    app.querySelectorAll("[data-vc]").forEach(function(b){b.onclick=function(){go("visit",b.getAttribute("data-vc"))}});
-  }
-  $("q").oninput=draw;$("df").onchange=draw;draw();
+  return vCustomers();
 }
 function visitSlider(key,label,choices){
   return '<div class="vs"><div class="vh"><label class="vl" for="v_'+key+'" style="margin:0;color:inherit;font-size:1rem">'+label+'</label><output class="vo" id="vo_'+key+'" for="v_'+key+'"></output></div>'+
@@ -871,14 +962,14 @@ function visitSlider(key,label,choices){
    '<div class="vt">'+choices.map(function(c,i){return '<button type="button" data-k="'+key+'" data-i="'+i+'">'+esc(c)+'</button>'}).join("")+'</div></div>';
 }
 async function vVisit(){
-  var nav=S.nav,id=S.arg;
-  var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api("/v1/customers/"+encodeURIComponent(id)+"/visits")]);
+  var nav=S.nav,id=S.arg,path="/v1/customers/"+encodeURIComponent(id)+"/visits",offset=0,pageSeq=0;
+  var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api(pagePath(path,0,"&summary=1"))]);
   if(nav!==S.nav)return;
-  var cust=res[0],visits=visitSort(Array.isArray(res[1])?res[1]:[]),sel="",saving=false,photo="",reading=false,readTok=0;
+  var cust=res[0],visits=visitSort(Array.isArray(res[1])?res[1]:res[1].rows),total=Array.isArray(res[1])?visits.length:res[1].total,sel="",saving=false,photo="",reading=false,readTok=0;
   var SL={ph:V_PH,chlo:V_CHLO,stb:V_STB};
   app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc((cust.first_name+" "+cust.last_name).trim()||("Customer #"+id))+'</h2><div class="s">#'+esc(cust.customer_id||id)+'</div>'+
    '<label>Current date and time</label><div class="vnow" id="vnow"></div>'+
-   '<label for="vsel">Past visits</label><select id="vsel"></select><div class="s" id="vsaved" style="margin-top:6px"></div>'+
+   '<label for="vsel">Past visits</label><select id="vsel"></select><div id="visit-records"></div><div class="s" id="vsaved" style="margin-top:6px"></div>'+
    visitSlider("ph","PH",V_PH)+visitSlider("chlo","CHLO",V_CHLO)+
    visitSlider("stb",'STB <span class="vrec">(recommended 50-100)</span>',V_STB)+
    '<div class="row"><div><label for="v_alk">ALK <span class="vrec">(optional, recommended 70-120)</span></label><input id="v_alk" inputmode="numeric" autocomplete="off"></div>'+
@@ -913,15 +1004,30 @@ async function vVisit(){
   function opts(){
     $("vsel").innerHTML='<option value="">New Visit</option>'+visits.map(function(v){return '<option value="'+esc(v.visit_id)+'">'+esc(visitStamp(v.visited_at))+'</option>'}).join("");
     $("vsel").value=sel;
+    $("visit-records").innerHTML=visits.length?recordTable(["Date / Time","PH","CHLO","STB","ALK","CAL","Notes","Actions"],visits.map(function(v){
+      return '<tr><td class="record-date">'+esc(visitStamp(v.visited_at))+'</td><td>'+esc(v.ph)+'</td><td>'+esc(v.chlo)+'</td><td>'+esc(v.stb)+'</td><td>'+esc(v.alk==null?"":v.alk)+'</td><td>'+esc(v.cal==null?"":v.cal)+'</td><td>'+esc(v.notes)+'</td><td><button class="b alt" data-visit="'+esc(v.visit_id)+'">View / Edit</button></td></tr>';
+    }).join(""),"Past visit records"):'<p class="s">No saved visits.</p>';
+    $("visit-records").innerHTML+=pager("vi",offset,total);
+    bindPager("vi",offset,total,loadPage);
+    app.querySelectorAll("[data-visit]").forEach(function(b){b.onclick=function(){if(busy())return;$("vsel").value=b.getAttribute("data-visit");$("vsel").onchange()}});
+  }
+  async function loadPage(next){
+    if(busy())return;var token=++pageSeq;reading=true;syncBusy();
+    try{var page=await api(pagePath(path,next,"&summary=1"));if(nav!==S.nav||token!==pageSeq)return;
+      visits=visitSort(Array.isArray(page)?page:page.rows);total=Array.isArray(page)?visits.length:page.total;offset=next;sel="";opts();fill(null);
+    }catch(e){if(nav===S.nav)flash("err",e.message)}finally{reading=false;if(nav===S.nav)syncBusy()}
   }
   function byId(v){return visits.filter(function(x){return String(x.visit_id)===String(v)})[0]||null}
   Object.keys(SL).forEach(function(k){$("v_"+k).oninput=function(){setSlider(k,Number($("v_"+k).value))}});
   app.querySelectorAll("[data-k]").forEach(function(b){b.onclick=function(){setSlider(b.getAttribute("data-k"),Number(b.getAttribute("data-i")))}});
-  $("vsel").onchange=function(){
+  $("vsel").onchange=async function(){
     if(busy()){$("vsel").value=sel;return}
-    var next=$("vsel").value,row=next?byId(next):null,bad=row?visitRowError(row):"";
-    if(bad){$("vsel").value=sel;return flash("err",bad)}
-    sel=next;flash("","");fill(row)};
+    var next=$("vsel").value;reading=true;syncBusy();
+    try{var row=next?await api("/v1/visits/"+encodeURIComponent(next)):null;if(nav!==S.nav)return;var bad=row?visitRowError(row):"";
+      if(bad)throw new Error(bad);sel=next;flash("","");fill(row);
+    }catch(e){if(nav===S.nav){$("vsel").value=sel;flash("err",e.message)}}
+    finally{reading=false;if(nav===S.nav)syncBusy()}
+  };
   $("vcam").onclick=function(){$("v_cam").click()};$("vup").onclick=function(){$("v_file").click()};
   $("v_cam").onchange=function(){chosen($("v_cam"))};$("v_file").onchange=function(){chosen($("v_file"))};
   $("vrm").onclick=function(){if(busy())return;photo="";$("vpmsg").textContent="Photo removed (save to apply).";showPhoto()};
@@ -933,7 +1039,10 @@ async function vVisit(){
     try{
       await api("/v1/customers/"+encodeURIComponent(id)+"/visits/"+encodeURIComponent(deleting),{method:"DELETE"});
       if(nav!==S.nav)return;
-      visits=visits.filter(function(v){return String(v.visit_id)!==deleting});
+      sel="";fill(null);
+      offset=Math.min(offset,Math.max(0,Math.ceil(Math.max(0,total-1)/50)-1)*50);
+      var page=await api(pagePath(path,offset,"&summary=1"));if(nav!==S.nav)return;
+      visits=visitSort(Array.isArray(page)?page:page.rows);total=Array.isArray(page)?visits.length:page.total;
       sel="";opts();fill(null);flash("msg","Visit deleted.");
     }catch(e){if(nav===S.nav)flash("err",e.message)}
     finally{saving=false;if(nav===S.nav)syncBusy()}
@@ -948,8 +1057,10 @@ async function vVisit(){
       var row=sel?await api(base+"/"+encodeURIComponent(sel),{method:"PUT",body:r.body}):await api(base,{method:"POST",body:r.body});
       if(nav!==S.nav)return;
       var badRow=visitRowError(row);if(badRow)throw new Error("Visit was saved but the server returned an invalid record. "+badRow);
-      visits=visitSort(visits.filter(function(v){return String(v.visit_id)!==String(row.visit_id)}).concat([row]));
-      sel=String(row.visit_id);opts();fill(row);flash("msg","Visit saved.");
+      if(!sel)offset=0;sel=String(row.visit_id);fill(row);
+      var page=await api(pagePath(path,offset,"&summary=1"));if(nav!==S.nav)return;
+      visits=visitSort(Array.isArray(page)?page:page.rows);total=Array.isArray(page)?visits.length:page.total;
+      opts();fill(row);flash("msg","Visit saved.");
     }catch(e){if(nav===S.nav)flash("err",e.message)}
     finally{saving=false;if(nav===S.nav)syncBusy()}
   };
@@ -957,6 +1068,7 @@ async function vVisit(){
 }
 /* ---------- backup ---------- */
 function vBackup(){
+  var nav=S.nav;
   app.innerHTML='<div id="flash"></div><div class="card"><h2>Backup / Restore</h2><p class="s">Backup copies only this company\'s data. Restore replaces this company\'s data with the backup file; other companies are not touched.</p>'+
    '<button class="b" id="bk">Download backup</button><label>Restore from file</label><input type="file" id="rf" accept=".json,application/json"><button class="b bad" id="rs">Restore</button></div>';
   $("bk").onclick=async function(){try{
@@ -965,7 +1077,7 @@ function vBackup(){
     flash("msg","Backup downloaded.")}catch(e){flash("err",e.message)}};
   $("rs").onclick=async function(){var f=$("rf").files[0];if(!f)return flash("err","Choose a backup file first.");
     if(!confirm("Replace ALL of this company's current data with the backup?"))return;
-    try{await api("/v1/backup/restore",{method:"POST",body:JSON.parse(await f.text())});flash("msg","Restore complete.")}catch(e){flash("err",e.message)}};
+    try{var body=JSON.parse(await f.text());if(nav!==S.nav)return;await api("/v1/backup/restore",{method:"POST",body:body});flash("msg","Restore complete.")}catch(e){if(nav===S.nav)flash("err",e.message)}};
 }
 
 /* ---------- boot ---------- */

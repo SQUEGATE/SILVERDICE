@@ -165,6 +165,10 @@ public class DatabaseManager {
                     + "type TEXT NOT NULL,"
                     + "amount REAL NOT NULL"
                     + ");");
+            statement.execute("CREATE INDEX IF NOT EXISTS statement_records_customer_history ON statement_records(customer_id, record_id)");
+            statement.execute("CREATE TABLE IF NOT EXISTS monthly_statement_batches ("
+                    + "request_id TEXT PRIMARY KEY, record_date TEXT NOT NULL, type TEXT NOT NULL,"
+                    + "customer_ids TEXT NOT NULL, added INTEGER NOT NULL)");
             statement.execute("CREATE TABLE IF NOT EXISTS record_types ("
                     + "type_id INTEGER PRIMARY KEY AUTOINCREMENT,"
                     + "type_name TEXT UNIQUE NOT NULL"
@@ -424,6 +428,57 @@ public class DatabaseManager {
         return visits;
     }
 
+    public JSONObject getVisitPage(String customerId, int limit, int offset) {
+        validatePage(limit, offset);
+        if (isRemote()) return CompManagerApiClient.object(apiGet("/v1/customers/" + encodePath(customerId)
+                + "/visits?summary=1&limit=" + limit + "&offset=" + offset));
+        JSONArray visits = new JSONArray();
+        try (Connection connection = getConnection();
+             PreparedStatement count = connection.prepareStatement("SELECT COUNT(*) FROM customer_visits WHERE customer_id = ?");
+             PreparedStatement query = connection.prepareStatement("SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes,"
+                     + " CASE WHEN photo_data <> '' THEN 1 ELSE 0 END AS has_photo FROM customer_visits"
+                     + " WHERE customer_id = ? ORDER BY visited_at DESC, visit_id DESC LIMIT ? OFFSET ?")) {
+            count.setString(1, customerId);
+            int total;
+            try (ResultSet result = count.executeQuery()) {
+                if (!result.next()) throw new SQLException("Visit count was not returned.");
+                total = result.getInt(1);
+            }
+            query.setString(1, customerId);
+            query.setInt(2, limit);
+            query.setInt(3, offset);
+            try (ResultSet rows = query.executeQuery()) {
+                while (rows.next()) {
+                    JSONObject visit = new JSONObject().put("visit_id", rows.getLong("visit_id"))
+                            .put("customer_id", customerId).put("visited_at", rows.getString("visited_at"))
+                            .put("ph", rows.getString("ph")).put("chlo", rows.getString("chlo"))
+                            .put("stb", rows.getString("stb")).put("notes", rows.getString("notes"))
+                            .put("alk", rows.getObject("alk") == null ? JSONObject.NULL : rows.getInt("alk"))
+                            .put("cal", rows.getObject("cal") == null ? JSONObject.NULL : rows.getInt("cal"))
+                            .put("has_photo", rows.getInt("has_photo") != 0);
+                    visits.put(visit);
+                }
+            }
+            return new JSONObject().put("rows", visits).put("total", total);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Unable to load visit history.", e);
+        }
+    }
+
+    public VisitRecord getVisit(String customerId, long visitId) {
+        if (visitId < 1) throw new IllegalArgumentException("Select a saved visit.");
+        if (isRemote()) return VisitRecord.fromJson(CompManagerApiClient.object(
+                apiGet("/v1/customers/" + encodePath(customerId) + "/visits/" + visitId)));
+        try (Connection connection = getConnection()) {
+            return loadLocalVisit(connection, customerId, visitId);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Unable to load visit.", e);
+        }
+    }
+
+    private static void validatePage(int limit, int offset) {
+        if (limit < 1 || limit > 200 || offset < 0) throw new IllegalArgumentException("Invalid record page.");
+    }
     public void deleteVisit(String customerId, long visitId) {
         if (visitId < 1) throw new IllegalArgumentException("Select a saved visit to delete.");
         if (isRemote()) {
@@ -514,6 +569,52 @@ public class DatabaseManager {
                 .thenComparingLong(StatementRecord::getId)
                 .reversed());
         return records;
+    }
+
+    public JSONObject getStatementRecordPage(String customerId, int limit, int offset) {
+        validatePage(limit, offset);
+        if (isRemote()) return CompManagerApiClient.object(apiGet("/v1/customers/" + encodePath(customerId)
+                + "/statements?limit=" + limit + "&offset=" + offset));
+        String dateTail = "substr(trim(record_date), instr(trim(record_date), '/') + 1)";
+        String month = "substr(trim(record_date), 1, instr(trim(record_date), '/') - 1)";
+        String day = "substr(" + dateTail + ", 1, instr(" + dateTail + ", '/') - 1)";
+        String year = "substr(" + dateTail + ", instr(" + dateTail + ", '/') + 1)";
+        String isoDate = "printf('%04d-%02d-%02d', CAST(" + year + " AS INTEGER), CAST(" + month
+                + " AS INTEGER), CAST(" + day + " AS INTEGER))";
+        String dateKey = "CASE WHEN length(" + month + ") BETWEEN 1 AND 2 AND " + month + " NOT GLOB '*[^0-9]*'"
+                + " AND length(" + day + ") BETWEEN 1 AND 2 AND " + day + " NOT GLOB '*[^0-9]*'"
+                + " AND length(" + year + ") BETWEEN 1 AND 4 AND " + year + " NOT GLOB '*[^0-9]*'"
+                + " AND CAST(" + year + " AS INTEGER) > 0 AND date(" + isoDate + ", '+0 days') = " + isoDate
+                + " THEN " + isoDate + " ELSE '9999-99-99' END";
+        String order = dateKey + ", CASE WHEN amount >= 0 THEN 0 ELSE 1 END, record_id";
+        String sql = "SELECT record_id, record_date, type, amount,"
+                + " SUM(amount) OVER (ORDER BY " + order + " ROWS UNBOUNDED PRECEDING) AS run"
+                + " FROM statement_records WHERE customer_id = ? ORDER BY " + dateKey
+                + " DESC, CASE WHEN amount >= 0 THEN 0 ELSE 1 END DESC, record_id DESC LIMIT ? OFFSET ?";
+        try (Connection connection = getConnection();
+             PreparedStatement totals = connection.prepareStatement("SELECT COUNT(*), COALESCE(SUM(amount),0) FROM statement_records WHERE customer_id = ?");
+             PreparedStatement query = connection.prepareStatement(sql)) {
+            totals.setString(1, customerId);
+            int total;
+            BigDecimal balance;
+            try (ResultSet row = totals.executeQuery()) {
+                if (!row.next()) throw new SQLException("Statement totals were not returned.");
+                total = row.getInt(1);
+                balance = BigDecimal.valueOf(row.getDouble(2)).setScale(2, RoundingMode.HALF_UP);
+            }
+            query.setString(1, customerId);
+            query.setInt(2, limit);
+            query.setInt(3, offset);
+            JSONArray rows = new JSONArray();
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) rows.put(new JSONObject().put("record_id", result.getLong("record_id"))
+                        .put("record_date", result.getString("record_date")).put("type", result.getString("type"))
+                        .put("amount", result.getBigDecimal("amount")).put("run", result.getBigDecimal("run")));
+            }
+            return new JSONObject().put("rows", rows).put("total", total).put("balance", balance);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Unable to load statement page.", e);
+        }
     }
 
     private static java.time.LocalDate parseRecordDate(String text) {
@@ -643,6 +744,97 @@ public class DatabaseManager {
             throw new RuntimeException("Unable to compute statement balance", e);
         }
         return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    public Map<String, BigDecimal> getStatementBalances() {
+        Map<String, BigDecimal> balances = new HashMap<>();
+        if (isRemote()) {
+            JSONArray rows = CompManagerApiClient.object(apiGet("/v1/balances")).getJSONArray("rows");
+            for (int i = 0; i < rows.length(); i++) {
+                JSONObject row = rows.getJSONObject(i);
+                balances.put(row.getString("customer_id"), row.getBigDecimal("balance").setScale(2, RoundingMode.HALF_UP));
+            }
+            return balances;
+        }
+        try (Connection connection = getConnection();
+             PreparedStatement query = connection.prepareStatement("SELECT c.customer_id, COALESCE(SUM(r.amount), 0) AS balance"
+                     + " FROM customers c LEFT JOIN statement_records r ON r.customer_id = c.customer_id GROUP BY c.customer_id");
+             ResultSet rows = query.executeQuery()) {
+            while (rows.next()) balances.put(rows.getString("customer_id"),
+                    BigDecimal.valueOf(rows.getDouble("balance")).setScale(2, RoundingMode.HALF_UP));
+            return balances;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Unable to load customer balances.", e);
+        }
+    }
+
+    public int addMonthlyStatements(String requestId, String date, String type) {
+        return addMonthlyStatements(requestId, date, type, null);
+    }
+
+    public int addMonthlyStatements(String requestId, String date, String type, List<String> customerIds) {
+        if (requestId == null || !requestId.matches("[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")) {
+            throw new IllegalArgumentException("A valid monthly billing request ID is required.");
+        }
+        String parsedDate = StatementReaderStore.parseDate(date, java.time.Year.now().getValue());
+        if (date == null || !date.equals(parsedDate)) throw new IllegalArgumentException("Date must be a valid MM/DD/YYYY date.");
+        if (type == null || type.isBlank() || type.length() > 128) throw new IllegalArgumentException("Choose a valid record type.");
+        if (isRemote()) return CompManagerApiClient.object(apiPost("/v1/statements/monthly",
+                new JSONObject().put("request_id", requestId).put("date", date).put("type", type))).getInt("added");
+        List<String> scope = customerIds == null ? null : customerIds.stream().distinct().sorted().toList();
+        String scopeKey = scope == null ? "*" : new JSONArray(scope).toString();
+        try (Connection connection = getConnection()) {
+            try (Statement lock = connection.createStatement()) { lock.execute("BEGIN IMMEDIATE"); }
+            try {
+                try (PreparedStatement existing = connection.prepareStatement("SELECT * FROM monthly_statement_batches WHERE request_id = ?")) {
+                    existing.setString(1, requestId);
+                    try (ResultSet row = existing.executeQuery()) {
+                        if (row.next()) {
+                            if (!date.equals(row.getString("record_date")) || !type.equals(row.getString("type"))
+                                    || !scopeKey.equals(row.getString("customer_ids"))) {
+                                throw new IllegalArgumentException("This billing request was already used with different details.");
+                            }
+                            int added = row.getInt("added");
+                            try (Statement commit = connection.createStatement()) { commit.execute("COMMIT"); }
+                            return added;
+                        }
+                    }
+                }
+                int added = 0;
+                try (PreparedStatement customers = connection.prepareStatement("SELECT customer_id, amount_charged FROM customers"
+                        + " WHERE COALESCE(status,'Active') <> 'Inactive' ORDER BY customer_id");
+                     PreparedStatement insert = connection.prepareStatement("INSERT INTO statement_records(customer_id, record_date, type, amount) VALUES (?, ?, ?, ?)");
+                     ResultSet rows = customers.executeQuery()) {
+                    java.util.Set<String> allowed = scope == null ? null : new java.util.HashSet<>(scope);
+                    while (rows.next()) {
+                        String id = rows.getString("customer_id");
+                        if (allowed != null && !allowed.contains(id)) continue;
+                        insert.setString(1, id);
+                        insert.setString(2, date);
+                        insert.setString(3, type);
+                        insert.setBigDecimal(4, BigDecimal.valueOf(rows.getDouble("amount_charged")).abs().setScale(2, RoundingMode.HALF_UP));
+                        insert.addBatch();
+                        added++;
+                    }
+                    insert.executeBatch();
+                }
+                try (PreparedStatement audit = connection.prepareStatement("INSERT INTO monthly_statement_batches VALUES (?, ?, ?, ?, ?)")) {
+                    audit.setString(1, requestId);
+                    audit.setString(2, date);
+                    audit.setString(3, type);
+                    audit.setString(4, scopeKey);
+                    audit.setInt(5, added);
+                    audit.executeUpdate();
+                }
+                try (Statement commit = connection.createStatement()) { commit.execute("COMMIT"); }
+                return added;
+            } catch (SQLException | RuntimeException e) {
+                try (Statement rollback = connection.createStatement()) { rollback.execute("ROLLBACK"); }
+                throw e;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Unable to apply monthly billing batch.", e);
+        }
     }
 
     public Map<String, BigDecimal> getRevenueByDay() {
@@ -869,6 +1061,35 @@ public class DatabaseManager {
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Unable to save PDF setting", e);
+        }
+    }
+
+    public void savePdfSettings(Map<String, String> settings) {
+        if (settings == null || settings.isEmpty()) throw new IllegalArgumentException("No PDF settings were provided.");
+        if (isRemote()) {
+            apiPut("/v1/settings/batch", new JSONObject().put("settings", new JSONObject(settings)));
+            return;
+        }
+        try (Connection connection = getConnection()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "INSERT OR REPLACE INTO pdf_settings(setting_key, setting_value) VALUES (?, ?)")) {
+                for (Map.Entry<String, String> setting : settings.entrySet()) {
+                    if (setting.getKey() == null || setting.getKey().isBlank() || setting.getValue() == null) {
+                        throw new IllegalArgumentException("PDF setting keys and values are required.");
+                    }
+                    statement.setString(1, setting.getKey());
+                    statement.setString(2, setting.getValue());
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+                connection.commit();
+            } catch (SQLException | RuntimeException e) {
+                connection.rollback();
+                throw e;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Unable to save PDF settings.", e);
         }
     }
 

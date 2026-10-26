@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.poolapp.StatementPdfReaderTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-26T20:44:47.526Z" hostname="SQUEGATE" time="1.8">
+  <properties/>
+  <testcase name="readsDepositColumnOnlyFirstColumnDateWrapsAndRepeatedPageHeaders" classname="com.poolapp.StatementPdfReaderTest" time="0.664"/>
+  <testcase name="fallsBackToSingleDollarAmountButNeverGuessesAmongMultipleAmounts" classname="com.poolapp.StatementPdfReaderTest" time="0.02"/>
+  <testcase name="rejectsPageAndTransactionRowCaps" classname="com.poolapp.StatementPdfReaderTest" time="1.079"/>
+  <testcase name="previewOnlyKeepsZelleOrZelDepositsAndPreservesOriginalIdentities" classname="com.poolapp.StatementPdfReaderTest" time="0.002"/>
+  <testcase name="reportsScannedMalformedAndOversizedDocumentsExplicitly" classname="com.poolapp.StatementPdfReaderTest" time="0.034"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

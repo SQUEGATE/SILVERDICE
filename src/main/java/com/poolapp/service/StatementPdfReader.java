@@ -51,6 +51,13 @@ public final class StatementPdfReader {
                                 boolean hasDeposit, boolean hasWithdrawal) { }
     private record NumberToken(String text, float x, boolean dollarSign) { }
 
+    public static List<SourceRow> zelleDepositRows(List<SourceRow> rows) {
+        Pattern zelle = Pattern.compile("(?i)\\b(?:zelle|zel)\\b");
+        Pattern outgoing = Pattern.compile("(?i)\\b(?:zelle|zel)\\s+to\\b|\\bwithdraw\\w*\\b|\\bsubtractions?\\b|\\bpurchase\\b|\\bdebit\\b|\\bpayment\\s+to\\b");
+        return rows.stream().filter(row -> "deposit".equals(row.direction())
+                && zelle.matcher(row.text()).find() && !outgoing.matcher(row.text()).find()).toList();
+    }
+
     public Extraction extract(Path pdf) throws IOException {
         if (pdf == null || !Files.isRegularFile(pdf)) throw new IOException("Select a PDF file.");
         long size = Files.size(pdf);

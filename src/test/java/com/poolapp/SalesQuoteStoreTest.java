@@ -64,6 +64,23 @@ public class SalesQuoteStoreTest {
         assertEquals("SQ-000003", third.quoteNumber());
     }
 
+    @Test public void paginatesSummariesAndLoadsFullDetailsOnlyOnDemand() {
+        for (int i = 0; i < 53; i++) store.save(draft("c1", "Private details " + i,
+                SalesQuote.DEFAULT_TERMS, List.of(line("Bill", "Item " + i, "-10"))));
+        var first = store.page("c1", 50, 0);
+        var second = store.page("c1", 50, 50);
+        assertEquals(53, first.total());
+        assertEquals(50, first.rows().size());
+        assertEquals(3, second.rows().size());
+        assertTrue(first.rows().get(49).id() > second.rows().get(0).id());
+        var full = store.get("c1", first.rows().get(0).id());
+        assertEquals("Private details 52", full.notes());
+        assertEquals(1, full.lines().size());
+        assertEquals(53, store.list("c1").size());
+        assertTrue(store.page("c2", 50, 0).rows().isEmpty());
+        assertThrows(IllegalStateException.class, () -> store.get("c2", full.quoteId()));
+    }
+
     @Test public void convertsExactlyOnceAndLocksBothStaleAndConvertedDrafts() {
         SalesQuote saved = store.save(draft("c1", "", "", List.of(
                 line("Bill", "Motor", "-120.25"), line("Payment", "", "20.00"))));

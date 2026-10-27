@@ -14,6 +14,36 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class VisitsPanelTest {
     @Test
+    public void chemistrySlidersPaintReferenceColorsAndKeepDiscreteValues() throws Exception {
+        var factory = VisitsPanel.class.getDeclaredMethod("slider", java.util.List.class);
+        factory.setAccessible(true);
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                for (String key : new String[]{"ph", "chlo"}) {
+                    var values = key.equals("ph") ? com.poolapp.model.VisitRecord.PH_VALUES
+                            : com.poolapp.model.VisitRecord.CHLO_VALUES;
+                    JSlider slider = (JSlider) factory.invoke(null, values);
+                    JLabel low = (JLabel) slider.getLabelTable().get(0);
+                    JLabel high = (JLabel) slider.getLabelTable().get(5);
+                    org.junit.Assert.assertEquals(Color.decode(key.equals("ph") ? "#e6a079" : "#d9a09b"), low.getBackground());
+                    org.junit.Assert.assertEquals(Color.decode(key.equals("ph") ? "#c83f80" : "#ec1b70"), high.getBackground());
+                    org.junit.Assert.assertTrue(low.isOpaque());
+                    org.junit.Assert.assertEquals(5, slider.getMaximum());
+                    org.junit.Assert.assertTrue(slider.getSnapToTicks());
+                    slider.setSize(480, 70);
+                    var image = new java.awt.image.BufferedImage(480, 70, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                    var graphics = image.createGraphics();
+                    try { slider.paint(graphics); } finally { graphics.dispose(); }
+                    slider.setValue(4);
+                    org.junit.Assert.assertEquals(values.get(4), ((JLabel) slider.getLabelTable().get(slider.getValue())).getText());
+                }
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
+            }
+        });
+    }
+
+    @Test
     public void customerListIsUnpagedAndEnterSearchesAcrossAllDays() throws Exception {
         Path directory = Files.createDirectories(Path.of("visits-search-test-" + java.util.UUID.randomUUID()));
         Path path = directory.resolve("visits.db");

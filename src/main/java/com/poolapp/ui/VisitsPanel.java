@@ -120,7 +120,7 @@ public class VisitsPanel extends JPanel {
                                                            boolean selected, boolean focused) {
                 JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, selected, focused);
                 if (value instanceof Customer customer) {
-                    label.setText(customer.getId() + " - " + customer.getFullName() + " (" + customer.getServiceDay() + ")");
+                    label.setText(customer.getFullName() + " (" + customer.getServiceDay() + ")");
                 }
                 return label;
             }
@@ -462,9 +462,49 @@ public class VisitsPanel extends JPanel {
         slider.setPaintTicks(true);
         slider.setPaintLabels(true);
         Hashtable<Integer, JLabel> labels = new Hashtable<>();
-        for (int i = 0; i < values.size(); i++) labels.put(i, new JLabel(values.get(i)));
+        String[] palette = values.equals(VisitRecord.PH_VALUES)
+                ? new String[]{"#e6a079", "#ef866e", "#df645e", "#d9576b", "#cf4778", "#c83f80"}
+                : values.equals(VisitRecord.CHLO_VALUES)
+                ? new String[]{"#d9a09b", "#e88898", "#df536e", "#ee4275", "#e82d73", "#ec1b70"} : null;
+        for (int i = 0; i < values.size(); i++) {
+            JLabel label = new JLabel(values.get(i));
+            if (palette != null) {
+                label.setOpaque(true);
+                label.setBackground(Color.decode(palette[i]));
+                label.setForeground(new Color(0x111827));
+                label.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(0x475569)),
+                        BorderFactory.createEmptyBorder(3, 5, 3, 5)));
+            }
+            labels.put(i, label);
+        }
+        if (palette != null) {
+            slider.setUI(new javax.swing.plaf.basic.BasicSliderUI(slider) {
+                @Override public void paintTrack(Graphics graphics) {
+                    Graphics2D g = (Graphics2D) graphics.create();
+                    try {
+                        int start = xPositionForValue(slider.getMinimum());
+                        int end = xPositionForValue(slider.getMaximum());
+                        float[] stops = new float[palette.length];
+                        Color[] colors = new Color[palette.length];
+                        for (int i = 0; i < palette.length; i++) {
+                            stops[i] = (float) i / (palette.length - 1);
+                            colors[i] = Color.decode(palette[i]);
+                        }
+                        if (end > start) {
+                            int y = trackRect.y + (trackRect.height - 14) / 2;
+                            g.setPaint(new LinearGradientPaint(start, y, end, y, stops, colors));
+                            g.fillRoundRect(start, y, end - start, 14, 10, 10);
+                            g.setColor(new Color(0x475569));
+                            g.drawRoundRect(start, y, end - start, 14, 10, 10);
+                        }
+                    } finally {
+                        g.dispose();
+                    }
+                }
+            });
+        }
         slider.setLabelTable(labels);
-        slider.setPreferredSize(new Dimension(480, 55));
+        slider.setPreferredSize(new Dimension(480, palette == null ? 55 : 70));
         return slider;
     }
 

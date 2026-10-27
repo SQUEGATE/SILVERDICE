@@ -49,6 +49,21 @@ async function runWebOptimizationBrowserChecks(page) {
     await page.waitForFunction(selector => document.querySelectorAll(selector + " tbody tr").length === 125, list);
     check(await page.locator(list + " tbody tr").count() === 125, view + " shows all 125 customers without paging");
     check(await page.locator("#cunext").count() === 0, view + " has no customer Next page");
+    if (view === "visits") {
+      for (const width of [320, 360, 390, 430]) {
+        await page.setViewportSize({ width, height: 844 });
+        const fits = await page.locator(".visits-customers").evaluate(table => {
+          const region = table.parentElement;
+          return region.scrollWidth <= region.clientWidth + 1 &&
+            [...table.querySelectorAll("[data-vc]")].every(button => {
+              const rect = button.getBoundingClientRect();
+              return rect.left >= 0 && rect.right <= innerWidth && rect.height >= 44;
+            });
+        });
+        check(fits, "Visits columns and touch-sized buttons fit without sideways scrolling at " + width + "px with enlarged text");
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+    }
     await page.locator(day).selectOption("Tuesday");
     await page.waitForFunction(selector => document.querySelectorAll(selector + " tbody tr").length === 62, list);
     await page.locator(search).fill("Customer 125");
@@ -75,6 +90,13 @@ async function runWebOptimizationBrowserChecks(page) {
   check(await page.locator("#qdate").isDisabled(), "converted quote remains locked");
   await page.evaluate(() => go("visit", "1"));
   await page.locator("#vinext").waitFor();
+  check(await page.locator("#v_ph").evaluate(range => getComputedStyle(range.closest(".vs")).getPropertyValue("--chemistry-scale").includes("#e6a079")), "PH slider uses peach-to-pink reference track");
+  check(await page.locator('[data-k="chlo"][data-i="5"]').evaluate(button => getComputedStyle(button).backgroundColor === "rgb(236, 27, 112)"), "highest CHLO swatch uses vivid pink reference color");
+  await page.locator('[data-k="ph"][data-i="5"]').click();
+  await page.locator("#v_ph").focus();
+  await page.keyboard.press("ArrowLeft");
+  check(await page.locator("#vo_ph").innerText() === "7.8", "colored slider retains keyboard/discrete reading behavior");
+  await page.locator('[data-k="ph"][data-i="2"]').click();
   check(await page.locator("#visit-records tbody tr").count() === 50, "visits list uses 50 summary rows");
   check(await page.evaluate(() => !optimizationCalls.some(c => /^\/v1\/visits\//.test(c.path))), "visit photos/details not fetched until selected");
   await page.locator('[data-visit="1"]').click();

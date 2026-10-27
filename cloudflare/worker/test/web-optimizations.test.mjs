@@ -179,6 +179,18 @@ test("every customer tab displays the full list and Enter searches across all da
     const list = el(view === "quotes" ? "qlist" : "lst");
     assert.equal((list.innerHTML.match(/<tr data-id=/g) || []).length, 125, view);
     assert.doesNotMatch(list.innerHTML, /id="cu(?:prev|next)"/);
+    if (view === "visits") {
+      assert.match(list.innerHTML, /record-table visits-customers/);
+      assert.doesNotMatch(list.innerHTML, />ID<\/th>|>Address<\/th>|>Monthly charge<\/th>/);
+      assert.match(list.innerHTML, />Customer<\/th>/);
+      assert.match(list.innerHTML, />Service day<\/th>/);
+      assert.match(list.innerHTML, /data-vc="125"/);
+    } else {
+      assert.doesNotMatch(list.innerHTML, /record-table visits-customers/);
+      assert.match(list.innerHTML, />ID<\/th>/);
+      assert.match(list.innerHTML, />Address<\/th>/);
+      assert.match(list.innerHTML, />Monthly charge<\/th>/);
+    }
     const search = el(view === "quotes" ? "qq" : "q"), day = el(view === "quotes" ? "qd" : "df");
     day.value = "Tuesday";
     search.value = "Customer 125";
@@ -209,4 +221,20 @@ test("Statement Reader customer picker Enter searches all matching customers bey
   assert.equal((el("sr-matches").innerHTML.match(/data-match=/g) || []).length, 125);
   assert.match(el("sr-matches").innerHTML, /Customer 125/);
   assert.equal(calls.length, 3);
+});
+
+test("PH and CHLO photo-reference swatches follow reading order without recoloring STB", () => {
+  const { c } = fixture();
+  const palettes = {
+    ph: ["#e6a079", "#ef866e", "#df645e", "#d9576b", "#cf4778", "#c83f80"],
+    chlo: ["#d9a09b", "#e88898", "#df536e", "#ee4275", "#e82d73", "#ec1b70"],
+  };
+  for (const [key, colors] of Object.entries(palettes)) {
+    assert.deepEqual(Array.from(c.V_COLORS[key]), colors);
+    const markup = c.visitSlider(key, key.toUpperCase(), key === "ph" ? c.V_PH : c.V_CHLO);
+    assert.match(markup, /class="vs chemistry"/);
+    assert.match(markup, /linear-gradient\(to right/);
+    colors.forEach((color, i) => assert.ok(markup.includes(`data-i="${i}" style="--swatch:${color}"`)));
+  }
+  assert.doesNotMatch(c.visitSlider("stb", "STB", c.V_STB), /chemistry|--swatch/);
 });

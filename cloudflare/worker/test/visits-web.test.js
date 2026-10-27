@@ -20,7 +20,7 @@ function extractFn(name) {
   }
   throw new Error("unterminated " + name);
 }
-const consts = script.match(/var V_PH=[^\n]*\r?\nvar V_MAX_INT[^\n]*\r?\nvar V_PHOTO_RE[^\n]*/)[0];
+const consts = script.match(/var V_PH=[^\n]*\r?\nvar V_COLORS=[^\n]*\r?\nvar V_MAX_INT[^\n]*\r?\nvar V_PHOTO_RE[^\n]*/)[0];
 const dflt = script.match(/var V_DEFAULT=[^\n]*/)[0];
 const ctx = vm.createContext({});
 vm.runInContext([consts, dflt, ...["visitInt", "visitValidate", "visitRowError", "visitSort", "visitPhotoError", "visitScale", "visitFitPhoto"].map(extractFn),

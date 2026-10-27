@@ -76,6 +76,9 @@ There is no push/live sync. Each screen **re-reads from the API when it is opene
 
 Record lists use desktop-style tables with labeled columns, alternating row shading, and aligned date/money values. This includes customers, statements, Statement Reader preview, quote history/lines, past visits, summaries, record types, employees, and companies. On a narrow screen or with enlarged text, scroll inside the table to see remaining columns; keyboard users can focus its labeled scroll region. Editing, filtering, permissions, route-order arrows, and import confirmation are unchanged. Printed PDF layouts are separate and unchanged.
 
+The Visits customer table omits ID, address and monthly charge; it retains route order, customer name, service day and the Visits action. Desktop Visits likewise omits the customer ID from its customer-list label. Other tabs retain their existing fields.
+The web Visits customer table fits the available screen width with wrapping names/headings and a touch-sized Visits button, rather than inheriting the wider tables' minimum width.
+
 ### Data loading and optimization contracts
 
 - `GET /v1/balances` aggregates all accessible customer balances in one request, rather than one request per customer. A failed summary load must remain an explicit error, never a zero-balance result.
@@ -166,6 +169,7 @@ Choose a credit type. The app adds a record to **every Active customer** using t
 - Open **Visits**, search customers and/or filter by service day, then select a customer.
 - The visit page displays the customer's name and the live current date/time. **Past visits** lists saved visits newest-first; selecting one fills the form for editing. **New Visit** clears the form.
 - Sliders have fixed choices: PH `7.0, 7.2, 7.4, 7.6, 7.8, 8.0`; CHLO `1-2, 2-4, 3-6, 5-10, 7.5-15, 10-20`; STB `100, 90, 80, 70, 60, 50, 40, 30`. New forms start at PH 7.4, CHLO 3-6, STB 50; these are initial selections, not recommended values.
+- PH and CHLO tracks and value swatches use approximate colors from the supplied pool-test comparator photo: PH progresses from peach/orange to rose/pink; CHLO from pale rose to vivid pink. Numeric labels remain authoritative, not the colors (lighting/screens vary). STB and all stored values are unchanged.
 - ALK and CAL are optional; blank values are stored as SQL NULL, not zero. When provided, each must be a positive whole number from 1 through 2147483647. Notes allow up to 16000 characters.
 - Each visit can have **one optional photo**, saved with the visit. Upload/replace/remove the photo, then press **Save**. Selecting a past visit restores its photo along with its readings.
 - Select a saved entry in **Past visits**, then press **Delete Visit** and confirm to permanently remove that visit and its photo. Delete is disabled for unsaved New Visit forms. The existing Visits employee permission includes deletion, scoped to assigned customers. Other devices see the deletion when they reload the customer's visits.

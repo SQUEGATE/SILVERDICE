@@ -51,6 +51,14 @@ td.r,th.r{text-align:right}.scroll{overflow-x:auto}
 .vt{display:grid;grid-template-columns:repeat(auto-fit,minmax(3.6rem,1fr));gap:4px}
 .vt button{border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:6px 2px;font-size:0.8125rem;min-width:0;overflow-wrap:anywhere;color:var(--ink)}
 .vt button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+.vs.chemistry .vt button{background:var(--swatch);color:#111827;border-color:#475569;font-weight:600;min-height:44px}
+.vs.chemistry .vt button.on{outline:3px solid #111827;outline-offset:1px;text-decoration:underline}
+.vs.chemistry input[type=range]{appearance:none;-webkit-appearance:none;background:transparent;height:32px}
+.vs.chemistry input[type=range]::-webkit-slider-runnable-track{height:14px;border:1px solid #475569;border-radius:8px;background:var(--chemistry-scale)}
+.vs.chemistry input[type=range]::-moz-range-track{height:14px;border:1px solid #475569;border-radius:8px;background:var(--chemistry-scale)}
+.vs.chemistry input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:26px;height:26px;margin-top:-7px;border:3px solid #111827;border-radius:50%;background:#fff}
+.vs.chemistry input[type=range]::-moz-range-thumb{width:20px;height:20px;border:3px solid #111827;border-radius:50%;background:#fff}
+.vs.chemistry input[type=range]:focus-visible{outline:3px solid var(--brand);outline-offset:3px}
 .vrec{font-weight:400;color:var(--mute)}
 .vphoto img{display:block;max-width:100%;max-height:60vh;border-radius:8px;border:1px solid var(--line)}.vphoto:empty{display:none}
 .vnow{font-size:1.125rem;font-weight:700;overflow-wrap:anywhere}
@@ -73,6 +81,11 @@ button.b{max-width:100%}.card{overflow-wrap:anywhere}
 .reader-table pre{white-space:pre-wrap;font:inherit;margin:6px 0}.reader-table [data-reason]{margin:4px 0}
 .quote-lines{min-width:60rem}.record-date{white-space:nowrap;font-variant-numeric:tabular-nums}
 .record-scroll:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.visits-customers{min-width:0;width:100%;table-layout:fixed}
+.visits-customers th,.visits-customers td{padding:8px 4px;white-space:normal;overflow-wrap:anywhere}
+.visits-customers th:nth-child(1){width:12%}.visits-customers th:nth-child(2){width:38%}
+.visits-customers th:nth-child(3){width:24%}.visits-customers th:nth-child(4){width:26%}
+.visits-customers .b{width:100%;min-height:44px;margin:0;padding:8px 2px;white-space:normal;overflow-wrap:anywhere}
 #sr-picker{width:36rem;max-width:calc(100vw - 24px);max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:12px;color:var(--ink);overflow-wrap:anywhere}
 #sr-picker::backdrop{background:rgba(0,0,0,.5)}#sr-matches .b{display:block;width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left}
 </style>
@@ -99,10 +112,10 @@ function $(id){return document.getElementById(id)}
 function recordTable(headers,body,caption,extra){
   return '<div class="record-scroll" role="region" aria-label="'+esc(caption)+'" tabindex="0"><table class="record-table '+(extra||"")+'"><caption style="text-align:left;padding:8px 12px;font-weight:700">'+esc(caption)+'</caption><thead><tr>'+headers.map(function(h){return '<th scope="col">'+esc(h)+'</th>'}).join("")+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
-function customerTable(rows,actions,reorder){
-  return recordTable(["Order","Customer","ID","Service day","Address","Monthly charge","Actions"],rows.map(function(c){
-    return '<tr data-id="'+esc(c.customer_id)+'"><td>'+esc(c.route_order||"")+(reorder?'<span class="mv"><button class="b alt" data-mv="-1" aria-label="Move up">&#9650;</button><button class="b alt" data-mv="1" aria-label="Move down">&#9660;</button></span>':'')+'</td><td><b>'+esc(c.last_name)+', '+esc(c.first_name)+'</b>'+(c.status==="Inactive"?' (inactive)':'')+'</td><td>'+esc(c.customer_id)+'</td><td>'+esc(c.service_day)+'</td><td>'+mapLink(c)+'</td><td class="r">'+money(c.amount_charged)+'</td><td>'+actions(c)+'</td></tr>';
-  }).join(""),"Customers");
+function customerTable(rows,actions,reorder,visits){
+  return recordTable(visits?["Order","Customer","Service day","Actions"]:["Order","Customer","ID","Service day","Address","Monthly charge","Actions"],rows.map(function(c){
+    return '<tr data-id="'+esc(c.customer_id)+'"><td>'+esc(c.route_order||"")+(reorder?'<span class="mv"><button class="b alt" data-mv="-1" aria-label="Move up">&#9650;</button><button class="b alt" data-mv="1" aria-label="Move down">&#9660;</button></span>':'')+'</td><td><b>'+esc(c.last_name)+', '+esc(c.first_name)+'</b>'+(c.status==="Inactive"?' (inactive)':'')+'</td>'+(visits?"":'<td>'+esc(c.customer_id)+'</td>')+'<td>'+esc(c.service_day)+'</td>'+(visits?"":'<td>'+mapLink(c)+'</td><td class="r">'+money(c.amount_charged)+'</td>')+'<td>'+actions(c)+'</td></tr>';
+  }).join(""),"Customers",visits?"visits-customers":"");
 }
 function flash(kind,text){if(text==="Obsolete view")return;var e=$("flash");if(e)e.innerHTML=text?'<div class="'+kind+'">'+esc(text)+'</div>':""}
 
@@ -456,7 +469,7 @@ async function vCustomers(){
     var rows=list;
     var canDrag=!!d&&!q&&!active&&can("canEditCustomers");
     $("lst").innerHTML=rows.length?customerTable(rows,function(c){if(mode)return '<button class="b" '+(mode==="quote"?'data-qc':'data-vc')+'="'+esc(c.customer_id)+'">'+(mode==="quote"?"Quotes":"Visits")+'</button>';return (can("canViewStatements")?'<button class="b" data-st="'+esc(c.customer_id)+'">Statement</button>':'')+
-      (!active&&(can("canViewCustomerDetails")||can("canEditCustomers"))?'<button class="b alt" data-cu="'+esc(c.customer_id)+'">Details</button>':'')},canDrag):'<p class="s">No customers found.</p>';
+      (!active&&(can("canViewCustomerDetails")||can("canEditCustomers"))?'<button class="b alt" data-cu="'+esc(c.customer_id)+'">Details</button>':'')},canDrag,mode==="visit"):'<p class="s">No customers found.</p>';
     app.querySelectorAll("[data-st]").forEach(function(b){b.onclick=function(){go("statement",b.getAttribute("data-st"))}});
     app.querySelectorAll("[data-qc],[data-vc]").forEach(function(b){b.onclick=function(){var id=b.getAttribute(mode==="quote"?"data-qc":"data-vc");go(mode,mode==="quote"?{id:id}:id)}});
     app.querySelectorAll("[data-cu]").forEach(function(b){b.onclick=function(){go("customer",b.getAttribute("data-cu"))}});
@@ -878,6 +891,7 @@ function vEmployee(){
 
 /* ---------- visits ---------- */
 var V_PH=["7.0","7.2","7.4","7.6","7.8","8.0"],V_CHLO=["1-2","2-4","3-6","5-10","7.5-15","10-20"],V_STB=["100","90","80","70","60","50","40","30"];
+var V_COLORS={ph:["#e6a079","#ef866e","#df645e","#d9576b","#cf4778","#c83f80"],chlo:["#d9a09b","#e88898","#df536e","#ee4275","#e82d73","#ec1b70"]};
 var V_MAX_INT=2147483647,V_MAX_NOTES=16000,V_MAX_PHOTO=600000,V_PHOTO_DIM=1280;
 var V_PHOTO_RE=/^data:image\/(png|jpeg);base64,[A-Za-z0-9+\/]+={0,2}$/;
 function visitPhotoError(s){
@@ -956,9 +970,10 @@ async function vVisits(){
   return vCustomers();
 }
 function visitSlider(key,label,choices){
-  return '<div class="vs"><div class="vh"><label class="vl" for="v_'+key+'" style="margin:0;color:inherit;font-size:1rem">'+label+'</label><output class="vo" id="vo_'+key+'" for="v_'+key+'"></output></div>'+
+  var colors=V_COLORS[key],scale=colors?' style="--chemistry-scale:linear-gradient(to right,'+colors.map(function(c,i){return c+" "+(i*100/(colors.length-1))+"%"}).join(",")+')"':"";
+  return '<div class="vs'+(colors?' chemistry':'')+'"'+scale+'><div class="vh"><label class="vl" for="v_'+key+'" style="margin:0;color:inherit;font-size:1rem">'+label+'</label><output class="vo" id="vo_'+key+'" for="v_'+key+'"></output></div>'+
    '<input type="range" id="v_'+key+'" min="0" max="'+(choices.length-1)+'" step="1" value="0">'+
-   '<div class="vt">'+choices.map(function(c,i){return '<button type="button" data-k="'+key+'" data-i="'+i+'">'+esc(c)+'</button>'}).join("")+'</div></div>';
+   '<div class="vt">'+choices.map(function(c,i){return '<button type="button" data-k="'+key+'" data-i="'+i+'"'+(colors?' style="--swatch:'+colors[i]+'"':"")+'>'+esc(c)+'</button>'}).join("")+'</div></div>';
 }
 async function vVisit(){
   var nav=S.nav,id=S.arg,path="/v1/customers/"+encodeURIComponent(id)+"/visits",offset=0,pageSeq=0;
@@ -981,7 +996,7 @@ async function vVisit(){
   function tick(){var e=$("vnow");if(e){var n=new Date();e.textContent=fmtDate(n)+" "+n.toLocaleTimeString([],{hour:"numeric",minute:"2-digit",second:"2-digit"})}}
   tick();S.timers.push(setInterval(tick,1000));
   function setSlider(k,i){
-    var el=$("v_"+k);el.value=i;$("vo_"+k).textContent=SL[k][i];
+    var el=$("v_"+k);el.value=i;el.setAttribute("aria-valuetext",SL[k][i]);$("vo_"+k).textContent=SL[k][i];
     app.querySelectorAll('[data-k="'+k+'"]').forEach(function(b){var on=b.getAttribute("data-i")===String(i);b.classList.toggle("on",on);b.setAttribute("aria-pressed",on)});
   }
   function busy(){return saving||reading}

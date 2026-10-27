@@ -12,6 +12,9 @@ Statement PDF generation, email attachments, and SMS delivery run in the backgro
 
 Statement Reader can match complete first and last names anywhere in the same transaction record, in either order with intervening words. Ambiguous customer matches stay unselected for review. Incoming Zelle/Zel, date, amount and duplicate checks still apply.
 
+### Expenses (desktop and web)
+The Java desktop app and the web app include an Expenses screen that locally extracts text from selectable PDFs, matches saved company-wide keywords that the user has checked to lines, and displays line totals controlled by Include checkboxes without writing statement records. Keyword lists are persisted per company and shared across all devices; employees need **Access Expenses** permission.
+
 ## What it includes
 - Add and edit customer records
 - Store customer data in a local SQLite database file (`customer.db`)

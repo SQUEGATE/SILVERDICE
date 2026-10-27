@@ -95,6 +95,25 @@ public class StatementPdfReaderTest {
                 () -> reader.extract(new byte[(int) StatementPdfReader.MAX_PDF_BYTES + 1])).getMessage().contains("25 MB"));
     }
 
+    @Test public void extractsExpenseLinesUsingTheSharedPositionGrouping() throws Exception {
+        byte[] pdf;
+        try (PDDocument document = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            PDPage page = new PDPage(PDRectangle.LETTER);
+            document.addPage(page);
+            try (PDPageContentStream stream = new PDPageContentStream(document, page)) {
+                text(stream, 60, 700, "Coffee");
+                text(stream, 120, 697.6f, "$12.34");
+                text(stream, 60, 694.0f, "Next line");
+            }
+            document.save(out);
+            pdf = out.toByteArray();
+        }
+        List<StatementPdfReader.TextRow> lines = reader.extractTextDocument(pdf).rows();
+        assertEquals(2, lines.size());
+        assertEquals("Coffee $12.34", lines.get(0).text());
+        assertEquals("Next line", lines.get(1).text());
+    }
+
     @Test public void rejectsPageAndTransactionRowCaps() throws Exception {
         byte[] manyPages;
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {

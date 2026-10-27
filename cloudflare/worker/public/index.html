@@ -77,6 +77,9 @@ button.b{max-width:100%}.card{overflow-wrap:anywhere}
 .record-table .b{margin:2px;padding:8px 12px}.record-table input,.record-table select,.record-table textarea{min-width:9rem;padding:8px}
 .record-table label{margin:4px 0}.record-table .chk{white-space:normal}.record-table input[type=checkbox]{min-width:1.2rem;width:auto}
 .record-table .reader-row{border:0;border-radius:0;padding:0;margin:0}.reader-table{min-width:88rem}
+.record-table.ex-table{min-width:0;width:100%}.ex-lines{table-layout:fixed}.ex-lines th:nth-child(1),.ex-lines th:nth-child(2){width:4.5rem}.ex-lines th:nth-child(3){width:22%}.ex-lines th:nth-child(5){width:7.5rem}.ex-lines th{white-space:normal}
+.ex-total{margin:12px 0;padding:12px;border:2px solid var(--line);border-radius:10px;text-align:center}.ex-grand{font-size:2rem;font-weight:700;font-variant-numeric:tabular-nums}
+.ex-kw-list{list-style:none;padding:0;display:flex;flex-wrap:wrap;gap:8px}.ex-kw-list li{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:2px 2px 2px 12px}.ex-kw-check{display:flex;align-items:center;gap:6px;margin:0;min-height:44px;cursor:pointer}.ex-kw-check input{width:1.3rem;height:1.3rem;margin:0}.ex-kw-bulk .b{flex:0 1 auto}
 .reader-table td:nth-child(4){min-width:18rem}.reader-table td:last-child{min-width:24rem}
 .reader-table pre{white-space:pre-wrap;font:inherit;margin:6px 0}.reader-table [data-reason]{margin:4px 0}
 .quote-lines{min-width:60rem}.record-date{white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -99,7 +102,7 @@ button.b{max-width:100%}.card{overflow-wrap:anywhere}
 <script>
 "use strict";
 var DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-var PERMS=[["canViewCustomerDetails","View customer details"],["canViewCustomers","View customers"],["canViewStatements","View statements"],["canViewRevenueSummary","View revenue summary"],["canViewPdf","View PDF settings"],["canEditCustomers","Edit customers"],["canEditStatements","Edit statements"],["canEditPdf","Edit PDF settings"],["canAccessVisits","Access visits"],["canAccessSalesQuote","Access Sales Quote"],["canAccessStatementReader","Access Statement Reader"]];
+var PERMS=[["canViewCustomerDetails","View customer details"],["canViewCustomers","View customers"],["canViewStatements","View statements"],["canViewRevenueSummary","View revenue summary"],["canViewPdf","View PDF settings"],["canEditCustomers","Edit customers"],["canEditStatements","Edit statements"],["canEditPdf","Edit PDF settings"],["canAccessVisits","Access visits"],["canAccessSalesQuote","Access Sales Quote"],["canAccessStatementReader","Access Statement Reader"],["canAccessExpenses","Access Expenses"]];
 var DEF_CREDIT="payment, paid, credit, refund, discount, adjustment, rebate, deposit, return, transfer in, check, cheque";
 var DEF_DEBIT="cash, bill, charge, service, invoice, fee, debit, purchase, due, owed, repair, labor, parts, materials";
 var S={token:localStorage.getItem("cm.token")||"",account:JSON.parse(localStorage.getItem("cm.account")||"null"),view:"",arg:null,kw:null,master:false};
@@ -191,6 +194,7 @@ var VIEWS=[
  {id:"visits",label:"Visits",perm:function(){return can("canAccessVisits")}},
  {id:"quotes",label:"Sales Quote",perm:function(){return can("canAccessSalesQuote")}},
  {id:"reader",label:"Statement Reader",perm:function(){return can("canAccessStatementReader")}},
+ {id:"expenses",label:"Expenses",perm:function(){return can("canAccessExpenses")}},
  {id:"statements",label:"Statements",perm:function(){return can("canViewStatements")}},
  {id:"monthly",label:"Monthly Statement",perm:function(){return can("canEditStatements")&&can("canViewStatements")}},
  {id:"charged",label:"Charged Summary",perm:function(){return can("canViewStatements")}},
@@ -250,12 +254,15 @@ function go(view,arg){
   if(view==="reader"&&!can("canAccessStatementReader")){
     S.view="";S.arg=null;app.innerHTML='<div class="err">Statement Reader access is not permitted.</div>';return;
   }
+  if(view==="expenses"&&!can("canAccessExpenses")){
+    S.view="";S.arg=null;app.innerHTML='<div class="err">Expenses access is not permitted.</div>';return;
+  }
   if((view==="quotes"||view==="quote")&&!can("canAccessSalesQuote")){
     S.view="";S.arg=null;app.innerHTML='<div class="err">Sales Quote access is not permitted.</div>';return;
   }
   if((view==="visits"||view==="visit")&&!can("canAccessVisits"))view="customers";
   S.view=view;S.arg=arg||null;window.scrollTo(0,0);
-  var fn={reader:vStatementReader,quotes:vQuotes,quote:vQuote,visits:vVisits,visit:vVisit,companies:vCompanies,customers:vCustomers,customer:vCustomer,statements:vPickCustomer,statement:vStatement,monthly:vMonthly,charged:vCharged,revenue:vRevenue,types:vTypes,pdf:vPdf,employees:vEmployees,employee:vEmployee,backup:vBackup,company:vCompany}[view];
+  var fn={reader:vStatementReader,expenses:vExpenses,quotes:vQuotes,quote:vQuote,visits:vVisits,visit:vVisit,companies:vCompanies,customers:vCustomers,customer:vCustomer,statements:vPickCustomer,statement:vStatement,monthly:vMonthly,charged:vCharged,revenue:vRevenue,types:vTypes,pdf:vPdf,employees:vEmployees,employee:vEmployee,backup:vBackup,company:vCompany}[view];
   var v=VIEWS.filter(function(x){return x.id===(view==="quote"?"quotes":view==="visit"?"visits":view)})[0];
   $("title").textContent=(S.account&&S.account.companyName&&!S.master?S.account.companyName+" \u2022 ":"")+(v?v.label:(view==="companies"?"Companies":"Comp Manager"));
   app.innerHTML='<div id="flash"></div><div class="card">Loading...</div>';
@@ -392,8 +399,90 @@ async function vStatementReader(){
   $("sr-file").disabled=false;
 }
 
-/* ---------- login ---------- */
-function showLogin(){
+/* ---------- expenses (local PDF keyword totals) ---------- */
+async function vExpenses(){
+  if(!can("canAccessExpenses"))throw new Error("Expenses access is not permitted.");
+  var nav=S.nav,upload=0,keywords=[],lines=null,matches=[],saving=false,module=await import("/expense-reader.mjs"),selKey="cm.expsel."+(S.account&&S.account.username)+"."+(S.account&&S.account.companyId||0),checked;
+  try{checked=JSON.parse(localStorage.getItem(selKey)||"[]");if(!Array.isArray(checked))checked=[]}catch(e){checked=[]}
+  function keyOf(k){return String(k).trim().replace(/\s+/g," ").toLowerCase()}
+  function isChecked(k){return checked.indexOf(keyOf(k))>=0}
+  function selected(){return keywords.filter(isChecked)}
+  function storeChecked(){checked=checked.filter(function(c){return keywords.some(function(k){return keyOf(k)===c})});try{localStorage.setItem(selKey,JSON.stringify(checked))}catch(e){}}
+  function current(){return nav===S.nav&&S.view==="expenses"&&can("canAccessExpenses")}
+  if(!current())return;
+  app.innerHTML='<div id="flash" role="status" aria-live="polite"></div><div class="card"><h2>Expenses</h2>'+
+    '<p>The PDF is read locally on this device and is never uploaded. Lines containing a saved keyword are listed with the first dollar amount on that line, and the amounts are added up. Nothing is saved to statements.</p>'+
+    '<h3>Keywords</h3><p>Keywords are saved for your company and shared with every device. <b>Check the keywords you want to search for</b>; your choices are remembered on this device. Matching ignores upper/lower case and uses whole words. A line is only counted once, under the first checked keyword in this list that it matches.</p>'+
+    '<div class="row"><label for="ex-kw">New keyword</label></div><div class="row"><input id="ex-kw" type="text" maxlength="80" placeholder="e.g. Home Depot" autocomplete="off"><button class="b" id="ex-add" type="button">Add keyword</button></div>'+
+    '<div id="ex-keywords" aria-live="polite"></div>'+
+    '<h3>PDF</h3><label for="ex-file">Statement or receipt PDF</label><input id="ex-file" type="file" accept=".pdf,application/pdf">'+
+    '<p id="ex-progress" role="status" aria-live="polite"></p><div id="ex-results"></div></div>';
+  function renderKeywords(){
+    $("ex-keywords").innerHTML=keywords.length?'<div class="row ex-kw-bulk"><button type="button" class="b alt" id="ex-all">Check all</button><button type="button" class="b alt" id="ex-none">Uncheck all</button></div><p id="ex-sel-count">'+selected().length+' of '+keywords.length+' keyword'+(keywords.length===1?'':'s')+' checked</p><ul class="ex-kw-list">'+keywords.map(function(k,i){
+      return '<li><label class="ex-kw-check"><input type="checkbox" data-ex-check="'+i+'"'+(isChecked(k)?' checked':'')+'> <span>'+esc(k)+'</span></label> <button type="button" class="b alt" data-ex-remove="'+i+'" aria-label="Remove keyword '+esc(k)+'">Remove</button></li>'}).join("")+'</ul>':'<p>No keywords saved yet.</p>';
+    $("ex-keywords").querySelectorAll("[data-ex-check]").forEach(function(c){c.onchange=function(){
+      var i=Number(c.getAttribute("data-ex-check")),k=keyOf(keywords[i]);checked=checked.filter(function(x){return x!==k});if(c.checked)checked.push(k);
+      storeChecked();renderKeywords();rematch();var el=$("ex-keywords").querySelector('[data-ex-check="'+i+'"]');if(el)el.focus()}});
+    if(keywords.length){
+      $("ex-all").onclick=function(){checked=keywords.map(keyOf);storeChecked();renderKeywords();rematch()};
+      $("ex-none").onclick=function(){checked=[];storeChecked();renderKeywords();rematch()};
+    }
+    $("ex-keywords").querySelectorAll("[data-ex-remove]").forEach(function(b){b.onclick=function(){
+      var next=keywords.slice();next.splice(Number(b.getAttribute("data-ex-remove")),1);save(next)}});
+  }
+  async function save(next,added){
+    if(saving)return;saving=true;$("ex-add").disabled=true;
+    try{
+      next=module.normalizeKeywords(next);
+      var res=await api("/v1/expense-keywords",{method:"PUT",body:{keywords:next}});
+      if(!current())return;
+      keywords=res.keywords;if(added&&!isChecked(added))checked.push(keyOf(added));storeChecked();renderKeywords();rematch();flash("ok","Keywords saved.");
+    }catch(e){if(current())flash("err",e.message)}
+    finally{saving=false;if(current())$("ex-add").disabled=false}
+  }
+  function add(){
+    var v=$("ex-kw").value.trim().replace(/\s+/g," ");if(!v)return;
+    if(keywords.some(function(k){return k.toLowerCase()===v.toLowerCase()})){flash("err","That keyword is already saved.");return}
+    $("ex-kw").value="";save(keywords.concat([v]),v);
+  }
+  $("ex-add").onclick=add;
+  $("ex-kw").onkeydown=function(e){if(e.key==="Enter"){e.preventDefault();add()}};
+  function rematch(){
+    if(!lines){$("ex-results").innerHTML="";return}
+    matches=module.matchExpenseLines(lines,selected()).map(function(m){return Object.assign(m,{included:m.cents!=null})});
+    renderResults();
+  }
+  function renderResults(){
+    if(!keywords.length){$("ex-results").innerHTML="<p>Add at least one keyword to search the PDF.</p>";return}
+    if(!selected().length){$("ex-results").innerHTML="<p>Check at least one saved keyword to search this PDF.</p>";return}
+    if(!matches.length){$("ex-results").innerHTML="<p>No lines in this PDF contain the checked keywords.</p>";return}
+    var t=module.expenseTotals(matches,selected()),noAmount=matches.filter(function(m){return m.cents==null}).length;
+    var html='<div class="ex-total" role="status" aria-live="polite"><div>Grand total</div><div class="ex-grand">'+money(t.cents/100)+'</div><div>'+t.count+' of '+matches.length+' matching line'+(matches.length===1?'':'s')+' counted'+(noAmount?' • '+noAmount+' without an amount':'')+'</div></div>';
+    html+=recordTable(["Keyword","Lines","Total"],t.keywords.map(function(k){return '<tr><td data-label="Keyword">'+esc(k.keyword)+'</td><td data-label="Lines">'+k.count+'</td><td data-label="Total">'+money(k.cents/100)+'</td></tr>'}).join("")+
+      '<tr><th scope="row" data-label="Keyword">Grand total</th><td data-label="Lines"><b>'+t.count+'</b></td><td data-label="Total"><b>'+money(t.cents/100)+'</b></td></tr>',"Totals by keyword","ex-table");
+    html+=recordTable(["Include","Page","Keyword","Line","Amount"],matches.map(function(m,i){
+      return '<tr><td data-label="Include"><input type="checkbox" data-ex-row="'+i+'" aria-label="Include page '+m.page+' line '+m.line+'"'+(m.included?' checked':'')+(m.cents==null?' disabled':'')+'></td><td data-label="Page">'+m.page+'</td><td data-label="Keyword">'+esc(m.keyword)+'</td><td data-label="Line">'+esc(m.text)+'</td><td data-label="Amount">'+(m.cents==null?'No amount':money(m.cents/100))+'</td></tr>'}).join(""),"Matching lines","ex-table ex-lines");
+    $("ex-results").innerHTML=html;
+    $("ex-results").querySelectorAll("[data-ex-row]").forEach(function(c){c.onchange=function(){matches[Number(c.getAttribute("data-ex-row"))].included=c.checked;renderResults();var el=$("ex-results").querySelector('[data-ex-row="'+c.getAttribute("data-ex-row")+'"]');if(el)el.focus()}});
+  }
+  $("ex-file").onchange=async function(){
+    var file=this.files[0],sequence=++upload;lines=null;matches=[];$("ex-results").innerHTML="";flash("","");
+    if(!file){$("ex-progress").textContent="";return}
+    function fresh(){return current()&&sequence===upload}
+    $("ex-progress").textContent="Reading PDF locally…";
+    try{
+      var parsed=await module.parseExpensePdf(file,{isCurrent:fresh});
+      if(!fresh())return;
+      lines=parsed;$("ex-progress").textContent="PDF read locally: "+lines.length+" text lines scanned.";rematch();
+    }catch(e){if(fresh()){$("ex-progress").textContent="";flash("err",e.message)}}
+  };
+  $("ex-progress").textContent="Loading saved keywords…";
+  try{var res=await api("/v1/expense-keywords",{readKey:"expense-keywords"});if(!current())return;keywords=res.keywords||[];storeChecked();$("ex-progress").textContent=""}
+  catch(e){if(current()){$("ex-progress").textContent="";flash("err",e.message)}}
+  if(current())renderKeywords();
+}
+
+/* ---------- login ---------- */function showLogin(){
   $("title").textContent="Comp Manager";
   app.innerHTML='<div class="card" style="max-width:420px;margin:24px auto"><h2>Log in</h2><div id="flash"></div>'+
    '<label>Username</label><input id="u" autocapitalize="none" autocomplete="username">'+

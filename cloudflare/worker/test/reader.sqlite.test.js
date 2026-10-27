@@ -43,7 +43,7 @@ async function fixture(run, { legacy = false } = {}) {
     ["reader", "EMPLOYEE", 1, { canAccessStatementReader: true }],
     ["editor", "EMPLOYEE", 1, { canAccessStatementReader: true, canEditStatements: true }],
     ["denied", "EMPLOYEE", 1, {}], ["statements", "EMPLOYEE", 1, { canEditStatements: true }],
-    ["master", "MASTER", null, {}]];
+    ["master", "MASTER", null, {}], ["expenses", "EMPLOYEE", 1, { canAccessExpenses: true }]];
   const insert = db.prepare("INSERT INTO accounts (account_id,username,password_hash,role,company_id,employee_id,permissions_json,allowed_customer_ids_json,allowed_days_json) VALUES (?,?,?,?,?,?,?,?,?)");
   accounts.forEach(([name, role, company, permissions], index) => insert.run(index + 1, name, hash, role, company,
     index + 1, JSON.stringify(permissions), role === "EMPLOYEE" ? '["jose"]' : "[]",
@@ -364,5 +364,36 @@ test("reader: backup union retains live audit with old backups, validates new au
     const master = await login("master");
     assert.equal((await call("/v1/admin/companies/1", { method: "DELETE", token: master })).status, 200);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM reader_imports").get().n, 0);
+  });
+});
+
+test("expenses: shared keywords are normalized, company-scoped, permission-gated and kept in backups", async () => {
+  await fixture(async ({ call, login, db }) => {
+    const one = await login("one"), two = await login("two"), staff = await login("expenses");
+    assert.deepEqual((await call("/v1/expense-keywords", { token: one })).body, { keywords: [] });
+    for (const name of ["denied", "reader", "master"]) {
+      const token = await login(name);
+      assert.equal((await call("/v1/expense-keywords", { token })).status, 403);
+      assert.equal((await call("/v1/expense-keywords", { method: "PUT", token, body: { keywords: ["x"] } })).status, 403);
+    }
+    assert.equal((await call("/v1/expense-keywords")).status, 401);
+    const saved = await call("/v1/expense-keywords", { method: "PUT", token: staff,
+      body: { keywords: ["  Home   Depot ", "home depot", "", "Pool Supplies"] } });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(saved.body.keywords, ["Home Depot", "Pool Supplies"]);
+    assert.deepEqual((await call("/v1/expense-keywords", { token: one })).body.keywords, ["Home Depot", "Pool Supplies"]);
+    assert.deepEqual((await call("/v1/expense-keywords", { token: two })).body.keywords, []);
+    for (const keywords of ["Home Depot", [5], ["x".repeat(81)], Array.from({ length: 101 }, (_, i) => `k${i}`)]) {
+      assert.equal((await call("/v1/expense-keywords", { method: "PUT", token: one, body: { keywords } })).status, 400);
+    }
+    assert.deepEqual((await call("/v1/expense-keywords", { token: staff })).body.keywords, ["Home Depot", "Pool Supplies"]);
+    assert.equal(db.prepare("SELECT setting_value FROM pdf_settings WHERE company_id = 1 AND setting_key = 'expenseKeywords'").get().setting_value,
+      '["Home Depot","Pool Supplies"]');
+    const login1 = await call("/v1/auth/login", { method: "POST", body: { username: "expenses", password } });
+    assert.equal(login1.body.account.permissions.canAccessExpenses, true);
+    assert.equal((await call("/v1/auth/login", { method: "POST", body: { username: "reader", password } })).body.account.permissions.canAccessExpenses, false);
+    const backup = await call("/v1/backup", { token: one });
+    assert.equal(backup.status, 200);
+    assert.ok(JSON.stringify(backup.body).includes("expenseKeywords"));
   });
 });

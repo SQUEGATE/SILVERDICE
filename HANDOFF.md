@@ -119,6 +119,7 @@ Employee permission flags (stored as JSON in `accounts.permissions_json`, modele
 | `canAccessVisits` | Visits tab: search assigned customers, view/add/edit visits. Opt-in for employees; existing employees do not get it automatically. |
 | `canAccessSalesQuote` | Sales Quote tab: prepare/save/edit/delete quotes and export quotation PDFs for assigned customers. Off by default for employees. Conversion additionally requires `canEditStatements`. |
 | `canAccessStatementReader` | Statement Reader PDF extraction and payment preview for assigned customers. Off by default for employees. Import additionally requires `canEditStatements`; reader access alone cannot change balances. |
+| `canAccessExpenses` | Expenses screen and company-wide expense keyword management. Off by default for employees; company accounts always have access. |
 | `canViewRevenueSummary` | Revenue Summary |
 | `canViewPdf` | View PDF settings and generate statements |
 | `canEditPdf` | Change PDF settings |
@@ -216,7 +217,15 @@ Lists Active customers with a balance above $0.00, highest first, with a total.
 - Browser parsing uses pinned, self-hosted PDF.js 6.4.299; neither the PDF nor its contents are sent to a third-party PDF service. `npm.cmd run deploy` and `npm.cmd run dev` prepare the parser/worker/license assets automatically. If invoking Wrangler directly, run `npm.cmd run pdf-assets` first.
 - Regression checks: canonical desktop `.\gradlew.bat test`; API `node --test test\reader.sqlite.test.js`; browser extraction/UI contracts `npm.cmd run test:statement-reader-web`. Browser replay instructions are in `cloudflare/worker/test/statement-reader-browser.fixture.js`; use synthetic fixtures, never import a real bank statement just to test.
 
-### 4.7 Revenue Summary
+### Expenses (desktop)
+- The Swing Expenses screen lets a company account or employee with **Access Expenses** choose a text-based PDF. PDFBox extracts and groups text locally; the original PDF is never uploaded. Files over 25 MB, PDFs over 100 pages, password-protected documents, and image-only/no-text PDFs are rejected with a clear message.
+- Company-wide keywords are normalized (trimmed, internal whitespace collapsed, case-insensitive deduplication) and saved immediately. Local mode stores their JSON array in the company `pdf_settings` row under `expenseKeywords`; cloud mode uses the authenticated keyword service.
+- Matching is case-insensitive whole-word/phrase matching against the **checked** keywords only. Each saved keyword has a Search checkbox; none are checked the first time, a newly added keyword is checked automatically, and the last checked set is remembered per device and signed-in user (desktop: `ExpenseKeywordSelection` in Java Preferences, storing short keyword fingerprints; web: localStorage `cm.expsel.<username>.<companyId>`). The shared company keyword list is unaffected by checking/unchecking. A line belongs to the first checked keyword (in saved-list order) that matches it and is counted once. The first monetary amount on the same line is shown as an absolute value; lines without an amount remain visible as `no amount` and do not add to totals. Checkboxes update per-keyword counts/totals and the grand total live. Expense scans are display-only and never write statement records.
+
+### Expenses (web and API)
+- Web view `vExpenses` (nav id `expenses`) uses `public/expense-reader.mjs`, which reuses `readPdfPages`/`groupTextLines` from `public/statement-reader.mjs`. The PDF is parsed in the browser with the self-hosted PDF.js; only keyword lists go to the API. Matching rules are identical to the desktop `ExpenseScanner`.
+- API: `GET /v1/expense-keywords` → `{keywords}`; `PUT /v1/expense-keywords` `{keywords:[...]}` → `{saved, keywords}` (server-normalized: max 100 keywords, 80 chars each). Requires a company account or `canAccessExpenses`. Stored in `pdf_settings` key `expenseKeywords`, so it is included in backup/restore and needs no schema migration.
+- Tests: `test/expense-reader.test.mjs` (matching/totals) and the `expenses:` case in `test/reader.sqlite.test.js` (API permissions, normalization, company isolation, backup). The fixture server serves `/__expense.pdf` for browser checks.
 Sum of `amount_charged` for non-inactive customers, grouped by service day, with a grand total.
 
 ### 4.8 PDF statements

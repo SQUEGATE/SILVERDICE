@@ -1048,6 +1048,38 @@ public class DatabaseManager {
         }
     }
 
+    public List<String> getExpenseKeywords() {
+        JSONArray keywords;
+        if (isRemote()) {
+            keywords = CompManagerApiClient.object(apiGet("/v1/expense-keywords")).optJSONArray("keywords");
+        } else {
+            try {
+                keywords = new JSONArray(getPdfSetting("expenseKeywords", "[]"));
+            } catch (RuntimeException e) {
+                throw new IllegalStateException("Saved expense keywords could not be read.", e);
+            }
+        }
+        List<String> values = new ArrayList<>();
+        if (keywords != null) for (int i = 0; i < keywords.length(); i++) values.add(keywords.optString(i));
+        return new ExpenseScanner().normalizeKeywords(values);
+    }
+
+    public List<String> saveExpenseKeywords(List<String> values) {
+        List<String> normalized = new ExpenseScanner().normalizeKeywords(values);
+        JSONArray json = new JSONArray(normalized);
+        if (isRemote()) {
+            JSONObject response = CompManagerApiClient.object(apiPut("/v1/expense-keywords",
+                    new JSONObject().put("keywords", json)));
+            if (!response.optBoolean("saved")) throw new IllegalStateException("Expense keywords were not saved.");
+            JSONArray saved = response.optJSONArray("keywords");
+            List<String> result = new ArrayList<>();
+            if (saved != null) for (int i = 0; i < saved.length(); i++) result.add(saved.optString(i));
+            return new ExpenseScanner().normalizeKeywords(result);
+        }
+        savePdfSetting("expenseKeywords", json.toString());
+        return normalized;
+    }
+
     // PDF Settings Methods
     public void savePdfSetting(String key, String value) {
         if (isRemote()) {

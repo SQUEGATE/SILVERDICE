@@ -88,6 +88,7 @@ public class PoolAppFrame extends JFrame {
     private VisitsPanel visitsPanel;
     private SalesQuotesPanel salesQuotesPanel;
     private StatementReaderPanel statementReaderPanel;
+    private ExpensePanel expensePanel;
     private final JPanel miniTabsPanel;
     private final List<String> favoriteIds = new ArrayList<>();
     private final Map<String, JButton> starButtons = new java.util.HashMap<>();
@@ -717,6 +718,8 @@ public class PoolAppFrame extends JFrame {
         salesQuoteButton.setFont(salesQuoteButton.getFont().deriveFont(Font.BOLD, 14f));
         JButton statementReaderButton = new JButton("Statement Reader");
         statementReaderButton.setFont(statementReaderButton.getFont().deriveFont(Font.BOLD, 14f));
+        JButton expensesButton = new JButton("Expenses");
+        expensesButton.setFont(expensesButton.getFont().deriveFont(Font.BOLD, 14f));
         visitsButton.setFont(visitsButton.getFont().deriveFont(Font.BOLD, 14f));
         JButton revenueSummaryButton = new JButton("Revenue Summary");
         JButton pdfButton = new JButton("PDF");
@@ -747,6 +750,11 @@ public class PoolAppFrame extends JFrame {
             navigationPanel.add(withStar("StatementReader", statementReaderButton));
             statementReaderPanel = new StatementReaderPanel(dbManager, this::canAccessCustomer, canEditStatementData());
             cardPanel.add(statementReaderPanel, "StatementReader");
+        }
+        if (canAccessScreen("Expenses")) {
+            navigationPanel.add(withStar("Expenses", expensesButton));
+            expensePanel = new ExpensePanel(dbManager, expenseSelectionScope(), new ExpenseKeywordSelection());
+            cardPanel.add(expensePanel, "Expenses");
         }
         if (canAccessScreen("Statements")) {
             navigationPanel.add(withStar("Statements", statementsButton));
@@ -823,6 +831,7 @@ public class PoolAppFrame extends JFrame {
         visitsButton.addActionListener(e -> showScreen("Visits"));
         salesQuoteButton.addActionListener(e -> showScreen("SalesQuote"));
         statementReaderButton.addActionListener(e -> showScreen("StatementReader"));
+        expensesButton.addActionListener(e -> showScreen("Expenses"));
         revenueSummaryButton.addActionListener(e -> showScreen("RevenueSummary"));
         pdfButton.addActionListener(e -> showScreen("PDF"));
         employeesButton.addActionListener(e -> showScreen("Employees"));
@@ -888,6 +897,7 @@ public class PoolAppFrame extends JFrame {
         if ("Visits".equals(screenName)) visitsPanel.refresh();
         if ("SalesQuote".equals(screenName)) salesQuotesPanel.refresh();
         if ("StatementReader".equals(screenName)) statementReaderPanel.refresh();
+        if ("Expenses".equals(screenName)) expensePanel.refresh();
         CardLayout layout = (CardLayout) cardPanel.getLayout();
         layout.show(cardPanel, screenName);
         
@@ -907,13 +917,19 @@ public class PoolAppFrame extends JFrame {
     }
 
     private static final String[][] FAVORITE_ITEMS = {
-        {"CustomerDetails", "Customer Details"}, {"Customers", "Customers"}, {"Visits", "Visits"}, {"SalesQuote", "Sales Quote"}, {"StatementReader", "Statement Reader"}, {"Statements", "Statements"},
+        {"CustomerDetails", "Customer Details"}, {"Customers", "Customers"}, {"Visits", "Visits"}, {"SalesQuote", "Sales Quote"}, {"StatementReader", "Statement Reader"}, {"Expenses", "Expenses"}, {"Statements", "Statements"},
         {"MonthlyStatement", "Monthly Statement"}, {"ChargedSummary", "Charged Summary"},
         {"RevenueSummary", "Revenue Summary"}, {"PDF", "PDF"}, {"Employees", "Employees"}
     };
 
     private java.util.prefs.Preferences favoritePrefs() {
         return java.util.prefs.Preferences.userNodeForPackage(PoolAppFrame.class);
+    }
+
+    private String expenseSelectionScope() {
+        return employeeProfile != null
+                ? "emp:" + employeeProfile.getUsername() + "@" + employeeProfile.getCompanyName()
+                : companyProfile != null ? "co:" + companyProfile.getCompanyName() : "default";
     }
 
     private String favoritesKey() {
@@ -1349,6 +1365,8 @@ public class PoolAppFrame extends JFrame {
                 return employeeProfile.isCanAccessSalesQuote();
             case "StatementReader":
                 return employeeProfile.isCanAccessStatementReader();
+            case "Expenses":
+                return employeeProfile.isCanAccessExpenses();
             case "RevenueSummary":
                 return employeeProfile.isCanViewRevenueSummary();
             case "PDF":
@@ -1363,7 +1381,7 @@ public class PoolAppFrame extends JFrame {
     }
 
     private String getDefaultAccessibleScreen() {
-        String[] screens = {"CustomerDetails", "Customers", "Visits", "SalesQuote", "StatementReader", "Statements", "RevenueSummary", "PDF", "Employees"};
+        String[] screens = {"CustomerDetails", "Customers", "Visits", "SalesQuote", "StatementReader", "Expenses", "Statements", "RevenueSummary", "PDF", "Employees"};
         for (String screen : screens) {
             if (canAccessScreen(screen)) {
                 return screen;
@@ -3811,6 +3829,7 @@ public class PoolAppFrame extends JFrame {
         employee.setCanAccessVisits(source.isCanAccessVisits());
         employee.setCanAccessSalesQuote(source.isCanAccessSalesQuote());
         employee.setCanAccessStatementReader(source.isCanAccessStatementReader());
+        employee.setCanAccessExpenses(source.isCanAccessExpenses());
         employee.setCanViewRevenueSummary(source.isCanViewRevenueSummary());
         employee.setCanViewPdf(source.isCanViewPdf());
         employee.setCanEditPdf(source.isCanEditPdf());
@@ -4138,6 +4157,7 @@ public class PoolAppFrame extends JFrame {
         private final JCheckBox visitsCheck;
         private final JCheckBox salesQuoteCheck;
         private final JCheckBox statementReaderCheck;
+        private final JCheckBox expensesCheck;
         private final JCheckBox revenueCheck;
         private final JCheckBox pdfCheck;
         private final JCheckBox editPdfCheck;
@@ -4174,6 +4194,7 @@ public class PoolAppFrame extends JFrame {
             visitsCheck = new JCheckBox("Visits (view, add, and edit visits)", employeeProfile.isCanAccessVisits());
             salesQuoteCheck = new JCheckBox("Sales Quote", employeeProfile.isCanAccessSalesQuote());
             statementReaderCheck = new JCheckBox("Statement Reader", employeeProfile.isCanAccessStatementReader());
+            expensesCheck = new JCheckBox("Access Expenses", employeeProfile.isCanAccessExpenses());
             revenueCheck = new JCheckBox("Revenue Summary", employeeProfile.isCanViewRevenueSummary());
             pdfCheck = new JCheckBox("PDF", employeeProfile.isCanViewPdf());
             editPdfCheck = new JCheckBox("Can Edit PDF Settings", employeeProfile.isCanEditPdf());
@@ -4224,6 +4245,7 @@ public class PoolAppFrame extends JFrame {
             permissionsPanel.add(visitsCheck);
             permissionsPanel.add(salesQuoteCheck);
             permissionsPanel.add(statementReaderCheck);
+            permissionsPanel.add(expensesCheck);
             permissionsPanel.add(revenueCheck);
             permissionsPanel.add(pdfCheck);
             permissionsPanel.add(editPdfCheck);
@@ -4353,6 +4375,7 @@ public class PoolAppFrame extends JFrame {
             employeeProfile.setCanAccessVisits(visitsCheck.isSelected());
             employeeProfile.setCanAccessSalesQuote(salesQuoteCheck.isSelected());
             employeeProfile.setCanAccessStatementReader(statementReaderCheck.isSelected());
+            employeeProfile.setCanAccessExpenses(expensesCheck.isSelected());
             employeeProfile.setCanViewRevenueSummary(revenueCheck.isSelected());
             employeeProfile.setCanViewPdf(pdfCheck.isSelected());
             employeeProfile.setCanEditPdf(editPdfCheck.isSelected());

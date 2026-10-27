@@ -35,6 +35,12 @@ public final class StatementPdfReader {
     public record SourceRow(String sourceId, int page, int line, String text, String dateText,
                             String depositText, String direction, String reference) { }
 
+    public record TextRow(int page, int line, String text) { }
+
+    public record TextExtraction(int pageCount, List<TextRow> rows) {
+        public TextExtraction { rows = List.copyOf(rows); }
+    }
+
     public record Extraction(String documentHash, int pageCount, List<SourceRow> rows) {
         public Extraction {
             rows = List.copyOf(rows);
@@ -58,6 +64,40 @@ public final class StatementPdfReader {
                 && zelle.matcher(row.text()).find() && !outgoing.matcher(row.text()).find()).toList();
     }
 
+    public List<TextRow> extractTextLines(Path pdf) throws IOException {
+        return extractTextDocument(pdf).rows();
+    }
+
+    public TextExtraction extractTextDocument(Path pdf) throws IOException {
+        if (pdf == null || !Files.isRegularFile(pdf)) throw new IOException("Select a PDF file.");
+        long size = Files.size(pdf);
+        if (size > MAX_PDF_BYTES) throw new IOException("PDF exceeds the 25 MB limit.");
+        return extractTextDocument(Files.readAllBytes(pdf));
+    }
+
+    public TextExtraction extractTextDocument(byte[] bytes) throws IOException {
+        if (bytes == null || bytes.length == 0) throw new IOException("The selected PDF is empty.");
+        if (bytes.length > MAX_PDF_BYTES) throw new IOException("PDF exceeds the 25 MB limit.");
+        try (PDDocument document = Loader.loadPDF(bytes)) {
+            int pageCount = document.getNumberOfPages();
+            if (pageCount > MAX_PAGES) throw new IOException("PDF exceeds the 100-page limit.");
+            PositionStripper stripper = new PositionStripper();
+            stripper.setSortByPosition(true);
+            stripper.getText(document);
+            if (stripper.characters.isEmpty()) {
+                throw new IOException("This PDF has no extractable text. Scanned/image PDFs are unsupported; OCR is not available.");
+            }
+            List<TextRow> lines = makeLines(stripper.characters).stream()
+                    .map(line -> new TextRow(line.page(), line.line(), line.text())).toList();
+            return new TextExtraction(pageCount, lines);
+        } catch (org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException e) {
+            throw new IOException("This PDF is password-protected. Remove the password and try again.", e);
+        } catch (IOException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new IOException("Unable to read this PDF. It may be malformed or password-protected.", e);
+        }
+    }
     public Extraction extract(Path pdf) throws IOException {
         if (pdf == null || !Files.isRegularFile(pdf)) throw new IOException("Select a PDF file.");
         long size = Files.size(pdf);
@@ -262,7 +302,7 @@ public final class StatementPdfReader {
             List<PositionedChar> lineChars = new ArrayList<>();
             int end = index;
             while (end < chars.size() && chars.get(end).page() == first.page()
-                    && Math.abs(chars.get(end).y() - first.y()) <= 2.25f) {
+                    && Math.abs(chars.get(end).y() - first.y()) <= 2.5f) {
                 lineChars.add(chars.get(end++));
             }
             StringBuilder text = new StringBuilder();

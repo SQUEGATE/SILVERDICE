@@ -22,6 +22,7 @@ public class EmployeeProfile {
     private boolean canAccessVisits;
     private boolean canAccessSalesQuote;
     private boolean canAccessStatementReader;
+    private boolean canAccessExpenses;
     private boolean canViewRevenueSummary;
     private boolean canViewPdf;
     private boolean canEditPdf;
@@ -160,6 +161,14 @@ public class EmployeeProfile {
 
     public void setCanAccessStatementReader(boolean canAccessStatementReader) {
         this.canAccessStatementReader = canAccessStatementReader;
+    }
+
+    public boolean isCanAccessExpenses() {
+        return canAccessExpenses;
+    }
+
+    public void setCanAccessExpenses(boolean canAccessExpenses) {
+        this.canAccessExpenses = canAccessExpenses;
     }
 
     public void setCanViewStatements(boolean canViewStatements) {

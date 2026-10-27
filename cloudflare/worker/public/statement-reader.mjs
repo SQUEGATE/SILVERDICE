@@ -145,7 +145,7 @@ export function extractStatementRows(pages, { currentYear = new Date().getFullYe
   return { rows, currentYear };
 }
 
-export async function parseStatementPdf(file, { currentYear = new Date().getFullYear(), pdfjs, isCurrent = () => true } = {}) {
+export async function readPdfPages(file, { pdfjs, isCurrent = () => true } = {}) {
   if (!file || file.size === 0) throw new Error("Choose a non-empty PDF.");
   if (file.size > LIMITS.bytes) throw new Error("PDF exceeds the 25 MB limit.");
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -167,11 +167,16 @@ export async function parseStatementPdf(file, { currentYear = new Date().getFull
       pages.push(await page.getTextContent());
       page.cleanup();
     }
-    return { document_hash, ...extractStatementRows(pages, { currentYear }) };
+    return { document_hash, pages };
   } catch (e) {
     if (/password/i.test(e.name || "")) throw new Error("Password-protected PDF: save an unlocked selectable-text copy first.");
     throw e;
   } finally {
     await loading.destroy();
   }
+}
+
+export async function parseStatementPdf(file, { currentYear = new Date().getFullYear(), pdfjs, isCurrent = () => true } = {}) {
+  const { document_hash, pages } = await readPdfPages(file, { pdfjs, isCurrent });
+  return { document_hash, ...extractStatementRows(pages, { currentYear }) };
 }

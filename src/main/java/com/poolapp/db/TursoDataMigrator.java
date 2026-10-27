@@ -130,10 +130,15 @@ public final class TursoDataMigrator {
         try (ResultSet columns = master.getMetaData().getColumns(null, null, "employees", "can_access_statement_reader")) {
             hasReaderPermission = columns.next();
         }
+        boolean hasExpensePermission;
+        try (ResultSet columns = master.getMetaData().getColumns(null, null, "employees", "can_access_expenses")) {
+            hasExpensePermission = columns.next();
+        }
         try (PreparedStatement query = master.prepareStatement("SELECT employee_id, first_name, last_name, phone, email, username, password, can_view_customer_details, can_view_customers, can_view_statements, can_view_revenue_summary, can_view_pdf, can_edit_pdf, can_edit_customers, can_edit_statements, allowed_customer_ids, allowed_days"
                 + (hasVisitsPermission ? ", can_access_visits" : ", 0 AS can_access_visits")
                 + (hasSalesQuotePermission ? ", can_access_sales_quote" : ", 0 AS can_access_sales_quote")
                 + (hasReaderPermission ? ", can_access_statement_reader" : ", 0 AS can_access_statement_reader")
+                + (hasExpensePermission ? ", can_access_expenses" : ", 0 AS can_access_expenses")
                 + " FROM employees WHERE company_id = ?")) {
             query.setLong(1, company.id);
             try (ResultSet rows = query.executeQuery()) {
@@ -145,6 +150,7 @@ public final class TursoDataMigrator {
                             .put("canAccessVisits", rows.getInt("can_access_visits") == 1)
                             .put("canAccessSalesQuote", rows.getInt("can_access_sales_quote") == 1)
                             .put("canAccessStatementReader", rows.getInt("can_access_statement_reader") == 1)
+                            .put("canAccessExpenses", rows.getInt("can_access_expenses") == 1)
                             .put("canViewRevenueSummary", rows.getInt("can_view_revenue_summary") == 1)
                             .put("canViewPdf", rows.getInt("can_view_pdf") == 1)
                             .put("canEditPdf", rows.getInt("can_edit_pdf") == 1)

@@ -57,6 +57,20 @@ export default {
           ? await handleQuotes(request, env, session, rows[0].customer_id, Number(detailMatch[2]), false)
           : await getVisit(request, env, session, rows[0].customer_id, Number(detailMatch[2]));
       }
+      if (url.pathname === "/v1/expense-keywords" && request.method === "GET") {
+        requirePermission(session, "canAccessExpenses");
+        const rows = await turso(env, "SELECT setting_value FROM pdf_settings WHERE company_id = ? AND setting_key = 'expenseKeywords'", requiredCompanyId(session));
+        const stored = parseJsonArrayOrObject(rows[0]?.setting_value, []);
+        return json({ keywords: Array.isArray(stored) ? normalizeExpenseKeywords(stored.filter(k => typeof k === "string").map(k => k.slice(0, 80))) : [] }, 200, request);
+      }
+      if (url.pathname === "/v1/expense-keywords" && request.method === "PUT") {
+        requirePermission(session, "canAccessExpenses");
+        const body = await readJson(request);
+        const keywords = normalizeExpenseKeywords(body.keywords);
+        const statement = settingStatement(requiredCompanyId(session), "expenseKeywords", JSON.stringify(keywords));
+        await turso(env, statement.sql, ...statement.args);
+        return json({ saved: true, keywords }, 200, request);
+      }
       if (url.pathname === "/v1/statement-reader/preview" && request.method === "POST") {
         return await previewReader(request, env, session);
       }
@@ -396,7 +410,24 @@ function normalizeEmployeePermissions(value) {
   const permissions = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   return { ...permissions, canAccessVisits: permissions.canAccessVisits === true,
     canAccessSalesQuote: permissions.canAccessSalesQuote === true,
-    canAccessStatementReader: permissions.canAccessStatementReader === true };
+    canAccessStatementReader: permissions.canAccessStatementReader === true,
+    canAccessExpenses: permissions.canAccessExpenses === true };
+}
+
+export function normalizeExpenseKeywords(value) {
+  if (!Array.isArray(value)) throw httpError(400, "keywords must be an array");
+  const seen = new Set(), keywords = [];
+  for (const raw of value) {
+    if (typeof raw !== "string") throw httpError(400, "keywords must be strings");
+    const keyword = raw.trim().replace(/\s+/g, " ");
+    if (!keyword) continue;
+    if (keyword.length > 80) throw httpError(400, "Each keyword must be 80 characters or fewer");
+    if (seen.has(keyword.toLowerCase())) continue;
+    seen.add(keyword.toLowerCase());
+    keywords.push(keyword);
+  }
+  if (keywords.length > 100) throw httpError(400, "No more than 100 keywords can be saved");
+  return keywords;
 }
 
 async function login(request, env) {

@@ -3,7 +3,7 @@
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { makePdf } from "./statement-reader-synthetic.mjs";
+import { makePdf, item } from "./statement-reader-synthetic.mjs";
 
 export function createStatementReaderFixture() {
   const customers = [
@@ -13,10 +13,10 @@ export function createStatementReaderFixture() {
   ];
   const accounts = Object.fromEntries(["reader", "editor", "company", "noperm"].map(username => [username, {
     username, role: username === "company" ? "COMPANY" : "EMPLOYEE", companyId: 1, companyName: "Synthetic Company",
-    permissions: { canAccessStatementReader: username !== "noperm", canEditStatements: username === "editor", canViewCustomers: username === "noperm" },
+    permissions: { canAccessStatementReader: username !== "noperm", canEditStatements: username === "editor", canViewCustomers: username === "noperm", canAccessExpenses: username !== "noperm" },
   }]));
   const log = [], imports = [], records = [];
-  let failNext = false, previewDelay = 0, failMonthly = false;
+  let expenseKeywords = [], failNext = false, previewDelay = 0, failMonthly = false;
   const monthlyRequests = new Map();
   const send = (res, status, body) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
   return http.createServer(async (req, res) => {
@@ -24,6 +24,7 @@ export function createStatementReaderFixture() {
       const path = new URL(req.url, "http://fixture").pathname;
       const asset = path === "/" ? "../../public/index.html"
         : path === "/statement-reader.mjs" ? "../../public/statement-reader.mjs"
+        : path === "/expense-reader.mjs" ? "../../public/expense-reader.mjs"
         : path === "/__browser-tests.js" ? "../statement-reader-browser.fixture.js"
         : path === "/__optimization-tests.js" ? "../web-optimizations-browser.fixture.js"
         : /^\/vendor\/pdfjs\/(?:pdf(?:\.worker)?\.mjs|LICENSE)$/.test(path) ? "../../public" + path : null;
@@ -31,12 +32,16 @@ export function createStatementReaderFixture() {
         res.writeHead(200, { "Content-Type": path === "/" ? "text/html" : "text/javascript" });
         return res.end(await readFile(new URL(asset, import.meta.url)));
       }
+      if (path === "/__expense.pdf") {
+        res.writeHead(200, { "Content-Type": "application/pdf" });
+        return res.end(makePdf([{ items: [item("01/03 HOME DEPOT #123 Tampa", 60, 700, 150), item("$45.10", 300, 700, 30), item("1,000.00", 400, 700, 40), item("01/04 Pool Supplies Inc chlorine", 60, 680, 160), item("(1,200.50)", 300, 680, 50), item("01/05 Depotting service 9.99", 60, 660, 160), item("01/06 Home Depot return pending", 60, 640, 160)] }, { items: [item("02/01 home   depot online 12.40", 60, 700, 170)] }]));
+      }
       if (path === "/__synthetic.pdf" || path === "/__scan.pdf") {
         res.writeHead(200, { "Content-Type": "application/pdf" });
         return res.end(path === "/__scan.pdf" ? makePdf([{ items: [] }]) : makePdf());
       }
       if (path === "/__state") return send(res, 200, { log, imports, records, monthlyRequests: [...monthlyRequests.values()] });
-      if (path === "/__reset") { log.length = imports.length = records.length = 0; failNext = false; previewDelay = 0; failMonthly = false; monthlyRequests.clear(); return send(res, 200, {}); }
+      if (path === "/__reset") { expenseKeywords = []; log.length = imports.length = records.length = 0; failNext = false; previewDelay = 0; failMonthly = false; monthlyRequests.clear(); return send(res, 200, {}); }
       if (path === "/__fail-monthly") { failMonthly = true; return send(res, 200, {}); }
       if (path === "/__fail-next") { failNext = true; return send(res, 200, {}); }
       if (path === "/__delay-preview") { previewDelay = 400; return send(res, 200, {}); }
@@ -50,6 +55,11 @@ export function createStatementReaderFixture() {
       const account = accounts[(req.headers.authorization || "").replace("Bearer ", "")];
       if (!account) return send(res, 401, { error: "Unauthorized" });
       if (path === "/v1/settings") return send(res, 200, {});
+      if (path === "/v1/expense-keywords") {
+        if (account.role !== "COMPANY" && !account.permissions.canAccessExpenses) return send(res, 403, { error: "Permission denied" });
+        if (req.method === "PUT") expenseKeywords = body.keywords;
+        return send(res, 200, req.method === "PUT" ? { saved: true, keywords: expenseKeywords } : { keywords: expenseKeywords });
+      }
       if (path === "/v1/record-types") return send(res, 200, ["Payment"]);
       if (path === "/v1/statements/monthly") {
         if (account.role !== "COMPANY") return send(res, 403, { error: "Edit statements permission required." });

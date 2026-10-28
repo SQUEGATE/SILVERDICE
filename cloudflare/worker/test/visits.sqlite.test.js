@@ -23,14 +23,15 @@ function encode(value) {
   return { type: "text", value };
 }
 
-async function fixture(run, { legacy = false, oldVisits = false, existingPhoto = false, nullableVisits = false, failMigrationOnce = false } = {}) {
+async function fixture(run, { legacy = false, oldVisits = false, existingPhoto = false, nullableVisits = false, failMigrationOnce = false, appliedVersions = [] } = {}) {
   const db = new DatabaseSync(":memory:");
   const originalFetch = globalThis.fetch;
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(schema);
   if (oldVisits || nullableVisits) {
     db.exec("DROP TABLE customer_visits");
-    let oldSchema = schema.slice(schema.indexOf("CREATE TABLE IF NOT EXISTS customer_visits"), schema.indexOf("CREATE TABLE IF NOT EXISTS record_types"));
+    let oldSchema = schema.slice(schema.indexOf("CREATE TABLE IF NOT EXISTS customer_visits"), schema.indexOf("CREATE TABLE IF NOT EXISTS record_types"))
+      .replace(/^\s*salt INTEGER[^\n]*\n/m, "");
     if (oldVisits) oldSchema = oldSchema.replace("alk INTEGER CHECK", "alk INTEGER NOT NULL CHECK").replace("cal INTEGER CHECK", "cal INTEGER NOT NULL CHECK");
     if (!existingPhoto) oldSchema = oldSchema.replace("    photo_data TEXT NOT NULL DEFAULT '',", "");
     db.exec(oldSchema);
@@ -53,6 +54,10 @@ async function fixture(run, { legacy = false, oldVisits = false, existingPhoto =
     db.exec("CREATE INDEX custom_visit_notes_idx ON customer_visits(company_id, notes)");
     db.exec("INSERT INTO customer_visits (company_id, visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes) VALUES (1, 19, 'shared', '2026-10-26T14:00:00.000Z', '7.4', '2-4', '80', 100, 200, 'Preserve me')");
     if (existingPhoto) db.prepare("UPDATE customer_visits SET photo_data = ?").run("data:image/png;base64,YQ==");
+  }
+  if (appliedVersions.length) {
+    db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+    for (const version of appliedVersions) db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, '2026-01-01T00:00:00.000Z')").run(version);
   }
   const account = db.prepare("INSERT INTO accounts (account_id, username, password_hash, role, company_id, employee_id, permissions_json, allowed_customer_ids_json, allowed_days_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
   account.run(1, "company-one", passwordHash, "COMPANY", 1, null, "{}", "[]", "[]");
@@ -296,6 +301,21 @@ test("SQLite: customer and company deletion clean up only scoped visits", async 
   });
 });
 
+test("SQLite: databases that already applied migrations 1-2 still get the SALT column", async () => {
+  await fixture(async ({ db, call, login }) => {
+    assert.ok(!db.prepare("PRAGMA table_info(customer_visits)").all().some(column => column.name === "salt"));
+    const token = await login("company-one");
+    const listed = await call("/v1/customers/shared/visits?summary=1", { token });
+    assert.equal(listed.status, 200);
+    assert.equal(listed.body[0].notes, "Preserve me");
+    assert.equal(listed.body[0].salt, null);
+    assert.ok(db.prepare("PRAGMA table_info(customer_visits)").all().some(column => column.name === "salt"));
+    assert.ok(db.prepare("SELECT 1 FROM schema_migrations WHERE version = 3").get());
+    const saved = await call("/v1/customers/shared/visits/19", { method: "PUT", token, body: { ...valid, salt: 420 } });
+    assert.equal(saved.body.salt, 420);
+  }, { nullableVisits: true, existingPhoto: true, appliedVersions: [1, 2] });
+});
+
 test("SQLite: runtime migration upgrades existing DB before serving authenticated visits", async () => {
   await fixture(async ({ db, call, login }) => {
     assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'customer_visits'").get(), undefined);
@@ -401,9 +421,41 @@ for (const options of [{ oldVisits: true }, { oldVisits: true, existingPhoto: tr
       assert.equal(updated.body.alk, null);
       assert.equal(updated.body.cal, null);
       assert.equal(updated.body.photo_data, rows.body[0].photo_data);
+      assert.equal(updated.body.salt, null);
+      assert.ok(columns.some(column => column.name === "salt"));
+      const salted = await call("/v1/customers/shared/visits/19", { method: "PUT", token, body: { ...valid, salt: 4950 } });
+      assert.equal(salted.body.salt, 4950);
+      assert.throws(() => db.prepare("UPDATE customer_visits SET salt = 421 WHERE visit_id = 19").run(), /CHECK/);
     }, options);
   });
 }
+
+test("SQLite: SALT saves, survives edits from older clients, clears, and round-trips through backup", async () => {
+  await fixture(async ({ db, call, login }) => {
+    const token = await login("company-one");
+    const created = await call("/v1/customers/shared/visits", { method: "POST", token, body: { ...valid, salt: 3080 } });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.salt, 3080);
+    const path = `/v1/customers/shared/visits/${created.body.visit_id}`;
+    const kept = await call(path, { method: "PUT", token, body: { ...valid, notes: "older client" } });
+    assert.equal(kept.body.salt, 3080);
+    assert.equal((await call("/v1/customers/shared/visits?summary=1", { token })).body[0].salt, 3080);
+    const backup = (await call("/v1/backup", { token })).body;
+    assert.equal(backup.customer_visits[0].salt, 3080);
+    const cleared = await call(path, { method: "PUT", token, body: { ...valid, salt: null } });
+    assert.equal(cleared.body.salt, null);
+    assert.equal((await call("/v1/backup/restore", { method: "POST", token, body: backup })).status, 200);
+    assert.equal(db.prepare("SELECT salt FROM customer_visits").get().salt, 3080);
+    const legacy = structuredClone(backup);
+    delete legacy.customer_visits[0].salt;
+    assert.equal((await call("/v1/backup/restore", { method: "POST", token, body: legacy })).status, 200);
+    assert.equal(db.prepare("SELECT salt FROM customer_visits").get().salt, null);
+    const bad = structuredClone(backup);
+    bad.customer_visits[0].salt = 999;
+    assert.equal((await call("/v1/backup/restore", { method: "POST", token, body: bad })).status, 400);
+    assert.equal((await call("/v1/customers/shared/visits", { method: "POST", token, body: { ...valid, salt: 999 } })).status, 400);
+  });
+});
 
 test("SQLite: failed table rebuild rolls back all visits/indexes and retries safely", async () => {
   await fixture(async ({ db, call, login }) => {

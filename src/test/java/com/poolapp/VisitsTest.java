@@ -2,6 +2,7 @@ package com.poolapp;
 
 import com.poolapp.model.EmployeeProfile;
 import com.poolapp.model.VisitRecord;
+import org.json.JSONObject;
 import org.junit.Test;
 
 import java.time.Instant;
@@ -31,6 +32,19 @@ public class VisitsTest {
         rejects(() -> new VisitRecord(0, "c1", Instant.now(), "7.3", "3-6", "50", 70, 250, ""));
         rejects(() -> new VisitRecord(0, "c1", Instant.now(), "7.4", "3-6", "50", 0, 250, ""));
         rejects(() -> new VisitRecord(0, "c1", Instant.now(), "7.4", "3-6", "50", 70, 250, "x".repeat(16001)));
+        check(VisitRecord.SALT_VALUES.equals(List.of(420, 510, 600, 700, 800, 920, 1040, 1180, 1320, 1470, 1630, 1800,
+                1990, 2180, 2390, 2610, 2840, 3080, 3350, 3630, 3920, 4240, 4580, 4950)), "SALT choices");
+        check(blank.salt() == null && blank.measurementsJson().isNull("salt"), "SALT optional and sent as null");
+        VisitRecord salted = new VisitRecord(3, "c1", Instant.now(), "7.4", "3-6", "50", null, null, "", "", 4950);
+        check(salted.measurementsJson().getInt("salt") == 4950, "SALT sent to API");
+        check(VisitRecord.fromJson(salted.measurementsJson().put("visit_id", 3).put("customer_id", "c1")
+                .put("visited_at", salted.visitedAt().toString())).salt() == 4950, "SALT deserializes");
+        check(VisitRecord.fromJson(new VisitRecord(3, "c1", Instant.now(), "7.4", "3-6", "50", null, null, "")
+                .measurementsJson().put("visit_id", 3).put("customer_id", "c1").put("visited_at", Instant.EPOCH.toString())
+                .put("salt", JSONObject.NULL)).salt() == null, "Null SALT deserializes");
+        for (int invalid : List.of(0, 421, 5000, -420)) {
+            rejects(() -> new VisitRecord(0, "c1", Instant.now(), "7.4", "3-6", "50", null, null, "", "", invalid));
+        }
         EmployeeProfile employee = new EmployeeProfile();
         check(!employee.isCanAccessVisits(), "Employee visits must be opt-in");
         employee.setCanAccessVisits(true);

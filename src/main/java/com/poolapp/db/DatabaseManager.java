@@ -177,8 +177,9 @@ public class DatabaseManager {
                     + "visit_id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT NOT NULL,"
                     + "visited_at TEXT NOT NULL, ph TEXT NOT NULL, chlo TEXT NOT NULL, stb TEXT NOT NULL,"
                     + "alk INTEGER CHECK(alk > 0), cal INTEGER CHECK(cal > 0),"
-                    + "notes TEXT NOT NULL DEFAULT '', photo_data TEXT NOT NULL DEFAULT '')");
+                    + "notes TEXT NOT NULL DEFAULT '', photo_data TEXT NOT NULL DEFAULT '', salt INTEGER)");
             migrateVisits(connection);
+            addColumnIfMissing(connection, "customer_visits", "salt", "INTEGER");
             statement.execute("CREATE INDEX IF NOT EXISTS customer_visits_history ON customer_visits(customer_id, visited_at DESC, visit_id DESC)");
             statement.execute("CREATE TABLE IF NOT EXISTS pdf_settings ("
                     + "setting_id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -435,7 +436,7 @@ public class DatabaseManager {
         JSONArray visits = new JSONArray();
         try (Connection connection = getConnection();
              PreparedStatement count = connection.prepareStatement("SELECT COUNT(*) FROM customer_visits WHERE customer_id = ?");
-             PreparedStatement query = connection.prepareStatement("SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes,"
+             PreparedStatement query = connection.prepareStatement("SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, salt, notes,"
                      + " CASE WHEN photo_data <> '' THEN 1 ELSE 0 END AS has_photo FROM customer_visits"
                      + " WHERE customer_id = ? ORDER BY visited_at DESC, visit_id DESC LIMIT ? OFFSET ?")) {
             count.setString(1, customerId);
@@ -455,6 +456,7 @@ public class DatabaseManager {
                             .put("stb", rows.getString("stb")).put("notes", rows.getString("notes"))
                             .put("alk", rows.getObject("alk") == null ? JSONObject.NULL : rows.getInt("alk"))
                             .put("cal", rows.getObject("cal") == null ? JSONObject.NULL : rows.getInt("cal"))
+                            .put("salt", rows.getObject("salt") == null ? JSONObject.NULL : rows.getInt("salt"))
                             .put("has_photo", rows.getInt("has_photo") != 0);
                     visits.put(visit);
                 }
@@ -504,13 +506,13 @@ public class DatabaseManager {
         }
         try (Connection connection = getConnection()) {
             if (visit.id() == 0) {
-                String sql = "INSERT INTO customer_visits(customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data)"
-                        + " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS(SELECT 1 FROM customers WHERE customer_id = ?)";
+                String sql = "INSERT INTO customer_visits(customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data, salt)"
+                        + " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS(SELECT 1 FROM customers WHERE customer_id = ?)";
                 try (PreparedStatement statement = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
                     statement.setString(1, visit.customerId());
                     statement.setString(2, java.time.Instant.now().toString());
                     bindVisitMeasurements(statement, 3, visit);
-                    statement.setString(10, visit.customerId());
+                    statement.setString(11, visit.customerId());
                     if (statement.executeUpdate() != 1) throw new IllegalArgumentException("Customer no longer exists.");
                     try (ResultSet keys = statement.getGeneratedKeys()) {
                         if (!keys.next()) throw new SQLException("No visit ID returned");
@@ -518,12 +520,12 @@ public class DatabaseManager {
                     }
                 }
             }
-            String sql = "UPDATE customer_visits SET ph = ?, chlo = ?, stb = ?, alk = ?, cal = ?, notes = ?, photo_data = ?"
+            String sql = "UPDATE customer_visits SET ph = ?, chlo = ?, stb = ?, alk = ?, cal = ?, notes = ?, photo_data = ?, salt = ?"
                     + " WHERE visit_id = ? AND customer_id = ?";
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 bindVisitMeasurements(statement, 1, visit);
-                statement.setLong(8, visit.id());
-                statement.setString(9, visit.customerId());
+                statement.setLong(9, visit.id());
+                statement.setString(10, visit.customerId());
                 if (statement.executeUpdate() != 1) throw new IllegalArgumentException("Visit no longer exists for this customer.");
             }
             return loadLocalVisit(connection, visit.customerId(), visit.id());
@@ -539,7 +541,8 @@ public class DatabaseManager {
         statement.setObject(index++, visit.alk(), java.sql.Types.INTEGER);
         statement.setObject(index++, visit.cal(), java.sql.Types.INTEGER);
         statement.setString(index++, visit.notes());
-        statement.setString(index, visit.photoData());
+        statement.setString(index++, visit.photoData());
+        statement.setObject(index, visit.salt(), java.sql.Types.INTEGER);
     }
 
     private VisitRecord loadLocalVisit(Connection connection, String customerId, long id) throws SQLException {
@@ -558,7 +561,8 @@ public class DatabaseManager {
                 java.time.Instant.parse(row.getString("visited_at")), row.getString("ph"),
                 row.getString("chlo"), row.getString("stb"),
                 row.getObject("alk") == null ? null : row.getInt("alk"),
-                row.getObject("cal") == null ? null : row.getInt("cal"), row.getString("notes"), row.getString("photo_data"));
+                row.getObject("cal") == null ? null : row.getInt("cal"), row.getString("notes"), row.getString("photo_data"),
+                row.getObject("salt") == null ? null : row.getInt("salt"));
     }
 
     public List<StatementRecord> getStatementRecords(String customerId) {

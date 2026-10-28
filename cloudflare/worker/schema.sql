@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS customer_visits (
     cal INTEGER CHECK (cal IS NULL OR (typeof(cal) = 'integer' AND cal BETWEEN 1 AND 2147483647)),
     notes TEXT NOT NULL DEFAULT '' CHECK (length(notes) <= 16000),
     photo_data TEXT NOT NULL DEFAULT '',
+    salt INTEGER CHECK (salt IS NULL OR salt IN (420,510,600,700,800,920,1040,1180,1320,1470,1630,1800,1990,2180,2390,2610,2840,3080,3350,3630,3920,4240,4580,4950)),
     PRIMARY KEY (company_id, visit_id),
     FOREIGN KEY (company_id, customer_id)
         REFERENCES customers(company_id, customer_id) ON DELETE CASCADE

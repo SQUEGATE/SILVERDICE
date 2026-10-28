@@ -85,6 +85,15 @@ public class VisitsDatabaseTest {
             VisitsTest.check(removed.visitedAt().equals(added.visitedAt()), "Photo edit preserves timestamp");
             reopened.deleteVisit("c1", added.id());
             VisitsTest.check(new DatabaseManager(path).getVisits("c1").size() == 1, "Deletion persists after reopen");
+            VisitsTest.check(old.salt() == null, "Migrated visit has no SALT reading");
+            VisitRecord salted = reopened.saveVisit(new VisitRecord(0, "c1", Instant.now(), "7.4", "3-6", "50",
+                    null, null, "salt", "", 3080));
+            VisitsTest.check(Integer.valueOf(3080).equals(new DatabaseManager(path).getVisit("c1", salted.id()).salt()), "SALT persisted");
+            var page = new DatabaseManager(path).getVisitPage("c1", 50, 0).getJSONArray("rows");
+            VisitsTest.check(page.getJSONObject(0).getInt("salt") == 3080, "SALT included in history page");
+            VisitRecord cleared = reopened.saveVisit(new VisitRecord(salted.id(), "c1", Instant.now(), "7.4", "3-6", "50",
+                    null, null, "salt", "", null));
+            VisitsTest.check(cleared.salt() == null, "SALT can be cleared");
         } finally {
             Files.deleteIfExists(photo);
             Files.deleteIfExists(path);

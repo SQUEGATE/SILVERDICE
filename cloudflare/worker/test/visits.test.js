@@ -125,12 +125,14 @@ function mockDatabase() {
         stb: args[6],
         alk: args[7],
         cal: args[8],
-        notes: args[9],
-        photo_data: args[10]
+        salt: args[9],
+        notes: args[10],
+        photo_data: args[11]
       }];
     } else if (sql.startsWith("UPDATE customer_visits")) {
-      if (args[7] === 44 && args[8] === "c-1" && args[9] === savedVisit.visit_id) {
-        rows = [{ ...savedVisit, ph: args[0], chlo: args[1], stb: args[2], alk: args[3], cal: args[4], notes: args[5], photo_data: args[6] ?? savedVisit.photo_data }];
+      if (args[9] === 44 && args[10] === "c-1" && args[11] === savedVisit.visit_id) {
+        rows = [{ ...savedVisit, ph: args[0], chlo: args[1], stb: args[2], alk: args[3], cal: args[4],
+          salt: args[5] === 1 ? args[6] : savedVisit.salt ?? null, notes: args[7], photo_data: args[8] ?? savedVisit.photo_data }];
       }
     }
     return executeResult(rows);
@@ -279,6 +281,35 @@ test("creates visits with server timestamps and updates without changing visited
   assert.equal(updated.notes, "Edited notes");
   const updateSql = executedSql.find(({ sql }) => sql.startsWith("UPDATE customer_visits")).sql;
   assert.ok(!updateSql.includes("visited_at ="));
+});
+
+test("stores optional SALT readings and keeps them when older clients omit salt", async () => {
+  originalFetch = globalThis.fetch;
+  mockDatabase();
+  const base = { ph: "7.4", chlo: "3-6", stb: "50", alk: null, cal: null, notes: "" };
+  const created = await call("/v1/customers/c-1/visits", { method: "POST", body: { ...base, salt: 3080 } });
+  assert.equal(created.status, 201);
+  assert.equal((await created.json()).salt, 3080);
+  const noSalt = await call("/v1/customers/c-1/visits", { method: "POST", body: base });
+  assert.equal((await noSalt.json()).salt, null);
+
+  const savedSalt = savedVisit.salt;
+  savedVisit.salt = 2610;
+  try {
+    const kept = await call("/v1/customers/c-1/visits/7", { method: "PUT", body: base });
+    assert.equal((await kept.json()).salt, 2610);
+    const cleared = await call("/v1/customers/c-1/visits/7", { method: "PUT", body: { ...base, salt: null } });
+    assert.equal((await cleared.json()).salt, null);
+    const changed = await call("/v1/customers/c-1/visits/7", { method: "PUT", body: { ...base, salt: 420 } });
+    assert.equal((await changed.json()).salt, 420);
+  } finally {
+    if (savedSalt === undefined) delete savedVisit.salt; else savedVisit.salt = savedSalt;
+  }
+
+  for (const salt of [421, "420", 5000, 0, -420, 4950.5]) {
+    const bad = await call("/v1/customers/c-1/visits", { method: "POST", body: { ...base, salt } });
+    assert.equal(bad.status, 400, String(salt));
+  }
 });
 
 test("rejects invalid visit fields and prevents access to another customer", async () => {

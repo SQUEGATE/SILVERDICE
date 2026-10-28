@@ -20,11 +20,11 @@ function extractFn(name) {
   }
   throw new Error("unterminated " + name);
 }
-const consts = script.match(/var V_PH=[^\n]*\r?\nvar V_COLORS=[^\n]*\r?\nvar V_MAX_INT[^\n]*\r?\nvar V_PHOTO_RE[^\n]*/)[0];
+const consts = script.match(/var V_PH=[^\n]*\r?\nvar V_SALT_NONE=[^\n]*\r?\nvar V_COLORS=[^\n]*\r?\nfunction visitSaltError[^\n]*\r?\nvar V_MAX_INT[^\n]*\r?\nvar V_PHOTO_RE[^\n]*/)[0];
 const dflt = script.match(/var V_DEFAULT=[^\n]*/)[0];
 const ctx = vm.createContext({});
 vm.runInContext([consts, dflt, ...["visitInt", "visitValidate", "visitRowError", "visitSort", "visitPhotoError", "visitScale", "visitFitPhoto"].map(extractFn),
-  "this.api={visitInt,visitValidate,visitRowError,visitSort,V_PH,V_CHLO,V_STB,V_DEFAULT,V_MAX_NOTES,visitPhotoError,visitScale,visitFitPhoto,V_MAX_PHOTO};"].join("\n"), ctx);
+  "this.api={visitInt,visitValidate,visitRowError,visitSort,V_PH,V_CHLO,V_STB,V_SALT,V_SALT_NONE,V_DEFAULT,V_MAX_NOTES,visitPhotoError,visitScale,visitFitPhoto,V_MAX_PHOTO};"].join("\n"), ctx);
 const A = ctx.api;
 const good = { ph: "7.4", chlo: "3-6", stb: "50", alk: "80", cal: "300", notes: "x" };
 
@@ -32,7 +32,21 @@ test("choice lists are exact", () => {
   assert.deepEqual([...A.V_PH], ["7.0", "7.2", "7.4", "7.6", "7.8", "8.0"]);
   assert.deepEqual([...A.V_CHLO], ["1-2", "2-4", "3-6", "5-10", "7.5-15", "10-20"]);
   assert.deepEqual([...A.V_STB], ["100", "90", "80", "70", "60", "50", "40", "30"]);
+  assert.deepEqual([...A.V_SALT], ["Not recorded", "420", "510", "600", "700", "800", "920", "1040", "1180", "1320", "1470", "1630", "1800",
+    "1990", "2180", "2390", "2610", "2840", "3080", "3350", "3630", "3920", "4240", "4580", "4950"]);
   assert.deepEqual({ ...A.V_DEFAULT }, { ph: "7.4", chlo: "3-6", stb: "50" });
+});
+test("SALT is optional and limited to the listed readings", () => {
+  assert.equal(A.visitValidate(good).body.salt, null);
+  assert.equal(A.visitValidate({ ...good, salt: A.V_SALT_NONE }).body.salt, null);
+  assert.equal(A.visitValidate({ ...good, salt: "4950" }).body.salt, 4950);
+  assert.equal(A.visitValidate({ ...good, salt: "420" }).body.salt, 420);
+  assert.match(A.visitValidate({ ...good, salt: "421" }).error, /SALT/);
+  const row = { visit_id: 1, visited_at: "2026-10-26T14:00:00.000Z", ph: "7.4", chlo: "3-6", stb: "50", alk: null, cal: null, notes: "", photo_data: "" };
+  assert.equal(A.visitRowError(row), "");
+  assert.equal(A.visitRowError({ ...row, salt: null }), "");
+  assert.equal(A.visitRowError({ ...row, salt: 3080 }), "");
+  assert.match(A.visitRowError({ ...row, salt: 3081 }), /SALT/);
 });
 test("ALK/CAL accept positive whole ints up to 2147483647", () => {
   for (const v of ["1", " 80 ", "007", "2147483647"]) assert.ok(A.visitInt(v, "ALK").value > 0, v);
@@ -91,7 +105,7 @@ test("notes limit 16000", () => {
   assert.match(A.visitValidate({ ...good, notes: "a".repeat(16001) }).error, /16000/);
 });
 test("visitValidate builds numeric body and rejects bad choices", () => {
-  assert.deepEqual({ ...A.visitValidate(good).body }, { ph: "7.4", chlo: "3-6", stb: "50", alk: 80, cal: 300, notes: "x", photo_data: "" });
+  assert.deepEqual({ ...A.visitValidate(good).body }, { ph: "7.4", chlo: "3-6", stb: "50", salt: null, alk: 80, cal: 300, notes: "x", photo_data: "" });
   for (const k of ["ph", "chlo", "stb"]) assert.ok(A.visitValidate({ ...good, [k]: "nope" }).error);
 });
 test("invalid saved rows give explicit errors, no defaults", () => {

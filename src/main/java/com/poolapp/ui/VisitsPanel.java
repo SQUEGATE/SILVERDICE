@@ -45,6 +45,7 @@ public class VisitsPanel extends JPanel {
     private final JSlider ph = slider(VisitRecord.PH_VALUES);
     private final JSlider chlo = slider(VisitRecord.CHLO_VALUES);
     private final JSlider stb = slider(VisitRecord.STB_VALUES);
+    private final JSlider salt = saltSlider();
     private final JTextField alk = wholeNumberField();
     private final JTextField cal = wholeNumberField();
     private final JTextArea notes = new JTextArea(5, 30);
@@ -161,6 +162,7 @@ public class VisitsPanel extends JPanel {
         addSlider(form, "PH", ph, VisitRecord.PH_VALUES, null);
         addSlider(form, "CHLO", chlo, VisitRecord.CHLO_VALUES, null);
         addSlider(form, "STB", stb, VisitRecord.STB_VALUES, "50-100");
+        addSlider(form, "SALT", salt, SALT_CHOICES, null);
         form.add(numberRow("ALK", alk, "70-120"));
         form.add(numberRow("CAL", cal, "250-500"));
         form.add(new JLabel("Notes:"));
@@ -320,6 +322,7 @@ public class VisitsPanel extends JPanel {
         ph.setValue(VisitRecord.PH_VALUES.indexOf(visit == null ? "7.4" : visit.ph()));
         chlo.setValue(VisitRecord.CHLO_VALUES.indexOf(visit == null ? "3-6" : visit.chlo()));
         stb.setValue(VisitRecord.STB_VALUES.indexOf(visit == null ? "50" : visit.stb()));
+        salt.setValue(visit == null || visit.salt() == null ? 0 : VisitRecord.SALT_VALUES.indexOf(visit.salt()) + 1);
         alk.setText(visit == null || visit.alk() == null ? "" : String.valueOf(visit.alk()));
         cal.setText(visit == null || visit.cal() == null ? "" : String.valueOf(visit.cal()));
         notes.setText(visit == null ? "" : visit.notes());
@@ -378,7 +381,8 @@ public class VisitsPanel extends JPanel {
                     VisitRecord.PH_VALUES.get(ph.getValue()), VisitRecord.CHLO_VALUES.get(chlo.getValue()),
                     VisitRecord.STB_VALUES.get(stb.getValue()),
                     VisitRecord.optionalWholeNumber(alk.getText(), "ALK"),
-                    VisitRecord.optionalWholeNumber(cal.getText(), "CAL"), notes.getText(), photoData);
+                    VisitRecord.optionalWholeNumber(cal.getText(), "CAL"), notes.getText(), photoData,
+                    salt.getValue() == 0 ? null : VisitRecord.SALT_VALUES.get(salt.getValue() - 1));
             int offset = existing == null ? 0 : visitOffset;
             background("Saving visit...", () -> {
                 VisitRecord saved = database.saveVisit(draft);
@@ -453,6 +457,51 @@ public class VisitsPanel extends JPanel {
 
     private void updateTime() {
         currentTime.setText("Current date and time: " + TIME.format(Instant.now()));
+    }
+
+    static final List<String> SALT_CHOICES = saltChoices();
+    private static final String[] SALT_PALETTE = {"#e0f2fe", "#7dd3fc", "#38bdf8", "#0284c7", "#1e3a8a"};
+
+    private static List<String> saltChoices() {
+        List<String> choices = new ArrayList<>();
+        choices.add("Not recorded");
+        for (Integer value : VisitRecord.SALT_VALUES) choices.add(String.valueOf(value));
+        return List.copyOf(choices);
+    }
+
+    // SALT has 25 stops, so it shows only the selected value in its heading instead of per-stop labels.
+    private static JSlider saltSlider() {
+        JSlider slider = new JSlider(0, SALT_CHOICES.size() - 1, 0);
+        slider.setMajorTickSpacing(1);
+        slider.setSnapToTicks(true);
+        slider.setPaintTicks(true);
+        slider.setPaintLabels(false);
+        slider.setUI(new javax.swing.plaf.basic.BasicSliderUI(slider) {
+            @Override public void paintTrack(Graphics graphics) {
+                Graphics2D g = (Graphics2D) graphics.create();
+                try {
+                    int start = xPositionForValue(slider.getMinimum());
+                    int end = xPositionForValue(slider.getMaximum());
+                    float[] stops = new float[SALT_PALETTE.length];
+                    Color[] colors = new Color[SALT_PALETTE.length];
+                    for (int i = 0; i < SALT_PALETTE.length; i++) {
+                        stops[i] = (float) i / (SALT_PALETTE.length - 1);
+                        colors[i] = Color.decode(SALT_PALETTE[i]);
+                    }
+                    if (end > start) {
+                        int y = trackRect.y + (trackRect.height - 14) / 2;
+                        g.setPaint(new LinearGradientPaint(start, y, end, y, stops, colors));
+                        g.fillRoundRect(start, y, end - start, 14, 10, 10);
+                        g.setColor(new Color(0x475569));
+                        g.drawRoundRect(start, y, end - start, 14, 10, 10);
+                    }
+                } finally {
+                    g.dispose();
+                }
+            }
+        });
+        slider.setPreferredSize(new Dimension(480, 40));
+        return slider;
     }
 
     private static JSlider slider(List<String> values) {

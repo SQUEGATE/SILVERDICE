@@ -51,6 +51,13 @@ http.createServer(async (req, res) => {
   }
   if (!acct) return send(res, 401, { error: "Unauthorized" });
   const ok = acct.role !== "EMPLOYEE" || acct.permissions.canAccessVisits;
+  const single = u.pathname.match(/^\/v1\/visits\/(\d+)$/);
+  if (single && req.method === "GET") {
+    log.push("GET " + u.pathname);
+    if (!ok) return send(res, 403, { error: "Forbidden" });
+    const row = Object.values(visits).flat().find((v) => String(v.visit_id) === single[1]);
+    return row ? send(res, 200, withPhoto(row)) : send(res, 404, { error: "Visit not found" });
+  }
   const m = u.pathname.match(/^\/v1\/customers(?:\/(\d+))?(?:\/visits(?:\/(\d+))?)?$/);
   if (!m) return send(res, 404, { error: "Not found" });
   const [, cid, vid] = m;
@@ -73,13 +80,13 @@ http.createServer(async (req, res) => {
   if (!PH.includes(b.ph) || !CH.includes(b.chlo) || !ST.includes(b.stb) || !optInt(b.alk) || !optInt(b.cal) || !photoOk(b.photo_data) || typeof b.notes !== "string" || b.notes.length > 16000) return send(res, 400, { error: "Invalid visit" });
   await new Promise((r) => setTimeout(r, 300));
   if (req.method === "POST") {
-    const row = { visit_id: nextId++, customer_id: Number(cid), visited_at: new Date().toISOString(), ph: b.ph, chlo: b.chlo, stb: b.stb, alk: b.alk ?? null, cal: b.cal ?? null, notes: b.notes, photo_data: b.photo_data || "" };
+    const row = { visit_id: nextId++, customer_id: Number(cid), visited_at: new Date().toISOString(), ph: b.ph, chlo: b.chlo, stb: b.stb, salt: b.salt ?? null, alk: b.alk ?? null, cal: b.cal ?? null, notes: b.notes, photo_data: b.photo_data || "" };
     visits[cid].push(row); return send(res, 200, withPhoto(row));
   }
   if (req.method === "PUT") {
     const row = visits[cid].find((v) => String(v.visit_id) === vid);
     if (!row) return send(res, 404, { error: "Visit not found" });
-    Object.assign(row, { ph: b.ph, chlo: b.chlo, stb: b.stb, alk: b.alk ?? null, cal: b.cal ?? null, notes: b.notes, photo_data: b.photo_data || "" });
+    Object.assign(row, { ph: b.ph, chlo: b.chlo, stb: b.stb, ...(b.salt === undefined ? {} : { salt: b.salt }), alk: b.alk ?? null, cal: b.cal ?? null, notes: b.notes, photo_data: b.photo_data || "" });
     return send(res, 200, withPhoto(row));
   }
   send(res, 405, { error: "Method" });

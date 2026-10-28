@@ -980,7 +980,9 @@ function vEmployee(){
 
 /* ---------- visits ---------- */
 var V_PH=["7.0","7.2","7.4","7.6","7.8","8.0"],V_CHLO=["1-2","2-4","3-6","5-10","7.5-15","10-20"],V_STB=["100","90","80","70","60","50","40","30"];
-var V_COLORS={ph:["#e6a079","#ef866e","#df645e","#d9576b","#cf4778","#c83f80"],chlo:["#d9a09b","#e88898","#df536e","#ee4275","#e82d73","#ec1b70"]};
+var V_SALT_NONE="Not recorded",V_SALT=[V_SALT_NONE,"420","510","600","700","800","920","1040","1180","1320","1470","1630","1800","1990","2180","2390","2610","2840","3080","3350","3630","3920","4240","4580","4950"];
+var V_COLORS={ph:["#e6a079","#ef866e","#df645e","#d9576b","#cf4778","#c83f80"],chlo:["#d9a09b","#e88898","#df536e","#ee4275","#e82d73","#ec1b70"],salt:["#e0f2fe","#7dd3fc","#38bdf8","#0284c7","#1e3a8a"]};
+function visitSaltError(v){return v==null||V_SALT.indexOf(String(v))>0?"":"Choose a valid SALT reading."}
 var V_MAX_INT=2147483647,V_MAX_NOTES=16000,V_MAX_PHOTO=600000,V_PHOTO_DIM=1280;
 var V_PHOTO_RE=/^data:image\/(png|jpeg);base64,[A-Za-z0-9+\/]+={0,2}$/;
 function visitPhotoError(s){
@@ -1021,7 +1023,8 @@ function visitValidate(f){
   var n=String(f.notes==null?"":f.notes);
   if(n.length>V_MAX_NOTES)return {error:"Notes must be "+V_MAX_NOTES+" characters or fewer."};
   if(V_PH.indexOf(f.ph)<0||V_CHLO.indexOf(f.chlo)<0||V_STB.indexOf(f.stb)<0)return {error:"Choose a valid PH, CHLO and STB."};
-  return {body:{ph:f.ph,chlo:f.chlo,stb:f.stb,alk:a.value,cal:c.value,notes:n,photo_data:f.photo_data||""}};
+  var salt=f.salt==null||f.salt===V_SALT_NONE?null:Number(f.salt);if(visitSaltError(salt))return {error:visitSaltError(salt)};
+  return {body:{ph:f.ph,chlo:f.chlo,stb:f.stb,salt:salt,alk:a.value,cal:c.value,notes:n,photo_data:f.photo_data||""}};
 }
 var V_DEFAULT={ph:"7.4",chlo:"3-6",stb:"50"};
 function visitRowError(v){
@@ -1029,6 +1032,7 @@ function visitRowError(v){
   if(V_PH.indexOf(v.ph)<0)return "Saved visit has an invalid PH reading ("+v.ph+").";
   if(V_CHLO.indexOf(v.chlo)<0)return "Saved visit has an invalid CHLO reading ("+v.chlo+").";
   if(V_STB.indexOf(v.stb)<0)return "Saved visit has an invalid STB reading ("+v.stb+").";
+  if(visitSaltError(v.salt))return "Saved visit has an invalid SALT reading ("+v.salt+").";
   var a=visitInt(v.alk,"Saved ALK",true);if(a.error)return a.error;
   var c=visitInt(v.cal,"Saved CAL",true);if(c.error)return c.error;
   var pe=visitPhotoError(v.photo_data);if(pe)return "Saved visit photo is invalid. "+pe;
@@ -1058,23 +1062,24 @@ function visitStamp(iso){var d=new Date(iso);if(isNaN(d))return String(iso||"");
 async function vVisits(){
   return vCustomers();
 }
-function visitSlider(key,label,choices){
+function visitSlider(key,label,choices,noChoiceButtons){
   var colors=V_COLORS[key],scale=colors?' style="--chemistry-scale:linear-gradient(to right,'+colors.map(function(c,i){return c+" "+(i*100/(colors.length-1))+"%"}).join(",")+')"':"";
   return '<div class="vs'+(colors?' chemistry':'')+'"'+scale+'><div class="vh"><label class="vl" for="v_'+key+'" style="margin:0;color:inherit;font-size:1rem">'+label+'</label><output class="vo" id="vo_'+key+'" for="v_'+key+'"></output></div>'+
    '<input type="range" id="v_'+key+'" min="0" max="'+(choices.length-1)+'" step="1" value="0">'+
-   '<div class="vt">'+choices.map(function(c,i){return '<button type="button" data-k="'+key+'" data-i="'+i+'"'+(colors?' style="--swatch:'+colors[i]+'"':"")+'>'+esc(c)+'</button>'}).join("")+'</div></div>';
+   (noChoiceButtons?"":'<div class="vt">'+choices.map(function(c,i){return '<button type="button" data-k="'+key+'" data-i="'+i+'"'+(colors?' style="--swatch:'+colors[i]+'"':"")+'>'+esc(c)+'</button>'}).join("")+'</div>')+'</div>';
 }
 async function vVisit(){
   var nav=S.nav,id=S.arg,path="/v1/customers/"+encodeURIComponent(id)+"/visits",offset=0,pageSeq=0;
   var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api(pagePath(path,0,"&summary=1"))]);
   if(nav!==S.nav)return;
   var cust=res[0],visits=visitSort(Array.isArray(res[1])?res[1]:res[1].rows),total=Array.isArray(res[1])?visits.length:res[1].total,sel="",saving=false,photo="",reading=false,readTok=0;
-  var SL={ph:V_PH,chlo:V_CHLO,stb:V_STB};
+  var SL={ph:V_PH,chlo:V_CHLO,stb:V_STB,salt:V_SALT};
   app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc((cust.first_name+" "+cust.last_name).trim()||("Customer #"+id))+'</h2><div class="s">#'+esc(cust.customer_id||id)+'</div>'+
    '<label>Current date and time</label><div class="vnow" id="vnow"></div>'+
    '<label for="vsel">Past visits</label><select id="vsel"></select><div id="visit-records"></div><div class="s" id="vsaved" style="margin-top:6px"></div>'+
    visitSlider("ph","PH",V_PH)+visitSlider("chlo","CHLO",V_CHLO)+
    visitSlider("stb",'STB <span class="vrec">(recommended 50-100)</span>',V_STB)+
+   visitSlider("salt",'SALT <span class="vrec">(optional)</span>',V_SALT,true)+
    '<div class="row"><div><label for="v_alk">ALK <span class="vrec">(optional, recommended 70-120)</span></label><input id="v_alk" inputmode="numeric" autocomplete="off"></div>'+
    '<div><label for="v_cal">CAL <span class="vrec">(optional, recommended 250-500)</span></label><input id="v_cal" inputmode="numeric" autocomplete="off"></div></div>'+
    '<label for="v_notes">Notes</label><textarea id="v_notes" rows="5" maxlength="'+V_MAX_NOTES+'"></textarea>'+
@@ -1100,15 +1105,15 @@ async function vVisit(){
   }
   function pick(k,val){setSlider(k,SL[k].indexOf(String(val)))}
   function fill(v){
-    var d=v||V_DEFAULT;pick("ph",d.ph);pick("chlo",d.chlo);pick("stb",d.stb);
+    var d=v||V_DEFAULT;pick("ph",d.ph);pick("chlo",d.chlo);pick("stb",d.stb);pick("salt",v&&v.salt!=null?v.salt:V_SALT_NONE);
     $("v_alk").value=v&&v.alk!=null?v.alk:"";$("v_cal").value=v&&v.cal!=null?v.cal:"";photo=v&&v.photo_data?v.photo_data:"";$("vpmsg").textContent="";showPhoto();$("v_notes").value=v?(v.notes||""):"";
     $("vsaved").textContent=v?"Originally saved: "+visitStamp(v.visited_at):"New visit: the date and time are recorded when you save.";
   }
   function opts(){
     $("vsel").innerHTML='<option value="">New Visit</option>'+visits.map(function(v){return '<option value="'+esc(v.visit_id)+'">'+esc(visitStamp(v.visited_at))+'</option>'}).join("");
     $("vsel").value=sel;
-    $("visit-records").innerHTML=visits.length?recordTable(["Date / Time","PH","CHLO","STB","ALK","CAL","Notes","Actions"],visits.map(function(v){
-      return '<tr><td class="record-date">'+esc(visitStamp(v.visited_at))+'</td><td>'+esc(v.ph)+'</td><td>'+esc(v.chlo)+'</td><td>'+esc(v.stb)+'</td><td>'+esc(v.alk==null?"":v.alk)+'</td><td>'+esc(v.cal==null?"":v.cal)+'</td><td>'+esc(v.notes)+'</td><td><button class="b alt" data-visit="'+esc(v.visit_id)+'">View / Edit</button></td></tr>';
+    $("visit-records").innerHTML=visits.length?recordTable(["Date / Time","PH","CHLO","STB","SALT","ALK","CAL","Notes","Actions"],visits.map(function(v){
+      return '<tr><td class="record-date">'+esc(visitStamp(v.visited_at))+'</td><td>'+esc(v.ph)+'</td><td>'+esc(v.chlo)+'</td><td>'+esc(v.stb)+'</td><td>'+esc(v.salt==null?"":v.salt)+'</td><td>'+esc(v.alk==null?"":v.alk)+'</td><td>'+esc(v.cal==null?"":v.cal)+'</td><td>'+esc(v.notes)+'</td><td><button class="b alt" data-visit="'+esc(v.visit_id)+'">View / Edit</button></td></tr>';
     }).join(""),"Past visit records"):'<p class="s">No saved visits.</p>';
     $("visit-records").innerHTML+=pager("vi",offset,total);
     bindPager("vi",offset,total,loadPage);
@@ -1152,7 +1157,7 @@ async function vVisit(){
   };
   $("vsv").onclick=async function(){
     if(busy())return;
-    var r=visitValidate({photo_data:photo,ph:V_PH[$("v_ph").value],chlo:V_CHLO[$("v_chlo").value],stb:V_STB[$("v_stb").value],alk:$("v_alk").value,cal:$("v_cal").value,notes:$("v_notes").value});
+    var r=visitValidate({photo_data:photo,ph:V_PH[$("v_ph").value],chlo:V_CHLO[$("v_chlo").value],stb:V_STB[$("v_stb").value],salt:V_SALT[$("v_salt").value],alk:$("v_alk").value,cal:$("v_cal").value,notes:$("v_notes").value});
     if(r.error)return flash("err",r.error);
     saving=true;syncBusy();flash("","");
     var base="/v1/customers/"+encodeURIComponent(id)+"/visits";

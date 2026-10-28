@@ -297,7 +297,7 @@ test("optimization: monthly audit is unioned on restore and survives customer/st
 test("optimization: durable version migrations reuse legacy upgrades and do no DDL on warmed or new isolates", async () => {
   await fixture(async ({ db, call, reload, sqlLog }) => {
     assert.equal((await call("/v1/health")).status, 200);
-    assert.deepEqual(db.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map(row => row.version), [1, 2]);
+    assert.deepEqual(db.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map(row => row.version), [1, 2, 3]);
     assert.ok(db.prepare("PRAGMA table_info(customers)").all().some(column => column.name === "route_order"));
     sqlLog.length = 0;
     await call("/v1/health");
@@ -316,7 +316,7 @@ test("optimization: unrelated migration failure is surfaced, not marked applied,
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n, 0);
     setFailure(() => false);
     assert.equal((await call("/v1/health")).status, 200);
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n, 2);
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n, 3);
   }, { legacy: true });
 });
 

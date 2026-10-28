@@ -872,14 +872,14 @@ async function listVisits(request, env, session, customerId) {
   await findAccessibleCustomer(env, session, customerId);
   const summary = new URL(request.url).searchParams.get("summary") === "1";
   return json(await listResult(request, env,
-    `SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, ${summary ? "(photo_data <> '') AS has_photo" : "photo_data"} FROM customer_visits WHERE company_id = ? AND customer_id = ? ORDER BY visited_at DESC, visit_id DESC`,
+    `SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, salt, notes, ${summary ? "(photo_data <> '') AS has_photo" : "photo_data"} FROM customer_visits WHERE company_id = ? AND customer_id = ? ORDER BY visited_at DESC, visit_id DESC`,
     [requiredCompanyId(session), customerId], summary ? row => ({ ...row, has_photo: Boolean(row.has_photo) }) : row => row), 200, request);
 }
 
 async function getVisit(request, env, session, customerId, visitId) {
   requirePermission(session, "canAccessVisits");
   await findAccessibleCustomer(env, session, customerId);
-  const rows = await turso(env, "SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data FROM customer_visits WHERE company_id = ? AND customer_id = ? AND visit_id = ?",
+  const rows = await turso(env, "SELECT visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, salt, notes, photo_data FROM customer_visits WHERE company_id = ? AND customer_id = ? AND visit_id = ?",
     requiredCompanyId(session), customerId, visitId);
   if (!rows.length) throw httpError(404, "Visit not found");
   return json(rows[0], 200, request);
@@ -890,8 +890,8 @@ async function createVisit(request, env, session, customerId) {
   const visit = validateVisit(await readJson(request, 700 * 1024));
   const companyId = requiredCompanyId(session);
   const rows = await turso(env,
-    "INSERT INTO customer_visits (company_id, visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data) VALUES (?, (SELECT COALESCE(MAX(visit_id), 0) + 1 FROM customer_visits WHERE company_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data",
-    companyId, companyId, customerId, new Date().toISOString(), visit.ph, visit.chlo, visit.stb, visit.alk, visit.cal, visit.notes, visit.photo_data);
+    "INSERT INTO customer_visits (company_id, visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, salt, notes, photo_data) VALUES (?, (SELECT COALESCE(MAX(visit_id), 0) + 1 FROM customer_visits WHERE company_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, salt, notes, photo_data",
+    companyId, companyId, customerId, new Date().toISOString(), visit.ph, visit.chlo, visit.stb, visit.alk, visit.cal, visit.salt ?? null, visit.notes, visit.photo_data);
   if (!rows.length) throw new Error("Turso did not return the new visit");
   return json(rows[0], 201, request);
 }
@@ -903,8 +903,10 @@ async function updateVisit(request, env, session, customerId, visitId) {
   const body = await readJson(request, 700 * 1024);
   const visit = validateVisit(body);
   const rows = await turso(env,
-    "UPDATE customer_visits SET ph = ?, chlo = ?, stb = ?, alk = ?, cal = ?, notes = ?, photo_data = COALESCE(?, photo_data) WHERE company_id = ? AND customer_id = ? AND visit_id = ? RETURNING visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data",
-    visit.ph, visit.chlo, visit.stb, visit.alk, visit.cal, visit.notes,
+    "UPDATE customer_visits SET ph = ?, chlo = ?, stb = ?, alk = ?, cal = ?, salt = CASE WHEN ? = 1 THEN ? ELSE salt END, notes = ?, photo_data = COALESCE(?, photo_data) WHERE company_id = ? AND customer_id = ? AND visit_id = ? RETURNING visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, salt, notes, photo_data",
+    visit.ph, visit.chlo, visit.stb, visit.alk, visit.cal,
+    // Older clients omit salt; keep the stored reading instead of clearing it.
+    visit.salt === undefined ? 0 : 1, visit.salt ?? null, visit.notes,
     body.photo_data === undefined ? null : visit.photo_data,
     requiredCompanyId(session), customerId, visitId);
   if (!rows.length) throw httpError(404, "Visit not found");
@@ -1193,7 +1195,7 @@ async function hashPassword(password) {
 
 const BACKUP_TABLES = {
   customers: ["customer_id", "first_name", "last_name", "address", "city", "state", "zip", "phone", "email", "service_day", "amount_charged", "notes", "starting_date", "status", "route_order"],
-  customer_visits: ["visit_id", "customer_id", "visited_at", "ph", "chlo", "stb", "alk", "cal", "notes", "photo_data"],
+  customer_visits: ["visit_id", "customer_id", "visited_at", "ph", "chlo", "stb", "alk", "cal", "notes", "photo_data", "salt"],
   statement_records: ["record_id", "customer_id", "record_date", "type", "amount"],
   reader_imports: ["document_hash", "source_id", "customer_id", "record_id", "record_date", "amount", "reference", "source_text", "imported_at"],
   monthly_statement_requests: ["request_id", "record_date", "type", "added", "claim"],
@@ -1208,6 +1210,7 @@ const VISIT_ENUMS = {
   chlo: ["1-2", "2-4", "3-6", "5-10", "7.5-15", "10-20"],
   stb: ["100", "90", "80", "70", "60", "50", "40", "30"]
 };
+const VISIT_SALT_VALUES = [420, 510, 600, 700, 800, 920, 1040, 1180, 1320, 1470, 1630, 1800, 1990, 2180, 2390, 2610, 2840, 3080, 3350, 3630, 3920, 4240, 4580, 4950];
 
 function validateVisit(body) {
   for (const [field, values] of Object.entries(VISIT_ENUMS)) {
@@ -1229,7 +1232,14 @@ function validateVisit(body) {
       || (photo && !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(photo))) {
     throw httpError(400, "photo_data must be a PNG or JPEG data URL no longer than 600000 characters, or an empty string");
   }
+  let salt;
+  if (body.salt === null || body.salt === "") salt = null;
+  else if (body.salt !== undefined) {
+    if (!VISIT_SALT_VALUES.includes(body.salt)) throw httpError(400, "salt must be one of the allowed values or null");
+    salt = body.salt;
+  }
   return {
+    salt,
     ph: body.ph, chlo: body.chlo, stb: body.stb,
     alk: typeof body.alk === "number" ? body.alk : null,
     cal: typeof body.cal === "number" ? body.cal : null,
@@ -1362,7 +1372,7 @@ async function restoreCompanyBackup(request, env, companyId) {
     const columns = BACKUP_TABLES[table];
     const sql = `INSERT INTO ${table} (company_id, ${columns.join(", ")}) VALUES (${["?", ...columns.map(() => "?")].join(", ")})`;
     for (const row of backup[table]) {
-      statements.push({ sql, args: [companyId, ...columns.map(column => row[column] ?? (column === "converted_at" || (table === "customer_visits" && ["alk", "cal"].includes(column)) ? null : column === "status" ? "Active" : column.endsWith("amount") || column === "amount_charged" || column === "route_order" ? 0 : ""))] });
+      statements.push({ sql, args: [companyId, ...columns.map(column => row[column] ?? (column === "converted_at" || (table === "customer_visits" && ["alk", "cal", "salt"].includes(column)) ? null : column === "status" ? "Active" : column.endsWith("amount") || column === "amount_charged" || column === "route_order" ? 0 : ""))] });
     }
     const nextId = backup.sales_quotes.reduce((next, row) => Math.max(next, row.quote_id + 1), backup.sales_quote_sequences[0]?.next_id || 1);
     statements.push({ sql: "INSERT INTO sales_quote_sequences (company_id, next_id) VALUES (?, ?) ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)", args: [companyId, nextId] });
@@ -1410,7 +1420,8 @@ async function migrateQuotes(env) {
   await tursoCore(env, "CREATE INDEX IF NOT EXISTS sales_quotes_customer_idx ON sales_quotes(company_id, customer_id, quote_id)");
   await tursoCore(env, "INSERT INTO sales_quote_sequences (company_id, next_id) SELECT company_id, MAX(quote_id) + 1 FROM sales_quotes WHERE 1 GROUP BY company_id ON CONFLICT(company_id) DO UPDATE SET next_id = MAX(next_id, excluded.next_id)");
 }
-const VISITS_TABLE_SQL = "CREATE TABLE IF NOT EXISTS customer_visits (company_id INTEGER NOT NULL, visit_id INTEGER NOT NULL, customer_id TEXT NOT NULL, visited_at TEXT NOT NULL, ph TEXT NOT NULL CHECK (ph IN ('7.0','7.2','7.4','7.6','7.8','8.0')), chlo TEXT NOT NULL CHECK (chlo IN ('1-2','2-4','3-6','5-10','7.5-15','10-20')), stb TEXT NOT NULL CHECK (stb IN ('100','90','80','70','60','50','40','30')), alk INTEGER CHECK (alk IS NULL OR (typeof(alk) = 'integer' AND alk BETWEEN 1 AND 2147483647)), cal INTEGER CHECK (cal IS NULL OR (typeof(cal) = 'integer' AND cal BETWEEN 1 AND 2147483647)), notes TEXT NOT NULL DEFAULT '' CHECK (length(notes) <= 16000), photo_data TEXT NOT NULL DEFAULT '', PRIMARY KEY (company_id, visit_id), FOREIGN KEY (company_id, customer_id) REFERENCES customers(company_id, customer_id) ON DELETE CASCADE)";
+const VISIT_SALT_COLUMN = `salt INTEGER CHECK (salt IS NULL OR salt IN (${VISIT_SALT_VALUES.join(",")}))`;
+const VISITS_TABLE_SQL = "CREATE TABLE IF NOT EXISTS customer_visits (company_id INTEGER NOT NULL, visit_id INTEGER NOT NULL, customer_id TEXT NOT NULL, visited_at TEXT NOT NULL, ph TEXT NOT NULL CHECK (ph IN ('7.0','7.2','7.4','7.6','7.8','8.0')), chlo TEXT NOT NULL CHECK (chlo IN ('1-2','2-4','3-6','5-10','7.5-15','10-20')), stb TEXT NOT NULL CHECK (stb IN ('100','90','80','70','60','50','40','30')), alk INTEGER CHECK (alk IS NULL OR (typeof(alk) = 'integer' AND alk BETWEEN 1 AND 2147483647)), cal INTEGER CHECK (cal IS NULL OR (typeof(cal) = 'integer' AND cal BETWEEN 1 AND 2147483647)), notes TEXT NOT NULL DEFAULT '' CHECK (length(notes) <= 16000), photo_data TEXT NOT NULL DEFAULT '', " + VISIT_SALT_COLUMN + ", PRIMARY KEY (company_id, visit_id), FOREIGN KEY (company_id, customer_id) REFERENCES customers(company_id, customer_id) ON DELETE CASCADE)";
 
 async function migrateVisits(env) {
   await tursoCore(env, VISITS_TABLE_SQL);
@@ -1419,10 +1430,11 @@ async function migrateVisits(env) {
     const indexes = await tursoCore(env, "SELECT sql FROM sqlite_master WHERE type IN ('index', 'trigger') AND tbl_name = 'customer_visits' AND sql IS NOT NULL");
     const names = ["company_id", ...BACKUP_TABLES.customer_visits];
     const photoExists = columns.some(column => column.name === "photo_data");
+    const saltExists = columns.some(column => column.name === "salt");
     await tursoTransaction(env, [
       { sql: VISITS_TABLE_SQL.replace("customer_visits (", "customer_visits_migrating ("), args: [] },
       {
-        sql: `INSERT INTO customer_visits_migrating (${names.join(", ")}) SELECT ${names.map(name => name === "photo_data" && !photoExists ? "''" : name).join(", ")} FROM customer_visits`,
+        sql: `INSERT INTO customer_visits_migrating (${names.join(", ")}) SELECT ${names.map(name => name === "photo_data" && !photoExists ? "''" : name === "salt" && !saltExists ? "NULL" : name).join(", ")} FROM customer_visits`,
         args: []
       },
       { sql: "DROP TABLE customer_visits", args: [] },
@@ -1432,6 +1444,8 @@ async function migrateVisits(env) {
   } else if (columns.length && !columns.some(column => column.name === "photo_data")) {
     await tursoCore(env, "ALTER TABLE customer_visits ADD COLUMN photo_data TEXT NOT NULL DEFAULT ''");
   }
+  const current = await tursoCore(env, "PRAGMA table_info(customer_visits)");
+  if (!current.some(column => column.name === "salt")) await tursoCore(env, `ALTER TABLE customer_visits ADD COLUMN ${VISIT_SALT_COLUMN}`);
   await tursoCore(env, "CREATE INDEX IF NOT EXISTS customer_visits_customer_idx ON customer_visits(company_id, customer_id, visited_at)");
 }
 
@@ -1468,6 +1482,15 @@ async function initializeSchema(env) {
       { sql: MONTHLY_TABLE_SQL, args: [] },
       { sql: "INSERT INTO schema_migrations (version, applied_at) VALUES (2, ?) ON CONFLICT(version) DO NOTHING", args: [new Date().toISOString()] }
     ]);
+  }
+  if (!versions.has(3)) {
+    // Databases that already applied version 1 never ran the SALT column step in migrateVisits.
+    const visitColumns = await tursoCore(env, "PRAGMA table_info(customer_visits)");
+    if (!visitColumns.some(column => column.name === "salt")) {
+      try { await tursoCore(env, `ALTER TABLE customer_visits ADD COLUMN ${VISIT_SALT_COLUMN}`); }
+      catch (error) { if (!error.message.includes("duplicate column name: salt")) throw error; }
+    }
+    await tursoCore(env, "INSERT INTO schema_migrations (version, applied_at) VALUES (3, ?) ON CONFLICT(version) DO NOTHING", new Date().toISOString());
   }
 }
 

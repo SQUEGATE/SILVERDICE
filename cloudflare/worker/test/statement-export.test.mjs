@@ -41,8 +41,9 @@ test("PDF balances handle empty history, negative amounts, and reject unavailabl
   assert.match((await textFrom(createStatementPdf(jsPDF, customer, [{ record_date: "10/31/2026", type: "Payment", amount: -25 }], settings))).join(" "), /Balance: \(\$25\.00\)/);
   assert.throws(() => createStatementPdf(jsPDF, customer, [{ amount: null }], settings), /unavailable/);
   assert.throws(() => createStatementPdf(jsPDF, customer, [{ amount: "bad" }], settings), /unavailable/);
-  assert.notEqual(statementFilename(customer, 0), statementFilename(customer, 1));
-  assert.ok(!statementFilename({ ...customer, last_name: "../Example" }, 0).includes("/"));
+  assert.equal(statementFilename(customer), "EXAMPLE_AVERY_POOL_STATEMENT.pdf");
+  assert.equal(statementFilename({ ...customer, first_name: " Avery ", last_name: " Example " }), "EXAMPLE_AVERY_POOL_STATEMENT.pdf");
+  assert.ok(!statementFilename({ ...customer, last_name: "../Example" }).includes("/"));
 });
 
 test("batch folder writes actual PDFs, continues after failure, and downloads separately without folder access", async () => {
@@ -61,13 +62,14 @@ test("batch folder writes actual PDFs, continues after failure, and downloads se
     assert.equal(result.failures.length, 1);
     assert.match(result.failures[0].error, /Synthetic read failure/);
     assert.deepEqual(progress, [1, 2, 3]);
+    assert.deepEqual([...written.keys()], ["EXAMPLE_AVERY_POOL_STATEMENT.pdf", "EXAMPLE_AVERY_POOL_STATEMENT_3.pdf"]);
     for (const blob of written.values()) assert.match((await textFrom(blob)).join(" "), /Balance: \$55\.00/);
     const downloads = [];
     const downloaded = await exportStatements({ customers: [customer], getRecords, settings, folder: null, progress: () => {},
       download: (blob, filename) => downloads.push({ blob, filename }) });
     assert.equal(downloaded.saved, 1);
     assert.equal(downloads.length, 1);
-    assert.equal(downloads[0].filename, statementFilename(customer, 0));
+    assert.equal(downloads[0].filename, "EXAMPLE_AVERY_POOL_STATEMENT.pdf");
     assert.match((await textFrom(downloads[0].blob)).join(" "), /Balance: \$55\.00/);
   } finally {
     globalThis.document = oldDocument; globalThis.window = oldWindow;

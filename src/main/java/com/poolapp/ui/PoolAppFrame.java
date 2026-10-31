@@ -3601,13 +3601,17 @@ public class PoolAppFrame extends JFrame {
             java.nio.file.Path folder = java.nio.file.Files.createTempDirectory(parent.toPath(),
                     "Monthly_Statements_" + LocalDate.now() + "_");
             List<String> failures = new ArrayList<>();
+            java.util.Set<String> filenames = new java.util.HashSet<>();
             int saved = 0;
             for (int i = 0; i < customers.size(); i++) {
                 Customer customer = customers.get(i);
                 final int progress = i + 1;
                 SwingUtilities.invokeLater(() -> exportStatus.setText("Generating PDF " + progress + " of " + customers.size() + "..."));
-                File output = folder.resolve(String.format(Locale.US, "%04d_", i + 1)
-                        + buildStatementFileName(customer) + ".pdf").toFile();
+                String base = buildStatementFileName(customer);
+                String filename = base + ".pdf";
+                int duplicate = 2;
+                while (!filenames.add(filename)) filename = base + "_" + duplicate++ + ".pdf";
+                File output = folder.resolve(filename).toFile();
                 try {
                     createStatementPDF(customer, dbManager.getStatementRecords(customer.getId()), output, saved == 0);
                     saved++;

@@ -21,10 +21,10 @@ function amount(value) {
   const text = "$" + Math.abs(Number(value)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return Number(value) < 0 ? "(" + text + ")" : text;
 }
-export function statementFilename(customer, index) {
-  const name = [customer.last_name, customer.first_name, "POOL_STATEMENT", customer.customer_id]
-    .filter(Boolean).join("_").toUpperCase().replace(/[^A-Z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
-  return String(index + 1).padStart(4, "0") + "_" + name + ".pdf";
+export function statementFilename(customer) {
+  const last = String(customer.last_name || "").trim(), first = String(customer.first_name || "").trim();
+  const name = (last && first ? last + "_" + first : (first + " " + last).trim()) + "_POOL_STATEMENT";
+  return name.toUpperCase().replace(/[^A-Z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "") + ".pdf";
 }
 export function createStatementPdf(JsPDF, customer, records, settings, companyName) {
   const doc = new JsPDF({ unit: "pt", format: settings.pageSize === "A4" ? "a4" : "letter",
@@ -104,9 +104,13 @@ export function createStatementPdf(JsPDF, customer, records, settings, companyNa
 export async function exportStatements({ customers, getRecords, settings, companyName, folder, download, progress }) {
   const JsPDF = await loadStatementExporter();
   const failures = [];
+  const filenames = new Set();
   let saved = 0;
   for (const [index, customer] of customers.entries()) {
-    const filename = statementFilename(customer, index);
+    const base = statementFilename(customer).slice(0, -4);
+    let filename = base + ".pdf", duplicate = 2;
+    while (filenames.has(filename)) filename = base + "_" + duplicate++ + ".pdf";
+    filenames.add(filename);
     progress(index + 1, customers.length, customer);
     try {
       const records = await getRecords(customer);

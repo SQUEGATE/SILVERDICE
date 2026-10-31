@@ -12,6 +12,8 @@ Statement PDF generation, email attachments, and SMS delivery run in the backgro
 
 Statement PDFs (desktop and web) show `Balance: $...` directly below the STATEMENT title, using the complete customer statement balance. Negative balances use parentheses, matching the existing Total formatting.
 
+Monthly Statement can automatically generate a separate PDF for every accessible active customer after billing is confirmed. Desktop offers **Apply and save PDFs**, **Apply only**, and **Save PDFs only**; select a destination folder and files go into a new batch subfolder. Web defaults to exporting after billing and offers **Save PDFs only (no billing)** for retries. Compatible browsers use a chosen folder; other browsers request separate downloads and keep individual download links on the monthly screen (allow multiple downloads and check the device's Downloads/Files app). Export failures do not undo billing or trigger another billing request. PDFs contain the complete history and current balance, not just the new monthly charge. Unique batch folders and numbered filenames prevent overwriting existing files or customers with identical names.
+
 Statement Reader can match complete first and last names anywhere in the same transaction record, in either order with intervening words. Ambiguous customer matches stay unselected for review. Incoming Zelle/Zel, date, amount and duplicate checks still apply.
 
 ### Expenses (desktop and web)

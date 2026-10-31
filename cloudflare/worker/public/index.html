@@ -243,13 +243,14 @@ $("menuBtn").onclick=function(){$("drawer").classList.toggle("open")};
 $("logout").onclick=function(){signOut()};
 
 function clearTimers(){(S.timers||[]).forEach(function(t){clearInterval(t)});S.timers=[]}
-function signOut(){clearTimers();cancelReads();S.nav=(S.nav||0)+1;S.token="";S.account=null;S.kw=null;S.master=false;localStorage.removeItem("cm.token");localStorage.removeItem("cm.account");localStorage.removeItem("cm.master");renderChrome();showLogin()}
+function signOut(){clearMonthlyPdfLinks();clearTimers();cancelReads();S.nav=(S.nav||0)+1;S.token="";S.account=null;S.kw=null;S.master=false;localStorage.removeItem("cm.token");localStorage.removeItem("cm.account");localStorage.removeItem("cm.master");renderChrome();showLogin()}
 function backToMaster(){
   var m=JSON.parse(localStorage.getItem("cm.master")||"null");if(!m)return signOut();
   S.token=m.token;S.account=m.account;S.master=true;S.kw=null;localStorage.setItem("cm.token",S.token);localStorage.setItem("cm.account",JSON.stringify(S.account));
   renderChrome();go("companies");
 }
 function go(view,arg){
+  clearMonthlyPdfLinks();
   clearTimers();cancelReads();S.nav=(S.nav||0)+1;var nav=S.nav;
   if(view==="reader"&&!can("canAccessStatementReader")){
     S.view="";S.arg=null;app.innerHTML='<div class="err">Statement Reader access is not permitted.</div>';return;
@@ -855,12 +856,58 @@ function printQuote(c,q,st){
   setTimeout(restore,60000);
 }
 /* ---------- monthly statement ---------- */
+function clearMonthlyPdfLinks(){(S.monthlyPdfUrls||[]).forEach(function(url){URL.revokeObjectURL(url)});S.monthlyPdfUrls=[]}
+async function monthlyPdfFolder(){
+  if(typeof window.showDirectoryPicker!=="function")return null;
+  var parent=await window.showDirectoryPicker({mode:"readwrite"});
+  return parent.getDirectoryHandle("Monthly_Statements_"+new Date().toISOString().replace(/[:.]/g,"-")+"_"+crypto.randomUUID().slice(0,8),{create:true});
+}
+async function saveMonthlyPdfs(folder,nav){
+  if(!can("canViewStatements"))throw new Error("Statement viewing permission is required to export PDFs.");
+  if(!can("canViewPdf")&&!can("canAccessSalesQuote"))throw new Error("PDF viewing permission is required to load statement PDF settings.");
+  var module=await import("/statement-export.mjs");
+  var data=await Promise.all([allCustomers(),api("/v1/settings")]);
+  if(nav!==S.nav)throw new Error("PDF export cancelled because the view changed. Billing is not undone.");
+  var customers=data[0].filter(function(c){return c.status!=="Inactive"}).sort(function(a,b){return String(a.customer_id).localeCompare(String(b.customer_id),undefined,{numeric:true})});
+  if(!customers.length)throw new Error("No accessible active customers to export.");
+  clearMonthlyPdfLinks();$("mpfiles").innerHTML="";
+  var result=await module.exportStatements({customers:customers,settings:data[1],companyName:S.account.companyName,folder:folder,
+    getRecords:async function(c){
+      if(nav!==S.nav)throw new Error("View changed; PDF not generated.");
+      var records=await api("/v1/customers/"+encodeURIComponent(c.customer_id)+"/statements");
+      if(nav!==S.nav)throw new Error("View changed; PDF not generated.");
+      if(!Array.isArray(records))throw new Error("Complete statement history is unavailable.");
+      return records.slice().sort(cmpRecords).reverse();
+    },
+    progress:function(n,total,c){if(nav===S.nav)$("mpstatus").textContent="Generating PDF "+n+" of "+total+" ("+c.first_name+" "+c.last_name+")..."},
+    download:function(blob,filename){
+      var link=document.createElement("a"),url=URL.createObjectURL(blob);link.href=url;link.download=filename;link.textContent=filename;link.style.display="block";link.style.overflowWrap="anywhere";
+      S.monthlyPdfUrls.push(url);
+      $("mpfiles").appendChild(link);link.click();
+    }});
+  if(nav===S.nav){
+    $("mpstatus").textContent=folder?"Saved "+result.saved+" of "+result.total+" PDFs in "+folder.name+".":"Generated "+result.saved+" of "+result.total+" PDFs and requested separate downloads. Check your Downloads/Files app; if your browser blocked any, use the links below.";
+    if(result.failures.length)throw new Error(result.failures.length+" PDF(s) failed: "+result.failures.map(function(f){return f.customer+": "+f.error}).join("; ")+". Retry using Save PDFs only; do NOT apply billing again.");
+  }
+  return result;
+}
 async function vMonthly(){
   var nav=S.nav;await loadKw();if(nav!==S.nav)return;
+  var allowPdfs=can("canViewStatements")&&(can("canViewPdf")||can("canAccessSalesQuote"));
   var types=(await api("/v1/record-types")).filter(isCredit);
   if(nav!==S.nav)return;
   app.innerHTML='<div id="flash"></div><div class="card"><h2>Monthly Statement</h2><p class="s">Atomically adds one record for every accessible active customer using their current amount charged. The posting date defaults to the last day of this month. Unconfirmed requests are saved on this device for same-request manual retry; nothing retries automatically.</p>'+
-   (types.length?'<label>Credit type</label><select id="mt">'+types.map(function(t){return "<option>"+esc(t)+"</option>"}).join("")+'</select><label for="md">Posting date</label><input id="md"><button class="b ok" id="go" style="margin-top:12px">Apply to active customers</button>':'<p class="neg">No credit record types exist. Add one under Record Types first.</p>')+'</div>';
+   (types.length?'<label>Credit type</label><select id="mt">'+types.map(function(t){return "<option>"+esc(t)+"</option>"}).join("")+'</select><label for="md">Posting date</label><input id="md"><div class="chk"><input type="checkbox" id="mpauto"'+(allowPdfs?' checked':' disabled')+'><span>After billing, save a statement PDF for every accessible active customer</span></div><button class="b ok" id="go" style="margin-top:12px">Apply to active customers</button>':'<p class="neg">No credit record types exist. Add one under Record Types first.</p>')+
+   '<button class="b alt" id="mpexport" style="margin-top:12px"'+(allowPdfs?'':' disabled')+'>Save PDFs only (no billing)</button>'+(allowPdfs?'':'<p class="neg">PDF export requires statement viewing and PDF viewing permission.</p>')+'<p class="s">PDFs include complete statement history and the updated balance. On supported browsers, choose a folder (a new batch subfolder is created). Other devices download separate PDFs; allow multiple downloads and use the links if needed.</p><p id="mpstatus" role="status"></p><div id="mpfiles"></div></div>';
+  var pdfBusy=false;
+  $("mpexport").onclick=async function(){
+    if(!allowPdfs)return flash("err","PDF export is not permitted for this account.");
+    if(pdfBusy||($("go")&&$("go").disabled))return;
+    pdfBusy=true;this.disabled=true;if($("go"))$("go").disabled=true;
+    try{var folder=await monthlyPdfFolder();await saveMonthlyPdfs(folder,nav)}
+    catch(e){if(nav===S.nav)flash("err",e.name==="AbortError"?"Folder selection cancelled. No billing was performed.":e.message)}
+    finally{pdfBusy=false;if(nav===S.nav){$("mpexport").disabled=false;if($("go"))$("go").disabled=false}}
+  };
   if(!$("go"))return;
   var now=new Date(),request=null,busy=false,completed=false;dateInput($("md"));$("md").value=fmtDate(new Date(now.getFullYear(),now.getMonth()+1,0));
   function pendingKey(){return "cm.monthly.pending."+JSON.stringify([S.account.companyId||0,S.account.username||"",S.account.role,$("md").value,$("mt").value])}
@@ -882,10 +929,20 @@ async function vMonthly(){
     if(!confirm((request?"Retry the SAME billing request? ":completed?"Create ANOTHER billing request? This intentionally bills customers again. ":"")+"Add a "+type+" record dated "+date+" to accessible active customers?"))return;
     if(!request)request={request_id:crypto.randomUUID(),date:date,type:type};
     pending(request);
-    busy=true;$("go").disabled=true;$("mt").disabled=true;$("md").disabled=true;
-    try{var result=await api("/v1/statements/monthly",{method:"POST",body:{request_id:request.request_id,date:request.date,type:request.type}});pending(null);request=null;completed=true;flash("msg","Added "+result.added+" records. Confirmed complete. Applying again creates a new billing request.")}
+    busy=true;$("go").disabled=true;$("mt").disabled=true;$("md").disabled=true;$("mpexport").disabled=true;
+    var folder=null,exportPdfs=allowPdfs&&$("mpauto").checked;
+    try{
+      if(exportPdfs){
+        try{folder=await monthlyPdfFolder()}catch(e){if(nav===S.nav)flash("err",e.name==="AbortError"?"Folder selection cancelled. No statements were applied.":e.message);return}
+      }
+      var result=await api("/v1/statements/monthly",{method:"POST",body:{request_id:request.request_id,date:request.date,type:request.type}});pending(null);request=null;completed=true;flash("msg","Added "+result.added+" records. Confirmed complete. Applying again creates a new billing request.");
+      if(exportPdfs&&nav===S.nav){
+        try{await saveMonthlyPdfs(folder,nav)}
+        catch(e){if(nav===S.nav)flash("err","Billing completed successfully, but PDF export needs attention: "+e.message+" Use Save PDFs only to retry without billing again.")}
+      }
+    }
     catch(e){if(nav===S.nav)flash("err",e.message+" Retry manually with the same request; do not change the date or type.")}
-    finally{busy=false;if(nav===S.nav){$("go").disabled=false;$("go").textContent=request?"Retry same billing request":completed?"Apply again (new request)":"Apply to active customers";$("mt").disabled=false;$("md").disabled=false}}
+    finally{busy=false;if(nav===S.nav){$("go").disabled=false;$("go").textContent=request?"Retry same billing request":completed?"Apply again (new request)":"Apply to active customers";$("mt").disabled=false;$("md").disabled=false;$("mpexport").disabled=!allowPdfs}}
   };
 }
 

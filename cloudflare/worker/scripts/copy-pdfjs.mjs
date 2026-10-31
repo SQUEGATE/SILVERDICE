@@ -14,3 +14,15 @@ for (const [from, to] of [
   await copyFile(join(source, from), join(target, to));
 }
 console.log("Copied PDF.js local parser, worker, and Apache-2.0 license.");
+const exportTarget = join(root, "public", "vendor", "pdf-export");
+await mkdir(exportTarget, { recursive: true });
+for (const [packageName, files] of [
+  ["jspdf", ["dist/jspdf.umd.min.js", "LICENSE"]],
+  ["jspdf-autotable", ["dist/jspdf.plugin.autotable.min.js", "LICENSE.txt"]],
+]) {
+  for (const file of files) {
+    await copyFile(join(root, "node_modules", packageName, file),
+      join(exportTarget, file.startsWith("LICENSE") ? packageName + "-LICENSE" : file.split("/").pop()));
+  }
+}
+console.log("Copied local statement PDF generation libraries and licenses.");

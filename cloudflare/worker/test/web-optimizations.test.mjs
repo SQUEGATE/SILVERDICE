@@ -111,6 +111,55 @@ test("monthly batch blocks double-click, persists uncertain UUID across reopen a
   assert.equal(requests[3].date, "11/30/2026");
 });
 
+test("monthly PDF export runs only after confirmed billing and export retry never posts billing", async () => {
+  const { c, el } = fixture();
+  c.loadKw = async () => {};
+  c.isCredit = () => true;
+  let posts = 0, exports = 0;
+  c.monthlyPdfFolder = async () => null;
+  c.saveMonthlyPdfs = async () => { exports++; throw new Error("Synthetic download failure"); };
+  c.api = async path => {
+    if (path === "/v1/record-types") return ["Service"];
+    assert.equal(path, "/v1/statements/monthly"); posts++;
+    if (posts === 1) throw new Error("Billing not confirmed");
+    return { added: 64 };
+  };
+  await c.vMonthly(); el("mt").value = "Service"; el("mpauto").checked = true;
+  await el("go").onclick();
+  assert.equal(exports, 0);
+  await el("go").onclick();
+  assert.equal(exports, 1);
+  assert.equal(el("go").textContent, "Apply again (new request)");
+  assert.match(el("flash").innerHTML, /Billing completed successfully/);
+  await el("mpexport").onclick();
+  assert.equal(exports, 2);
+  assert.equal(posts, 2);
+  c.monthlyPdfFolder = async () => { const error = new Error("Cancelled"); error.name = "AbortError"; throw error; };
+  await el("go").onclick();
+  assert.equal(posts, 2);
+  assert.match(el("flash").innerHTML, /No statements were applied/);
+});
+
+test("monthly billing stays available without PDF permission and PDF export is explicitly denied", async () => {
+  const { c, el } = fixture();
+  c.S.account = { role: "EMPLOYEE", companyId: 1, permissions: { canEditStatements: true, canViewStatements: true } };
+  c.loadKw = async () => {}; c.isCredit = () => true;
+  let posts = 0;
+  c.api = async path => {
+    if (path === "/v1/record-types") return ["Service"];
+    assert.equal(path, "/v1/statements/monthly"); posts++; return { added: 1 };
+  };
+  await c.vMonthly();
+  assert.match(el("app").innerHTML, /id="mpauto" disabled/);
+  await el("mpexport").onclick();
+  assert.match(el("flash").innerHTML, /not permitted/);
+  el("mt").value = "Service";
+  el("mpauto").checked = true;
+  await el("go").onclick();
+  assert.equal(posts, 1);
+  assert.equal(el("mpexport").disabled, true);
+});
+
 test("charged summary uses scoped bulk balances and never silently substitutes zero", async () => {
   const { c, el } = fixture();
   const paths = [];

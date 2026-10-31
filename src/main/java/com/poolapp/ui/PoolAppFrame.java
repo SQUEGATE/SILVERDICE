@@ -2660,7 +2660,11 @@ public class PoolAppFrame extends JFrame {
     private static final Color STMT_ROW_SHADE = new Color(0xF2, 0xF2, 0xF2);
 
     private void createStatementPDF(Customer customer, List<StatementRecord> records, File pdfFile) throws IOException {
-        try {
+        createStatementPDF(customer, records, pdfFile, true);
+    }
+
+    private void createStatementPDF(Customer customer, List<StatementRecord> records, File pdfFile, boolean refreshSettings) throws IOException {
+        if (refreshSettings) try {
             pdfSettings = loadPdfSettings();
             syncEmbeddedLogo(pdfSettings);
         } catch (RuntimeException ignored) {
@@ -3461,6 +3465,10 @@ public class PoolAppFrame extends JFrame {
 
     private void runMonthlyStatement() {
         if (monthlyBusy) return;
+        if (exportBusy || pdfBusy) {
+            JOptionPane.showMessageDialog(this, "Wait for the current PDF operation to finish.", "Monthly Statement", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
         if (!canEditStatementData()) {
             JOptionPane.showMessageDialog(this, "You have view-only access for statement data.", "Access Restricted", JOptionPane.WARNING_MESSAGE);
             return;
@@ -3477,6 +3485,26 @@ public class PoolAppFrame extends JFrame {
     private record MonthlyPreparation(List<String> types, List<Customer> customers) { }
 
     private void confirmMonthlyStatement(MonthlyPreparation preparation) {
+        if (preparation.customers().isEmpty()) {
+            monthlyBusy = false; setMonthlyButtonsEnabled(true);
+            JOptionPane.showMessageDialog(this, "There are no active customers.", "Monthly Statement", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        int action = JOptionPane.showOptionDialog(this,
+                "Save a separate statement PDF for every accessible active customer.\n"
+                        + "PDFs include the complete statement history and current balance.\n"
+                        + "Choose Save PDFs only to retry an export without billing again.",
+                "Monthly Statement", JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null,
+                new String[]{"Apply and save PDFs", "Apply only", "Save PDFs only", "Cancel"}, "Apply and save PDFs");
+        if (action < 0 || action == 3) {
+            monthlyBusy = false; setMonthlyButtonsEnabled(true); return;
+        }
+        if (action == 2) {
+            File folder = chooseMonthlyPdfFolder();
+            monthlyBusy = false; setMonthlyButtonsEnabled(true);
+            if (folder != null) exportMonthlyPdfs(folder, "No billing was performed.");
+            return;
+        }
         List<String> creditTypes = new ArrayList<>();
         for (String type : preparation.types()) {
             if (classifyRecordType(type) == RecordTypeCategory.CREDIT) {
@@ -3523,6 +3551,10 @@ public class PoolAppFrame extends JFrame {
             monthlyBusy = false; setMonthlyButtonsEnabled(true);
             return;
         }
+        File folder = action == 0 ? chooseMonthlyPdfFolder() : null;
+        if (action == 0 && folder == null) {
+            monthlyBusy = false; setMonthlyButtonsEnabled(true); return;
+        }
         String requestId;
         try {
             requestId = pendingMonthlyRequests.retain(identity, scope, pendingMonthlyId);
@@ -3537,13 +3569,60 @@ public class PoolAppFrame extends JFrame {
             loadStatementRecordsForCustomer(activeRecordCustomerId);
         }
         String message = "Added " + added + " record(s) dated " + date + ".";
-        JOptionPane.showMessageDialog(this, message, "Monthly Statement",
-                JOptionPane.INFORMATION_MESSAGE);
+        if (folder != null) exportMonthlyPdfs(folder, message + " Billing is confirmed complete.");
+        else JOptionPane.showMessageDialog(this, message, "Monthly Statement", JOptionPane.INFORMATION_MESSAGE);
         }, error -> {
             monthlyBusy = false; setMonthlyButtonsEnabled(true);
             JOptionPane.showMessageDialog(this, "Monthly statement was not confirmed.\n" + error.getMessage()
                     + "\nUse Monthly Statement again to retry the SAME request safely; no automatic retry was made.",
                     "Monthly Statement", JOptionPane.ERROR_MESSAGE);
+        });
+    }
+
+    private File chooseMonthlyPdfFolder() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Choose folder for monthly statement PDFs (new batch subfolder)");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        return chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION ? chooser.getSelectedFile() : null;
+    }
+
+    private void exportMonthlyPdfs(File parent, String billingMessage) {
+        if (exportBusy || pdfBusy) {
+            JOptionPane.showMessageDialog(this, billingMessage
+                    + "\nAnother PDF operation is running. Wait for it to finish, then use Monthly Statement > Save PDFs only.",
+                    "Monthly Statement", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        runExport("Generating PDFs for all active customers...", () -> {
+            try {
+            List<Customer> customers = filterAccessibleCustomers(dbManager.getAllCustomers()).stream()
+                    .filter(Customer::isActive).sorted(java.util.Comparator.comparing(Customer::getId)).toList();
+            if (customers.isEmpty()) throw new IOException(billingMessage + "\nNo accessible active customers to export.");
+            java.nio.file.Path folder = java.nio.file.Files.createTempDirectory(parent.toPath(),
+                    "Monthly_Statements_" + LocalDate.now() + "_");
+            List<String> failures = new ArrayList<>();
+            int saved = 0;
+            for (int i = 0; i < customers.size(); i++) {
+                Customer customer = customers.get(i);
+                final int progress = i + 1;
+                SwingUtilities.invokeLater(() -> exportStatus.setText("Generating PDF " + progress + " of " + customers.size() + "..."));
+                File output = folder.resolve(String.format(Locale.US, "%04d_", i + 1)
+                        + buildStatementFileName(customer) + ".pdf").toFile();
+                try {
+                    createStatementPDF(customer, dbManager.getStatementRecords(customer.getId()), output, saved == 0);
+                    saved++;
+                } catch (IOException | RuntimeException error) {
+                    failures.add(customer.getId() + ": " + error.getMessage());
+                }
+            }
+            if (!failures.isEmpty()) throw new IOException(billingMessage + "\nSaved " + saved + " of " + customers.size()
+                    + " PDFs in:\n" + folder + "\nFailed customers:\n" + String.join("\n", failures)
+                    + "\nUse Monthly Statement > Save PDFs only to retry; do not apply billing again.");
+            return billingMessage + "\nSaved " + saved + " statement PDFs in:\n" + folder;
+            } catch (IOException | RuntimeException error) {
+                throw new IOException(billingMessage + "\nPDF export needs attention:\n" + error.getMessage()
+                        + "\nUse Monthly Statement > Save PDFs only to retry without billing again.", error);
+            }
         });
     }
 

@@ -31,6 +31,21 @@ function fixture() {
   return { c: context, el };
 }
 
+test("statement print title includes the full balance with existing currency formatting", () => {
+  const { c, el } = fixture();
+  c.window.print = () => {};
+  c.window.removeEventListener = () => {};
+  c.setTimeout = () => {};
+  const customer = { customer_id: "synthetic", first_name: "Test", last_name: "Customer" };
+  for (const [balance, expected] of [[1234.5, "$1,234.50"], [-25.75, "($25.75)"], [0, "$0.00"]]) {
+    c.printStatement(customer, [{ record_date: "10/31/2026", type: "Bill", amount: 10 }], balance);
+    const html = el("printarea").innerHTML;
+    assert.ok(html.includes('<div class="ps-title">STATEMENT</div><div class="ps-balance">Balance: ' + expected + '</div>'));
+    assert.ok(html.includes('<div class="ps-total"><span>Total:</span><b>$10.00</b></div>'));
+    assert.ok(html.includes(".ps-balance{text-align:center"));
+  }
+});
+
 test("obsolete reads abort, stale errors cannot replace new views, writes are never cancelled", async () => {
   const { c, el } = fixture();
   let readSignal, rejectRead, finishWrite, writeSignal;

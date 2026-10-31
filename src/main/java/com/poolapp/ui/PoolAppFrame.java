@@ -2679,6 +2679,9 @@ public class PoolAppFrame extends JFrame {
             float footerTop = clampStatementMargin(pdfSettings.getMarginBottom()) + 34;
             PDFont regular = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
             PDFont bold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+            BigDecimal total = records.stream()
+                    .map(record -> record.getAmount() == null ? BigDecimal.ZERO : record.getAmount())
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
 
             PDPage page = new PDPage(pageSize);
             document.addPage(page);
@@ -2723,7 +2726,10 @@ public class PoolAppFrame extends JFrame {
 
                 float titleY = Math.min(y, logoBottom - 22);
                 drawPdfText(cs, regular, 22, STMT_BLUE, "STATEMENT", left + (width - pdfTextWidth(regular, 22, "STATEMENT")) / 2f, titleY);
-                y = Math.min(y, titleY) - 14;
+                String balanceText = "Balance: " + formatStatementAmount(total);
+                drawPdfText(cs, regular, 12, STMT_BLUE, balanceText,
+                        left + (width - pdfTextWidth(regular, 12, balanceText)) / 2f, titleY - 20);
+                y = Math.min(y, titleY) - 34;
 
                 // Customer box
                 float pad = 8;
@@ -2811,7 +2817,6 @@ public class PoolAppFrame extends JFrame {
                 float headerHeight = 20;
                 float rowHeight = 18;
                 y = drawStatementTableHeader(cs, bold, columns, y, headerHeight);
-                BigDecimal total = BigDecimal.ZERO;
                 if (records.isEmpty()) {
                     drawPdfBox(cs, left, y - rowHeight, width, rowHeight, null);
                     drawPdfText(cs, regular, 10, STMT_GREY, "No records", columns[1] + 6, y - 12.5f);
@@ -2835,7 +2840,6 @@ public class PoolAppFrame extends JFrame {
                     drawPdfText(cs, regular, 10, Color.BLACK, fitPdfText(regular, 10, type, columns[2] - columns[1] - 12), columns[1] + 6, textY);
                     String amount = formatStatementAmount(record.getAmount());
                     drawPdfText(cs, regular, 10, Color.BLACK, amount, columns[3] - 6 - pdfTextWidth(regular, 10, amount), textY);
-                    total = total.add(record.getAmount() == null ? BigDecimal.ZERO : record.getAmount());
                     y -= rowHeight;
                 }
 

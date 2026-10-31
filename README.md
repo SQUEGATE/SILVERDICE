@@ -10,6 +10,8 @@ To reorder a route, clear search and choose one service day. Route reordering us
 
 Statement PDF generation, email attachments, and SMS delivery run in the background with duplicate-action protection and visible completion/errors. Save-file dialogs remain on the UI thread. Exports always use the complete statement history, independent of the displayed statement page.
 
+Statement PDFs (desktop and web) show `Balance: $...` directly below the STATEMENT title, using the complete customer statement balance. Negative balances use parentheses, matching the existing Total formatting.
+
 Statement Reader can match complete first and last names anywhere in the same transaction record, in either order with intervening words. Ambiguous customer matches stay unselected for review. Incoming Zelle/Zel, date, amount and duplicate checks still apply.
 
 ### Expenses (desktop and web)

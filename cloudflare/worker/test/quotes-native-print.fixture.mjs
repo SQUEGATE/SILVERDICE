@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 
 const worker = fileURLToPath(new URL("../", import.meta.url));
 const edge = process.env.QUOTE_EDGE || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
-const cp = process.env.QUOTE_PDFBOX_CP || path.resolve(worker, "..\\..\\gradle-build\\dist\\Comp Manager\\app\\*");
+const cp = process.env.QUOTE_PDFBOX_CP || path.join(process.env.LOCALAPPDATA || path.resolve(worker, "..\\.."), process.env.LOCALAPPDATA ? "CompManager\\gradle-build" : "gradle-build", "dist", "Comp Manager", "app", "*");
 const out = path.join(worker, "test", "fixtures");
 const htmlFile = path.join(out, "quotes-native-long.html");
 const pdfFile = path.join(out, "quotes-native-long.pdf");

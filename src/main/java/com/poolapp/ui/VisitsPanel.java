@@ -314,7 +314,6 @@ public class VisitsPanel extends JPanel {
     }
 
     private void populateVisit() {
-        VisitChoice choice = (VisitChoice) history.getSelectedItem();
         VisitRecord visit = loadedVisit;
         deleteVisitButton.setEnabled(!busy && visit != null);
         savedTime.setText(visit == null ? "New visit - date and time recorded when saved."
@@ -374,7 +373,6 @@ public class VisitsPanel extends JPanel {
             return;
         }
         try {
-            VisitChoice choice = (VisitChoice) history.getSelectedItem();
             VisitRecord existing = loadedVisit;
             VisitRecord draft = new VisitRecord(existing == null ? 0 : existing.id(), activeCustomer.getId(),
                     existing == null ? Instant.now() : existing.visitedAt(),

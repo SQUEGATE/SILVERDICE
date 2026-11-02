@@ -310,15 +310,6 @@ public class PoolAppFrame extends JFrame {
         if (canAccessScreen("PDF")) refreshPdfPanel();
     }
 
-    private static String resolveWindowTitle(CompanyProfile companyProfile, EmployeeProfile employeeProfile) {
-        String companyName = companyProfile != null ? companyProfile.getCompanyName()
-                : employeeProfile != null ? employeeProfile.getCompanyName() : null;
-        if (companyName == null || companyName.isBlank()) {
-            return "Pool Service Customer Manager";
-        }
-        return companyName + " - Pool Service Customer Manager";
-    }
-
     private void initComponents() {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(1100, 700);
@@ -698,8 +689,8 @@ public class PoolAppFrame extends JFrame {
         statementButton.addActionListener(e -> generateStatement());
         emailButton.addActionListener(e -> sendEmailToCustomer());
         smsButton.addActionListener(e -> sendSmsToCustomer());
-        backupButton.addActionListener(e -> backupDatabase());
-        restoreButton.addActionListener(e -> restoreDatabase());
+        backupButton.addActionListener(e -> { if (dbManager.isRemote()) backupCloudDatabase(); else backupDatabase(); });
+        restoreButton.addActionListener(e -> { if (dbManager.isRemote()) restoreCloudDatabase(); else restoreDatabase(); });
 
         JPanel revenuePanel = new JPanel(new BorderLayout(6, 6));
         revenuePanel.setBorder(BorderFactory.createTitledBorder("Revenue Summary"));
@@ -3115,31 +3106,6 @@ public class PoolAppFrame extends JFrame {
         BigDecimal value = amount == null ? BigDecimal.ZERO : amount.setScale(2, java.math.RoundingMode.HALF_UP);
         String text = new java.text.DecimalFormat("$#,##0.00", java.text.DecimalFormatSymbols.getInstance(Locale.US)).format(value.abs());
         return value.signum() < 0 ? "(" + text + ")" : text;
-    }
-    private void drawCenteredText(PDPageContentStream contentStream, PDFont font, float fontSize,
-                                  String text, float contentLeft, float contentWidth, float y) throws IOException {
-        contentStream.beginText();
-        contentStream.newLineAtOffset(getCenteredTextX(font, fontSize, text, contentLeft, contentWidth), y);
-        contentStream.showText(text);
-        contentStream.endText();
-    }
-
-    private float getCenteredTextX(PDFont font, float fontSize, String text,
-                                   float contentLeft, float contentWidth) throws IOException {
-        float textWidth = font.getStringWidth(text) / 1000f * fontSize;
-        return contentLeft + Math.max(0, (contentWidth - textWidth) / 2f);
-    }
-    
-    private PDType1Font getFont(String fontName) {
-        switch (fontName) {
-            case "TIMES_BOLD": return new PDType1Font(Standard14Fonts.FontName.TIMES_BOLD);
-            case "TIMES_ROMAN": return new PDType1Font(Standard14Fonts.FontName.TIMES_ROMAN);
-            case "HELVETICA_BOLD": return new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
-            case "HELVETICA": return new PDType1Font(Standard14Fonts.FontName.HELVETICA);
-            case "COURIER_BOLD": return new PDType1Font(Standard14Fonts.FontName.COURIER_BOLD);
-            case "COURIER": return new PDType1Font(Standard14Fonts.FontName.COURIER);
-            default: return new PDType1Font(Standard14Fonts.FontName.TIMES_ROMAN);
-        }
     }
 
     private void backupDatabase() {

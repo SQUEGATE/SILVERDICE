@@ -291,7 +291,7 @@ DATABASE/
 │   ├── config.properties   Runtime config (API URL, email/SMS, update repo)
 │   └── logo.jpg            App icon source (window + .exe icon)
 ├── cloudflare/worker/      Cloud API + web app (see §7)
-├── gradle-build/           Default Gradle build output (generated)
+├── gradle-build/           Old build output (unused; real build dir is %LOCALAPPDATA%\CompManager\gradle-build)
 ├── gradle-build-*/         Old one-off build output folders (safe to delete)
 ├── bin/, out/              IDE compile outputs (generated; safe to delete)
 └── .vscode/                Launch config ("Starter") + settings pinning JDK 17
@@ -506,7 +506,7 @@ Every company-scoped query filters by `company_id` taken from the **signed sessi
   - `.vscode/settings.json` pins VS Code's Java to JDK 17.
   - If you ever see `UnsupportedClassVersionError (class file version 69)`, delete the `bin` folder and run *Java: Clean Java Language Server Workspace*.
 - **Package:**
-  - `.\gradlew.bat packageAppImage` produces a portable folder `gradle-build\dist\Comp Manager\Comp Manager.exe`.
+  - `.\gradlew.bat packageAppImage` produces a portable folder `%LOCALAPPDATA%\CompManager\gradle-build\dist\Comp Manager\Comp Manager.exe`. Build output is kept outside OneDrive on purpose, because OneDrive turns build files into cloud placeholders that Gradle cannot read or delete (`Unable to delete directory ...`, `not a regular file`). Pass `-PverificationBuildDir=<dir>` to use another folder.
   - `.\gradlew.bat packageExe` produces an installer (needs WiX Toolset).
   - Or, from the Master dashboard, click **Generate App ZIP**, which writes a ZIP to `Downloads`.
 - **Distributing:** unzip on the target PC and run `Comp Manager.exe`. It contains its own Java runtime and the API URL, so no setup is needed.
@@ -529,7 +529,7 @@ Every company-scoped query filters by `company_id` taken from the **signed sessi
 - **Logo on web:** requires `logoData` in the database. The desktop uploads it automatically from the logo file, or upload it in the web PDF Settings.
 - **The URL / Worker name `silverdice`** is intentionally kept. Renaming it changes the URL, which breaks every installed desktop and phone link.
 - **Line endings:** Java sources are CRLF. Keep them consistent when editing with scripts.
-- **Build output clutter:** `gradle-build-*` folders, `bin/` and `out/` are generated and can be deleted. The real build dir is `gradle-build/`.
+- **Build output clutter:** `gradle-build-*` folders, `bin/` and `out/` are generated and can be deleted. The real build dir is `%LOCALAPPDATA%\CompManager\gradle-build` (outside OneDrive). The old `DATABASE\gradle-build/` folder is no longer used and can be deleted.
 - **Local `.db` files** (`customer.db*`) are legacy backups from before the cloud migration. Keep them; don't commit new ones.
 
 ---

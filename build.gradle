@@ -6,7 +6,10 @@ plugins {
 group 'com.poolapp'
 version '1.0.0'
 
-layout.buildDirectory.set(file(providers.gradleProperty("verificationBuildDir").getOrElse("gradle-build")))
+// Keep build output outside OneDrive: synced folders turn outputs into cloud placeholders Gradle cannot read or delete.
+def localAppData = System.getenv("LOCALAPPDATA")
+def defaultBuildDir = localAppData ? new File(localAppData, "CompManager/gradle-build").path : "gradle-build"
+layout.buildDirectory.set(file(providers.gradleProperty("verificationBuildDir").getOrElse(defaultBuildDir)))
 
 repositories {
     mavenCentral()

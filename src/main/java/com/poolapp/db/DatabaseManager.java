@@ -29,7 +29,6 @@ public class DatabaseManager {
     private final Path databasePath;
     private final String dbUrl;
     private final CompManagerApiClient apiClient;
-    private final long companyId;
     private final String apiSessionToken;
 
     public DatabaseManager() {
@@ -40,7 +39,6 @@ public class DatabaseManager {
         this.databasePath = databasePath.toAbsolutePath().normalize();
         this.dbUrl = "jdbc:sqlite:" + this.databasePath;
         this.apiClient = null;
-        this.companyId = 0;
         this.apiSessionToken = null;
         createDatabaseBackup();
         initializeDatabase();
@@ -53,7 +51,6 @@ public class DatabaseManager {
         this.databasePath = null;
         this.dbUrl = null;
         this.apiClient = new CompManagerApiClient(apiBaseUrl, apiSessionToken);
-        this.companyId = companyId;
         this.apiSessionToken = apiSessionToken;
     }
 

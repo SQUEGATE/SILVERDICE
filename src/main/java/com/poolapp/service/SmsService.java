@@ -2,42 +2,12 @@ package com.poolapp.service;
 
 import java.awt.Desktop;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.Properties;
 
 public class SmsService {
-    private final Properties config;
-
-    public SmsService() {
-        this.config = loadConfiguration();
-    }
-
-    private Properties loadConfiguration() {
-        Properties properties = new Properties();
-        try (InputStream input = getClass().getClassLoader().getResourceAsStream("config.properties")) {
-            if (input != null) {
-                properties.load(input);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Unable to load packaged SMS configuration", e);
-        }
-
-        File external = new File("config.properties");
-        if (external.exists()) {
-            try (InputStream input = new FileInputStream(external)) {
-                properties.load(input);
-            } catch (IOException e) {
-                throw new RuntimeException("Unable to load external SMS configuration", e);
-            }
-        }
-        return properties;
-    }
-
     public void sendSms(String to, String messageText) {
         String phoneNumber = normalizePhoneNumber(to);
         if (phoneNumber.isBlank()) {

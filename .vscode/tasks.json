@@ -2,6 +2,21 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "Prepare desktop launch",
+			"type": "shell",
+			"command": ".\\gradlew.bat",
+			"args": [
+				"installDist",
+				"-PverificationBuildDir=${env:LOCALAPPDATA}\\CompManager\\gradle-build",
+				"--console=plain"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": { "JAVA_HOME": "C:\\Program Files\\Java\\jdk-17" }
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Build Java Project",
 			"type": "shell",
 			"command": ".\\build.bat",

@@ -6,14 +6,14 @@
         "name": "Starter",
         "request": "launch",
         "mainClass": "com.poolapp.Starter",
-        "projectName": "pool-company-app"
-    },
-    {
-        "type": "java",
-        "name": "Launch Starter",
-        "request": "launch",
-        "mainClass": "com.poolapp.Starter",
-        "projectName": "pool-company-app"
+        "javaExec": "C:\\Program Files\\Java\\jdk-17\\bin\\java.exe",
+        "cwd": "${workspaceFolder}",
+        "preLaunchTask": "Prepare desktop launch",
+        "classPaths": [
+          "${env:LOCALAPPDATA}\\CompManager\\gradle-build\\install\\Comp Manager\\lib\\*"
+        ],
+        "sourcePaths": ["${workspaceFolder}\\src\\main\\java"],
+        "console": "integratedTerminal"
     }
 ]
 }

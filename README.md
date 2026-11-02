@@ -29,6 +29,8 @@ The Java desktop app and the web app include an Expenses screen that locally ext
 - Open an email client or SMS app for statements when configured
 
 ## How to run
+In VS Code, choose **Starter** (when DATABASE is open) or **Comp Manager (Starter)** (when its parent folder is open) in Run and Debug, then press **F5**. The pre-launch task builds the desktop runtime with the Gradle wrapper outside OneDrive; the launch uses an explicit classpath, without relying on Java project-name discovery. The source entry point is [Starter.java](src/main/java/com/poolapp/Starter.java). The launch settings use the installed JDK at `C:\Program Files\Java\jdk-17`.
+
 1. Open the project folder in a terminal.
 2. Use the Gradle wrapper:
 

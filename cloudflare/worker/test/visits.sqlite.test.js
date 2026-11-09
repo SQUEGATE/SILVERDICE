@@ -33,7 +33,9 @@ async function fixture(run, { legacy = false, oldVisits = false, existingPhoto =
     let oldSchema = schema.slice(schema.indexOf("CREATE TABLE IF NOT EXISTS customer_visits"), schema.indexOf("CREATE TABLE IF NOT EXISTS record_types"))
       .replace(/^\s*salt INTEGER[^\n]*\n/m, "");
     if (oldVisits) oldSchema = oldSchema.replace("alk INTEGER CHECK", "alk INTEGER NOT NULL CHECK").replace("cal INTEGER CHECK", "cal INTEGER NOT NULL CHECK");
-    if (!existingPhoto) oldSchema = oldSchema.replace("    photo_data TEXT NOT NULL DEFAULT '',", "");
+    if (!existingPhoto) oldSchema = oldSchema.replace("    photo_data TEXT NOT NULL DEFAULT '',\n", "");
+    oldSchema = oldSchema.replace("    photo_data_2 TEXT NOT NULL DEFAULT '',\n", "")
+      .replace("    photo_data_3 TEXT NOT NULL DEFAULT '',\n", "");
     db.exec(oldSchema);
   }
   if (legacy) {
@@ -252,7 +254,10 @@ test("SQLite: new backups round-trip visits, old backups work, invalid visits do
     const visit = await call("/v1/customers/shared/visits", { method: "POST", token: one, body: valid });
     await call("/v1/customers/shared/visits", { method: "POST", token: two, body: valid });
     const backup = (await call("/v1/backup", { token: one })).body;
-    assert.deepEqual(backup.customer_visits, [visit.body]);
+    assert.equal(backup.customer_visits.length, 1);
+    assert.equal(backup.customer_visits[0].photo_data, "");
+    assert.equal(backup.customer_visits[0].photo_data_2, "");
+    assert.equal(backup.customer_visits[0].photo_data_3, "");
     await call("/v1/customers/shared/visits/1", { method: "PUT", token: one, body: { ...valid, notes: "Changed" } });
     const restored = await call("/v1/backup/restore", { method: "POST", token: one, body: backup });
     assert.equal(restored.status, 200);
@@ -329,7 +334,7 @@ test("SQLite: runtime migration upgrades existing DB before serving authenticate
   }, { legacy: true });
 });
 
-test("SQLite: optional ALK/CAL normalize to null and photo add/preserve/remove round-trips", async () => {
+test("SQLite: optional ALK/CAL normalize to null and three photos add/preserve/remove round-trips", async () => {
   await fixture(async ({ call, login }) => {
     const token = await login("visits-only");
     for (const patch of [{ alk: null, cal: null }, { alk: "", cal: " \t " }, { alk: undefined, cal: undefined }]) {
@@ -339,19 +344,22 @@ test("SQLite: optional ALK/CAL normalize to null and photo add/preserve/remove r
       assert.equal(created.body.cal, null);
       assert.equal(created.body.photo_data, "");
     }
-    const photo = "data:image/jpeg;base64,YQ==";
-    const created = await call("/v1/customers/shared/visits", { method: "POST", token, body: { ...valid, photo_data: photo } });
+    const photos = ["data:image/jpeg;base64,YQ==", "data:image/png;base64,Yg==", "data:image/jpeg;base64,Yw=="];
+    const created = await call("/v1/customers/shared/visits", { method: "POST", token, body: { ...valid, photos } });
     assert.equal(created.status, 201);
+    assert.deepEqual(created.body.photos, photos);
+    assert.equal(created.body.photo_data, photos[0], "legacy first-photo property remains available");
     const path = `/v1/customers/shared/visits/${created.body.visit_id}`;
     const preserved = await call(path, { method: "PUT", token, body: { ...valid, alk: "", cal: null } });
-    assert.equal(preserved.body.photo_data, photo);
+    assert.deepEqual(preserved.body.photos, photos);
     assert.equal(preserved.body.alk, null);
     assert.equal(preserved.body.cal, null);
     assert.equal(preserved.body.visited_at, created.body.visited_at);
     assert.equal(preserved.body.visit_id, created.body.visit_id);
-    assert.equal((await call("/v1/customers/shared/visits", { token })).body.find(row => row.visit_id === created.body.visit_id).photo_data, photo);
-    const removed = await call(path, { method: "PUT", token, body: { ...valid, photo_data: "" } });
+    assert.deepEqual((await call("/v1/customers/shared/visits", { token })).body.find(row => row.visit_id === created.body.visit_id).photos, photos);
+    const removed = await call(path, { method: "PUT", token, body: { ...valid, photos: [] } });
     assert.equal(removed.body.photo_data, "");
+    assert.deepEqual(removed.body.photos, []);
   });
 });
 
@@ -366,23 +374,27 @@ test("SQLite: photo formats/limits and actual 700KB request size are enforced", 
     const created = await call("/v1/customers/shared/visits", { method: "POST", token, body: { ...valid, photo_data } });
     assert.equal(created.status, 201);
     assert.equal(created.body.photo_data.length, 600000);
+    assert.deepEqual(created.body.photos, [photo_data]);
     const path = `/v1/customers/shared/visits/${created.body.visit_id}`;
     assert.equal((await call(path, { method: "PUT", token, body: { ...valid, photo_data: "invalid" } })).status, 400);
     for (const [method, url] of [["POST", "/v1/customers/shared/visits"], ["PUT", path]]) {
-      assert.equal((await call(url, { method, token, body: { ...valid, unused: "a".repeat(700 * 1024) } })).status, 413);
+      assert.equal((await call(url, { method, token, body: { ...valid, unused: "a".repeat(2 * 1024 * 1024) } })).status, 413);
     }
     assert.equal(db.prepare("SELECT photo_data FROM customer_visits").get().photo_data, photo_data);
   });
 });
 
-test("SQLite: backup restores nulls/photos and old numeric/no-photo visits without loss", async () => {
+test("SQLite: backup restores nulls/three photos and old numeric/no-photo visits without loss", async () => {
   await fixture(async ({ call, login }) => {
     const token = await login("company-one");
-    const photo_data = "data:image/png;base64,YQ==";
-    const created = await call("/v1/customers/shared/visits", { method: "POST", token, body: { ...valid, alk: null, cal: "", photo_data } });
+    const photos = ["data:image/png;base64,YQ==", "data:image/jpeg;base64,Yg==", "data:image/png;base64,Yw=="];
+    const created = await call("/v1/customers/shared/visits", { method: "POST", token, body: { ...valid, alk: null, cal: "", photos } });
     const backup = (await call("/v1/backup", { token })).body;
     assert.equal(backup.customer_visits[0].alk, null);
-    assert.equal(backup.customer_visits[0].photo_data, photo_data);
+    assert.equal(backup.customer_visits[0].photo_data, photos[0]);
+    assert.equal(backup.customer_visits[0].photo_data_2, photos[1]);
+    assert.equal(backup.customer_visits[0].photo_data_3, photos[2]);
+    assert.deepEqual(created.body.photos, photos);
     assert.equal((await call("/v1/backup/restore", { method: "POST", token, body: backup })).status, 200);
     assert.deepEqual((await call("/v1/customers/shared/visits", { token })).body, [created.body]);
     for (const invalidPhoto of [null, "invalid", "data:image/png;base64," + "A".repeat(600000)]) {
@@ -393,10 +405,13 @@ test("SQLite: backup restores nulls/photos and old numeric/no-photo visits witho
     }
     const old = structuredClone(backup);
     delete old.customer_visits[0].photo_data;
+    delete old.customer_visits[0].photo_data_2;
+    delete old.customer_visits[0].photo_data_3;
     old.customer_visits[0].alk = 100;
     old.customer_visits[0].cal = 200;
     assert.equal((await call("/v1/backup/restore", { method: "POST", token, body: old })).status, 200);
-    assert.deepEqual((await call("/v1/customers/shared/visits", { token })).body, [{ ...created.body, alk: 100, cal: 200, photo_data: "" }]);
+    assert.deepEqual((await call("/v1/customers/shared/visits", { token })).body,
+      [{ ...created.body, alk: 100, cal: 200, photo_data: "", photo_data_2: "", photo_data_3: "", photos: [] }]);
   });
 });
 

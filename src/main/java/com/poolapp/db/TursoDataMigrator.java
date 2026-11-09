@@ -198,18 +198,29 @@ public final class TursoDataMigrator {
                 try (ResultSet columns = company.getMetaData().getColumns(null, null, "customer_visits", "photo_data")) {
                     hasPhoto = columns.next();
                 }
+                boolean hasPhoto2;
+                try (ResultSet columns = company.getMetaData().getColumns(null, null, "customer_visits", "photo_data_2")) {
+                    hasPhoto2 = columns.next();
+                }
+                boolean hasPhoto3;
+                try (ResultSet columns = company.getMetaData().getColumns(null, null, "customer_visits", "photo_data_3")) {
+                    hasPhoto3 = columns.next();
+                }
                 try (PreparedStatement query = company.prepareStatement("SELECT * FROM customer_visits");
                      ResultSet rows = query.executeQuery()) {
                     while (rows.next()) {
-                        turso.execute("INSERT INTO customer_visits (company_id, visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data)"
-                                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                        turso.execute("INSERT INTO customer_visits (company_id, visit_id, customer_id, visited_at, ph, chlo, stb, alk, cal, notes, photo_data, photo_data_2, photo_data_3)"
+                                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                                         + " ON CONFLICT(company_id, visit_id) DO UPDATE SET customer_id = excluded.customer_id,"
                                         + " visited_at = excluded.visited_at, ph = excluded.ph, chlo = excluded.chlo, stb = excluded.stb,"
-                                        + " alk = excluded.alk, cal = excluded.cal, notes = excluded.notes, photo_data = excluded.photo_data",
+                                        + " alk = excluded.alk, cal = excluded.cal, notes = excluded.notes, photo_data = excluded.photo_data,"
+                                        + " photo_data_2 = excluded.photo_data_2, photo_data_3 = excluded.photo_data_3",
                                 companyId, rows.getLong("visit_id"), rows.getString("customer_id"), rows.getString("visited_at"),
                                 rows.getString("ph"), rows.getString("chlo"), rows.getString("stb"),
                                 rows.getObject("alk"), rows.getObject("cal"), rows.getString("notes"),
-                                hasPhoto ? rows.getString("photo_data") : "");
+                                hasPhoto ? rows.getString("photo_data") : "",
+                                hasPhoto2 ? rows.getString("photo_data_2") : "",
+                                hasPhoto3 ? rows.getString("photo_data_3") : "");
                     }
                 }
             }

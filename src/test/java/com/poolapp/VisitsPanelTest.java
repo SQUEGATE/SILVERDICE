@@ -123,7 +123,10 @@ public class VisitsPanelTest {
             SwingUtilities.invokeAndWait(() -> {
                 field(panel, "alk", JTextField.class).setText("70");
                 field(panel, "cal", JTextField.class).setText("250");
-                setField(panel, "photoData", "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jG9sAAAAASUVORK5CYII=");
+                setField(panel, "photoData", new java.util.ArrayList<>(java.util.List.of(
+                        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jG9sAAAAASUVORK5CYII=",
+                        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jG9sAAAAASUVORK5CYII=",
+                        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jG9sAAAAASUVORK5CYII=")));
                 field(panel, "notes", JTextArea.class).setText("Edited UI visit");
                 button(panel, "Save").doClick();
             });
@@ -134,20 +137,20 @@ public class VisitsPanelTest {
             VisitsTest.check(database.getVisits("c1").get(0).visitedAt().equals(original), "UI edit preserves time");
             SwingUtilities.invokeAndWait(() -> button(panel, "New Visit").doClick());
             VisitsTest.check(field(panel, "notes", JTextArea.class).getText().isEmpty(), "New visit clears notes");
-            VisitsTest.check(field(panel, "photoData", String.class).isEmpty(), "New visit clears photo");
+            VisitsTest.check(field(panel, "photoData", java.util.List.class).isEmpty(), "New visit clears photos");
             VisitsTest.check(!button(panel, "Delete Visit").isEnabled(), "New Visit disables delete");
             SwingUtilities.invokeAndWait(() -> field(panel, "history", JComboBox.class).setSelectedIndex(1));
             awaitIdle(panel);
             VisitsTest.check(field(panel, "notes", JTextArea.class).getText().equals("Edited UI visit"), "Past visit reloads fields");
-            VisitsTest.check(!field(panel, "photoData", String.class).isEmpty(), "Past visit reloads photo");
+            VisitsTest.check(field(panel, "photoData", java.util.List.class).size() == 3, "Past visit reloads all photos");
             SwingUtilities.invokeAndWait(() -> {
-                button(panel, "Remove Photo").doClick();
+                button(panel, "Remove").doClick();
                 field(panel, "alk", JTextField.class).setText("");
                 field(panel, "cal", JTextField.class).setText("");
                 button(panel, "Save").doClick();
             });
             awaitIdle(panel);
-            VisitsTest.check(database.getVisits("c1").get(0).photoData().isEmpty(), "Photo removal saved");
+            VisitsTest.check(database.getVisits("c1").get(0).photos().size() == 2, "Photo removal saved");
             VisitsTest.check(database.getVisits("c1").get(0).alk() == null, "Existing reading can be cleared");
         } finally {
             Files.deleteIfExists(path);

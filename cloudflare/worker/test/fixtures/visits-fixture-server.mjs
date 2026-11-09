@@ -35,8 +35,14 @@ const readBody = (req) => new Promise((r) => { let s = ""; req.on("data", (c) =>
 const PH = ["7.0", "7.2", "7.4", "7.6", "7.8", "8.0"], CH = ["1-2", "2-4", "3-6", "5-10", "7.5-15", "10-20"], ST = ["100", "90", "80", "70", "60", "50", "40", "30"];
 const posInt = (v) => Number.isInteger(v) && v > 0 && v <= 2147483647;
 const optInt = (v) => v === null || v === undefined || posInt(v);
-const photoOk = (v) => v === undefined || v === null || v === "" || (typeof v === "string" && v.length <= 700000 && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+\/]+={0,2}$/.test(v));
-const withPhoto = (r) => ({ ...r, alk: r.alk ?? null, cal: r.cal ?? null, photo_data: r.photo_data || "" });
+const photoOk = (v) => typeof v === "string" && v.length <= 600000 && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+\/]+={0,2}$/.test(v);
+const visitPhotos = (b) => Array.isArray(b.photos) ? b.photos : (b.photo_data ? [b.photo_data] : []);
+const photosOk = (photos) => Array.isArray(photos) && photos.length <= 3 && photos.every(photoOk);
+const withPhoto = (r) => {
+  const photos = r.photos || (r.photo_data ? [r.photo_data] : []);
+  return { ...r, alk: r.alk ?? null, cal: r.cal ?? null, photos, photo_data: photos[0] || "",
+    photo_data_2: photos[1] || "", photo_data_3: photos[2] || "" };
+};
 
 http.createServer(async (req, res) => {
   const u = new URL(req.url, "http://x");
@@ -77,16 +83,18 @@ http.createServer(async (req, res) => {
     return send(res, 200, { deleted: true });
   }
   const b = await readBody(req);
-  if (!PH.includes(b.ph) || !CH.includes(b.chlo) || !ST.includes(b.stb) || !optInt(b.alk) || !optInt(b.cal) || !photoOk(b.photo_data) || typeof b.notes !== "string" || b.notes.length > 16000) return send(res, 400, { error: "Invalid visit" });
+  const photos = visitPhotos(b);
+  if (!PH.includes(b.ph) || !CH.includes(b.chlo) || !ST.includes(b.stb) || !optInt(b.alk) || !optInt(b.cal)
+      || !photosOk(photos) || typeof b.notes !== "string" || b.notes.length > 16000) return send(res, 400, { error: "Invalid visit" });
   await new Promise((r) => setTimeout(r, 300));
   if (req.method === "POST") {
-    const row = { visit_id: nextId++, customer_id: Number(cid), visited_at: new Date().toISOString(), ph: b.ph, chlo: b.chlo, stb: b.stb, salt: b.salt ?? null, alk: b.alk ?? null, cal: b.cal ?? null, notes: b.notes, photo_data: b.photo_data || "" };
+    const row = { visit_id: nextId++, customer_id: Number(cid), visited_at: new Date().toISOString(), ph: b.ph, chlo: b.chlo, stb: b.stb, salt: b.salt ?? null, alk: b.alk ?? null, cal: b.cal ?? null, notes: b.notes, photos };
     visits[cid].push(row); return send(res, 200, withPhoto(row));
   }
   if (req.method === "PUT") {
     const row = visits[cid].find((v) => String(v.visit_id) === vid);
     if (!row) return send(res, 404, { error: "Visit not found" });
-    Object.assign(row, { ph: b.ph, chlo: b.chlo, stb: b.stb, ...(b.salt === undefined ? {} : { salt: b.salt }), alk: b.alk ?? null, cal: b.cal ?? null, notes: b.notes, photo_data: b.photo_data || "" });
+    Object.assign(row, { ph: b.ph, chlo: b.chlo, stb: b.stb, ...(b.salt === undefined ? {} : { salt: b.salt }), alk: b.alk ?? null, cal: b.cal ?? null, notes: b.notes, photos });
     return send(res, 200, withPhoto(row));
   }
   send(res, 405, { error: "Method" });

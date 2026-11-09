@@ -45,6 +45,15 @@ public class VisitsTest {
         for (int invalid : List.of(0, 421, 5000, -420)) {
             rejects(() -> new VisitRecord(0, "c1", Instant.now(), "7.4", "3-6", "50", null, null, "", "", invalid));
         }
+        List<String> photos = List.of("data:image/jpeg;base64,YQ==", "data:image/png;base64,Yg==", "data:image/jpeg;base64,Yw==");
+        VisitRecord multiPhoto = new VisitRecord(4, "c1", Instant.now(), "7.4", "3-6", "50",
+                null, null, "", photos, null);
+        check(multiPhoto.photos().equals(photos), "Three visit photos are accepted");
+        check(multiPhoto.photoData().equals(photos.get(0)), "Legacy photo accessor returns first photo");
+        check(VisitRecord.fromJson(multiPhoto.measurementsJson().put("visit_id", 4).put("customer_id", "c1")
+                .put("visited_at", multiPhoto.visitedAt().toString())).photos().equals(photos), "Three photos serialize and deserialize");
+        rejects(() -> new VisitRecord(0, "c1", Instant.now(), "7.4", "3-6", "50",
+                null, null, "", List.of(photos.get(0), photos.get(1), photos.get(2), photos.get(0)), null));
         EmployeeProfile employee = new EmployeeProfile();
         check(!employee.isCanAccessVisits(), "Employee visits must be opt-in");
         employee.setCanAccessVisits(true);

@@ -60,7 +60,8 @@ td.r,th.r{text-align:right}.scroll{overflow-x:auto}
 .vs.chemistry input[type=range]::-moz-range-thumb{width:20px;height:20px;border:3px solid #111827;border-radius:50%;background:#fff}
 .vs.chemistry input[type=range]:focus-visible{outline:3px solid var(--brand);outline-offset:3px}
 .vrec{font-weight:400;color:var(--mute)}
-.vphoto img{display:block;max-width:100%;max-height:60vh;border-radius:8px;border:1px solid var(--line)}.vphoto:empty{display:none}
+.vphoto{display:flex;flex-wrap:wrap;gap:10px}.vphoto-item{min-width:0}.vphoto img{display:block;max-width:100%;max-height:40vh;border-radius:8px;border:1px solid var(--line)}.vphoto:empty{display:none}
+#v-photo-picker{width:min(24rem,calc(100% - 2rem));border:0;border-radius:12px;padding:18px;box-shadow:0 12px 32px rgba(0,0,0,.25)}#v-photo-picker::backdrop{background:rgba(0,0,0,.5)}#v-photo-picker .row{margin-top:12px}
 .vnow{font-size:1.125rem;font-weight:700;overflow-wrap:anywhere}
 #printarea{display:none}
 @media print{body>*:not(#printarea){display:none!important}#printarea{display:block}}
@@ -1042,7 +1043,7 @@ var V_PH=["7.0","7.2","7.4","7.6","7.8","8.0"],V_CHLO=["1-2","2-4","3-6","5-10",
 var V_SALT_NONE="Not recorded",V_SALT=[V_SALT_NONE,"420","510","600","700","800","920","1040","1180","1320","1470","1630","1800","1990","2180","2390","2610","2840","3080","3350","3630","3920","4240","4580","4950"];
 var V_COLORS={ph:["#e6a079","#ef866e","#df645e","#d9576b","#cf4778","#c83f80"],chlo:["#d9a09b","#e88898","#df536e","#ee4275","#e82d73","#ec1b70"],salt:["#e0f2fe","#7dd3fc","#38bdf8","#0284c7","#1e3a8a"]};
 function visitSaltError(v){return v==null||V_SALT.indexOf(String(v))>0?"":"Choose a valid SALT reading."}
-var V_MAX_INT=2147483647,V_MAX_NOTES=16000,V_MAX_PHOTO=600000,V_PHOTO_DIM=1280;
+var V_MAX_INT=2147483647,V_MAX_NOTES=16000,V_MAX_PHOTO=600000,V_MAX_PHOTOS=3,V_PHOTO_DIM=1280;
 var V_PHOTO_RE=/^data:image\/(png|jpeg);base64,[A-Za-z0-9+\/]+={0,2}$/;
 function visitPhotoError(s){
   if(s==null||s==="")return "";
@@ -1078,12 +1079,14 @@ function visitInt(raw,name,optional){
 function visitValidate(f){
   var a=visitInt(f.alk,"ALK",true);if(a.error)return a;
   var c=visitInt(f.cal,"CAL",true);if(c.error)return c;
-  var pe=visitPhotoError(f.photo_data);if(pe)return {error:pe};
+  var photos=Array.isArray(f.photos)?f.photos:(f.photo_data?[f.photo_data]:[]);
+  if(photos.length>V_MAX_PHOTOS)return {error:"A visit can have up to "+V_MAX_PHOTOS+" photos."};
+  for(var i=0;i<photos.length;i++){var pe=visitPhotoError(photos[i]);if(pe)return {error:pe}}
   var n=String(f.notes==null?"":f.notes);
   if(n.length>V_MAX_NOTES)return {error:"Notes must be "+V_MAX_NOTES+" characters or fewer."};
   if(V_PH.indexOf(f.ph)<0||V_CHLO.indexOf(f.chlo)<0||V_STB.indexOf(f.stb)<0)return {error:"Choose a valid PH, CHLO and STB."};
   var salt=f.salt==null||f.salt===V_SALT_NONE?null:Number(f.salt);if(visitSaltError(salt))return {error:visitSaltError(salt)};
-  return {body:{ph:f.ph,chlo:f.chlo,stb:f.stb,salt:salt,alk:a.value,cal:c.value,notes:n,photo_data:f.photo_data||""}};
+  return {body:{ph:f.ph,chlo:f.chlo,stb:f.stb,salt:salt,alk:a.value,cal:c.value,notes:n,photos:photos}};
 }
 var V_DEFAULT={ph:"7.4",chlo:"3-6",stb:"50"};
 function visitRowError(v){
@@ -1094,7 +1097,9 @@ function visitRowError(v){
   if(visitSaltError(v.salt))return "Saved visit has an invalid SALT reading ("+v.salt+").";
   var a=visitInt(v.alk,"Saved ALK",true);if(a.error)return a.error;
   var c=visitInt(v.cal,"Saved CAL",true);if(c.error)return c.error;
-  var pe=visitPhotoError(v.photo_data);if(pe)return "Saved visit photo is invalid. "+pe;
+  var photos=Array.isArray(v.photos)?v.photos:(v.photo_data?[v.photo_data]:[]);
+  if(photos.length>V_MAX_PHOTOS)return "Saved visit has more than "+V_MAX_PHOTOS+" photos.";
+  for(var i=0;i<photos.length;i++){var pe=visitPhotoError(photos[i]);if(pe)return "Saved visit photo is invalid. "+pe}
   if(v.notes!=null&&typeof v.notes!=="string")return "Saved visit has invalid notes.";
   return "";
 }
@@ -1131,7 +1136,7 @@ async function vVisit(){
   var nav=S.nav,id=S.arg,path="/v1/customers/"+encodeURIComponent(id)+"/visits",offset=0,pageSeq=0;
   var res=await Promise.all([api("/v1/customers/"+encodeURIComponent(id)),api(pagePath(path,0,"&summary=1"))]);
   if(nav!==S.nav)return;
-  var cust=res[0],visits=visitSort(Array.isArray(res[1])?res[1]:res[1].rows),total=Array.isArray(res[1])?visits.length:res[1].total,sel="",saving=false,photo="",reading=false,readTok=0;
+  var cust=res[0],visits=visitSort(Array.isArray(res[1])?res[1]:res[1].rows),total=Array.isArray(res[1])?visits.length:res[1].total,sel="",saving=false,photos=[],reading=false,readTok=0;
   var SL={ph:V_PH,chlo:V_CHLO,stb:V_STB,salt:V_SALT};
   app.innerHTML='<div id="flash"></div><div class="card"><h2>'+esc((cust.first_name+" "+cust.last_name).trim()||("Customer #"+id))+'</h2><div class="s">#'+esc(cust.customer_id||id)+'</div>'+
    '<label>Current date and time</label><div class="vnow" id="vnow"></div>'+
@@ -1142,9 +1147,9 @@ async function vVisit(){
    '<div class="row"><div><label for="v_alk">ALK <span class="vrec">(optional, recommended 70-120)</span></label><input id="v_alk" inputmode="numeric" autocomplete="off"></div>'+
    '<div><label for="v_cal">CAL <span class="vrec">(optional, recommended 250-500)</span></label><input id="v_cal" inputmode="numeric" autocomplete="off"></div></div>'+
    '<label for="v_notes">Notes</label><textarea id="v_notes" rows="5" maxlength="'+V_MAX_NOTES+'"></textarea>'+
-   '<label>Photo (optional, one per visit)</label><div id="vphoto" class="vphoto"></div><div id="vpmsg" class="s" role="status"></div>'+
-   '<div class="row"><button class="b alt" type="button" id="vcam">Take Photo</button><button class="b alt" type="button" id="vup">Upload Photo</button><button class="b bad" type="button" id="vrm">Remove Photo</button></div>'+
-   '<input type="file" id="v_cam" class="hide" accept="image/*" capture="environment"><input type="file" id="v_file" class="hide" accept="image/*">'+
+   '<label>Photos (optional, up to 3 per visit)</label><button class="b alt" type="button" id="vadd">Add Photo (0/3)</button><div id="vphoto" class="vphoto"></div><div id="vpmsg" class="s" role="status"></div>'+
+   '<input type="file" id="v_cam" class="hide" accept="image/*" capture="environment"><input type="file" id="v_file" class="hide" accept="image/*" multiple>'+
+   '<dialog id="v-photo-picker" aria-labelledby="v-photo-picker-title"><h3 id="v-photo-picker-title">Add a visit photo</h3><p>Would you like to take a new photo or upload one?</p><div class="row"><button class="b" type="button" id="v-photo-take">Take a Photo</button><button class="b alt" type="button" id="v-photo-upload">Upload Photo</button></div><button class="b alt" type="button" id="v-photo-cancel">Cancel</button></dialog>'+
    '<button class="b" id="vsv">Save visit</button><button class="b bad" id="vdel">Delete Visit</button><button class="b alt" id="vbk">Back</button></div>';
   function tick(){var e=$("vnow");if(e){var n=new Date();e.textContent=fmtDate(n)+" "+n.toLocaleTimeString([],{hour:"numeric",minute:"2-digit",second:"2-digit"})}}
   tick();S.timers.push(setInterval(tick,1000));
@@ -1153,19 +1158,20 @@ async function vVisit(){
     app.querySelectorAll('[data-k="'+k+'"]').forEach(function(b){var on=b.getAttribute("data-i")===String(i);b.classList.toggle("on",on);b.setAttribute("aria-pressed",on)});
   }
   function busy(){return saving||reading}
-  function syncBusy(){$("vsv").disabled=busy();$("vdel").disabled=busy()||!sel;$("vsel").disabled=busy();$("vcam").disabled=saving;$("vup").disabled=saving;$("vrm").disabled=busy()||!photo}
-  function showPhoto(){$("vphoto").innerHTML=photo?'<img alt="Visit photo" src="'+photo+'">':"";$("vup").textContent=photo?"Replace Photo":"Upload Photo";$("vcam").textContent=photo?"Retake Photo":"Take Photo";syncBusy()}
+  function syncBusy(){$("vsv").disabled=busy();$("vdel").disabled=busy()||!sel;$("vsel").disabled=busy();$("vadd").disabled=busy()||photos.length>=V_MAX_PHOTOS}
+  function showPhoto(){$("vphoto").innerHTML=photos.map(function(photo,i){return '<div class="vphoto-item"><img alt="Visit photo '+(i+1)+'" src="'+photo+'"><button class="b bad" type="button" data-photo-remove="'+i+'">Remove photo '+(i+1)+'</button></div>'}).join("");app.querySelectorAll("[data-photo-remove]").forEach(function(b){b.onclick=function(){if(busy())return;photos.splice(Number(b.getAttribute("data-photo-remove")),1);$("vpmsg").textContent="Photo removed (save to apply).";showPhoto()}});$("vadd").textContent=(photos.length?"Add Another Photo":"Add Photo")+" ("+photos.length+"/"+V_MAX_PHOTOS+")";syncBusy()}
   async function chosen(inp){
-    var f=inp.files&&inp.files[0];inp.value="";if(!f||saving)return;
+    var files=Array.from(inp.files||[]);inp.value="";if(!files.length||saving)return;
+    if(photos.length+files.length>V_MAX_PHOTOS){flash("err","A visit can have up to "+V_MAX_PHOTOS+" photos.");return}
     var tok=++readTok;reading=true;$("vpmsg").textContent="Reading photo...";flash("","");syncBusy();
-    try{var d=await visitReadPhoto(f);if(tok!==readTok||nav!==S.nav)return;photo=d;$("vpmsg").textContent="Photo ready."}
+    try{var added=await Promise.all(files.map(visitReadPhoto));if(tok!==readTok||nav!==S.nav)return;photos=photos.concat(added);$("vpmsg").textContent=photos.length+" photo(s) ready."}
     catch(e){if(tok===readTok&&nav===S.nav){$("vpmsg").textContent="";flash("err",e.message)}}
     finally{if(tok===readTok&&nav===S.nav){reading=false;showPhoto()}}
   }
   function pick(k,val){setSlider(k,SL[k].indexOf(String(val)))}
   function fill(v){
     var d=v||V_DEFAULT;pick("ph",d.ph);pick("chlo",d.chlo);pick("stb",d.stb);pick("salt",v&&v.salt!=null?v.salt:V_SALT_NONE);
-    $("v_alk").value=v&&v.alk!=null?v.alk:"";$("v_cal").value=v&&v.cal!=null?v.cal:"";photo=v&&v.photo_data?v.photo_data:"";$("vpmsg").textContent="";showPhoto();$("v_notes").value=v?(v.notes||""):"";
+    $("v_alk").value=v&&v.alk!=null?v.alk:"";$("v_cal").value=v&&v.cal!=null?v.cal:"";photos=v?(Array.isArray(v.photos)?v.photos.slice():(v.photo_data?[v.photo_data]:[])):[];$("vpmsg").textContent="";showPhoto();$("v_notes").value=v?(v.notes||""):"";
     $("vsaved").textContent=v?"Originally saved: "+visitStamp(v.visited_at):"New visit: the date and time are recorded when you save.";
   }
   function opts(){
@@ -1195,9 +1201,11 @@ async function vVisit(){
     }catch(e){if(nav===S.nav){$("vsel").value=sel;flash("err",e.message)}}
     finally{reading=false;if(nav===S.nav)syncBusy()}
   };
-  $("vcam").onclick=function(){$("v_cam").click()};$("vup").onclick=function(){$("v_file").click()};
+  $("vadd").onclick=function(){$("v-photo-picker").showModal()};
+  $("v-photo-take").onclick=function(){$("v-photo-picker").close();$("v_cam").click()};
+  $("v-photo-upload").onclick=function(){$("v-photo-picker").close();$("v_file").click()};
+  $("v-photo-cancel").onclick=function(){$("v-photo-picker").close()};
   $("v_cam").onchange=function(){chosen($("v_cam"))};$("v_file").onchange=function(){chosen($("v_file"))};
-  $("vrm").onclick=function(){if(busy())return;photo="";$("vpmsg").textContent="Photo removed (save to apply).";showPhoto()};
   $("vbk").onclick=function(){go("visits")};
   $("vdel").onclick=async function(){
     if(busy()||!sel)return;
@@ -1216,7 +1224,7 @@ async function vVisit(){
   };
   $("vsv").onclick=async function(){
     if(busy())return;
-    var r=visitValidate({photo_data:photo,ph:V_PH[$("v_ph").value],chlo:V_CHLO[$("v_chlo").value],stb:V_STB[$("v_stb").value],salt:V_SALT[$("v_salt").value],alk:$("v_alk").value,cal:$("v_cal").value,notes:$("v_notes").value});
+    var r=visitValidate({photos:photos,ph:V_PH[$("v_ph").value],chlo:V_CHLO[$("v_chlo").value],stb:V_STB[$("v_stb").value],salt:V_SALT[$("v_salt").value],alk:$("v_alk").value,cal:$("v_cal").value,notes:$("v_notes").value});
     if(r.error)return flash("err",r.error);
     saving=true;syncBusy();flash("","");
     var base="/v1/customers/"+encodeURIComponent(id)+"/visits";

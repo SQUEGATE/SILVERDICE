@@ -24,7 +24,9 @@ const savedVisit = {
   alk: 100,
   cal: 200,
   notes: "Routine service",
-  photo_data: ""
+  photo_data: "",
+  photo_data_2: "",
+  photo_data_3: ""
 };
 
 let originalFetch;
@@ -127,12 +129,17 @@ function mockDatabase() {
         cal: args[8],
         salt: args[9],
         notes: args[10],
-        photo_data: args[11]
+        photo_data: args[11],
+        photo_data_2: args[12],
+        photo_data_3: args[13]
       }];
     } else if (sql.startsWith("UPDATE customer_visits")) {
-      if (args[9] === 44 && args[10] === "c-1" && args[11] === savedVisit.visit_id) {
+      if (args[14] === 44 && args[15] === "c-1" && args[16] === savedVisit.visit_id) {
         rows = [{ ...savedVisit, ph: args[0], chlo: args[1], stb: args[2], alk: args[3], cal: args[4],
-          salt: args[5] === 1 ? args[6] : savedVisit.salt ?? null, notes: args[7], photo_data: args[8] ?? savedVisit.photo_data }];
+          salt: args[5] === 1 ? args[6] : savedVisit.salt ?? null, notes: args[7],
+          photo_data: args[8] === 1 ? args[9] : savedVisit.photo_data,
+          photo_data_2: args[10] === 1 ? args[11] : savedVisit.photo_data_2,
+          photo_data_3: args[12] === 1 ? args[13] : savedVisit.photo_data_3 }];
       }
     }
     return executeResult(rows);
@@ -216,7 +223,7 @@ test("creates migration table, lists visits, and supports employee visit permiss
   mockDatabase();
   const response = await call("/v1/customers/c-1/visits");
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), [savedVisit]);
+  assert.deepEqual(await response.json(), [{ ...savedVisit, photos: [] }]);
   assert.ok(executedSql.some(({ sql }) => sql.startsWith("CREATE TABLE IF NOT EXISTS customer_visits")));
   assert.ok(executedSql.some(({ sql }) => sql.includes("company_id = ? AND customer_id = ?")));
   assert.ok(executedSql.some(({ sql }) => sql.includes("ORDER BY visited_at DESC, visit_id DESC")));
@@ -263,13 +270,15 @@ test("defaults canAccessVisits to false in employee response, login, and preview
 test("creates visits with server timestamps and updates without changing visited_at", async () => {
   originalFetch = globalThis.fetch;
   mockDatabase();
-  const visitBody = { ph: "7.6", chlo: "3-6", stb: "70", alk: 120, cal: 220, notes: "Follow-up" };
+  const photos = ["data:image/jpeg;base64,YQ==", "data:image/png;base64,Yg==", "data:image/jpeg;base64,Yw=="];
+  const visitBody = { ph: "7.6", chlo: "3-6", stb: "70", alk: 120, cal: 220, notes: "Follow-up", photos };
   const createdResponse = await call("/v1/customers/c-1/visits", { method: "POST", body: visitBody });
   assert.equal(createdResponse.status, 201);
   const created = await createdResponse.json();
   assert.equal(created.visit_id, 8);
   assert.equal(created.customer_id, "c-1");
   assert.equal(created.ph, "7.6");
+  assert.deepEqual(created.photos, photos);
   assert.equal(new Date(created.visited_at).toISOString(), created.visited_at);
   assert.ok(!("company_id" in created));
 
@@ -279,8 +288,22 @@ test("creates visits with server timestamps and updates without changing visited
   const updated = await updatedResponse.json();
   assert.equal(updated.visited_at, savedVisit.visited_at);
   assert.equal(updated.notes, "Edited notes");
+  assert.deepEqual(updated.photos, photos, "updates from older clients preserve existing photos");
   const updateSql = executedSql.find(({ sql }) => sql.startsWith("UPDATE customer_visits")).sql;
   assert.ok(!updateSql.includes("visited_at ="));
+});
+
+test("rejects more than three photos and supports explicit photo removal", async () => {
+  originalFetch = globalThis.fetch;
+  mockDatabase();
+  const photos = Array(4).fill("data:image/png;base64,YQ==");
+  const invalid = await call("/v1/customers/c-1/visits", { method: "POST",
+    body: { ph: "7.4", chlo: "3-6", stb: "50", alk: null, cal: null, notes: "", photos } });
+  assert.equal(invalid.status, 400);
+  const removed = await call("/v1/customers/c-1/visits/7", { method: "PUT",
+    body: { ph: "7.4", chlo: "3-6", stb: "50", alk: null, cal: null, notes: "", photos: [] } });
+  assert.equal(removed.status, 200);
+  assert.deepEqual((await removed.json()).photos, []);
 });
 
 test("stores optional SALT readings and keeps them when older clients omit salt", async () => {
@@ -337,7 +360,7 @@ test("company accounts can access visits", async () => {
   mockDatabase();
   const response = await call("/v1/customers/c-1/visits", { token: await tokenFor({ role: "COMPANY" }) });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), [savedVisit]);
+  assert.deepEqual(await response.json(), [{ ...savedVisit, photos: [] }]);
 });
 
 test("backs up visits, accepts legacy backups, and validates restored visits", async () => {

@@ -65,7 +65,7 @@ test("ALK/CAL optional: blank becomes null, nonblank still strict", () => {
   assert.match(A.visitValidate({ ...good, alk: "0" }).error, /greater than zero/);
   assert.match(A.visitInt("", "ALK").error, /required/);
 });
-test("photo validation and body", () => {
+test("up to three photos validate, serialize, and keep legacy single-photo rows readable", () => {
   const ok = "data:image/jpeg;base64,/9j/4AAQ", png = "data:image/png;base64,iVBORw0KGgo=";
   assert.equal(A.visitPhotoError(""), ""); assert.equal(A.visitPhotoError(undefined), ""); assert.equal(A.visitPhotoError(ok), ""); assert.equal(A.visitPhotoError(png), "");
   for (const bad of ["data:image/gif;base64,AAAA", "data:text/html;base64,AAAA", "http://x/y.png", "data:image/png;base64,", "data:image/png;base64,AA AA", 5])
@@ -73,9 +73,17 @@ test("photo validation and body", () => {
   const big = "data:image/jpeg;base64," + "A".repeat(A.V_MAX_PHOTO);
   assert.match(A.visitPhotoError(big), /too large/);
   assert.equal(A.visitPhotoError("data:image/jpeg;base64," + "A".repeat(A.V_MAX_PHOTO - 23)), "");
-  assert.equal(A.visitValidate({ ...good, photo_data: ok }).body.photo_data, ok);
-  assert.equal(A.visitValidate(good).body.photo_data, "");
+  const body = A.visitValidate({ ...good, photos: [ok, png, ok] }).body;
+  assert.deepEqual([...body.photos], [ok, png, ok]);
+  assert.deepEqual([...A.visitValidate(good).body.photos], []);
+  assert.deepEqual([...A.visitValidate({ ...good, photo_data: ok }).body.photos], [ok]);
+  assert.match(A.visitValidate({ ...good, photos: [ok, png, ok, ok] }).error, /up to 3/);
+  assert.ok(A.visitValidate({ ...good, photos: [ok, "invalid"] }).error);
   assert.ok(A.visitValidate({ ...good, photo_data: big }).error);
+  const legacy = { ...good, photo_data: ok };
+  assert.equal(A.visitRowError(legacy), "");
+  assert.equal(A.visitRowError({ ...legacy, photos: [ok, png] }), "");
+  assert.match(A.visitRowError({ ...legacy, photos: [ok, png, ok, ok] }), /more than 3/);
 });
 test("photo scale and fit loop", () => {
   assert.deepEqual({ ...A.visitScale(4000, 2000, 1280) }, { w: 1280, h: 640 });
@@ -97,15 +105,22 @@ test("saved rows: null ALK/CAL and missing photo ok; bad photo errors", () => {
 });
 test("capture inputs are wired", () => {
   assert.match(html, /id="v_cam"[^>]*accept="image\/\*"[^>]*capture="environment"/);
-  assert.match(html, /id="v_file"[^>]*accept="image\/\*">/);
+  assert.match(html, /id="v_file"[^>]*accept="image\/\*"[^>]*multiple/);
   assert.ok(!/id="v_file"[^>]*capture/.test(html));
+  assert.match(html, /id="vadd">Add Photo/);
+  assert.match(html, /Photos \(optional, up to 3 per visit\)<\/label><button[^>]*id="vadd"/);
+  assert.match(html, /Add Another Photo/);
+  assert.match(html, /id="v-photo-picker"[^>]*aria-labelledby="v-photo-picker-title"/);
+  assert.match(html, /id="v-photo-take">Take a Photo/);
+  assert.match(html, /id="v-photo-upload">Upload Photo/);
 });
 test("notes limit 16000", () => {
   assert.ok(A.visitValidate({ ...good, notes: "a".repeat(16000) }).body);
   assert.match(A.visitValidate({ ...good, notes: "a".repeat(16001) }).error, /16000/);
 });
 test("visitValidate builds numeric body and rejects bad choices", () => {
-  assert.deepEqual({ ...A.visitValidate(good).body }, { ph: "7.4", chlo: "3-6", stb: "50", salt: null, alk: 80, cal: 300, notes: "x", photo_data: "" });
+  const body = { ...A.visitValidate(good).body, photos: [...A.visitValidate(good).body.photos] };
+  assert.deepEqual(body, { ph: "7.4", chlo: "3-6", stb: "50", salt: null, alk: 80, cal: 300, notes: "x", photos: [] });
   for (const k of ["ph", "chlo", "stb"]) assert.ok(A.visitValidate({ ...good, [k]: "nope" }).error);
 });
 test("invalid saved rows give explicit errors, no defaults", () => {

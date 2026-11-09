@@ -49,8 +49,8 @@ public class VisitsPanel extends JPanel {
     private final JTextField alk = wholeNumberField();
     private final JTextField cal = wholeNumberField();
     private final JTextArea notes = new JTextArea(5, 30);
-    private final JLabel photoPreview = new JLabel("No photo attached.");
-    private String photoData = "";
+    private final JPanel photoPreview = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
+    private final List<String> photoData = new ArrayList<>();
     private final List<VisitRecord> visits = new ArrayList<>();
     private final Timer clock;
     private Customer activeCustomer;
@@ -170,20 +170,14 @@ public class VisitsPanel extends JPanel {
         notes.setWrapStyleWord(true);
         form.add(new JScrollPane(notes));
         JPanel photo = new JPanel(new BorderLayout(6, 6));
-        photo.setBorder(BorderFactory.createTitledBorder("Visit photo (optional)"));
+        photo.setBorder(BorderFactory.createTitledBorder("Visit photos (up to 3)"));
         JPanel photoButtons = new JPanel(new FlowLayout(FlowLayout.LEFT));
         JButton upload = new JButton("Upload Photo");
-        JButton remove = new JButton("Remove Photo");
         photoButtons.add(upload);
-        photoButtons.add(remove);
         photo.add(photoButtons, BorderLayout.NORTH);
         photo.add(photoPreview, BorderLayout.CENTER);
         form.add(photo);
         upload.addActionListener(e -> uploadPhoto());
-        remove.addActionListener(e -> {
-            photoData = "";
-            updatePhotoPreview();
-        });
         JScrollPane scroll = new JScrollPane(form);
         scroll.getVerticalScrollBar().setUnitIncrement(16);
         page.add(scroll, BorderLayout.CENTER);
@@ -326,43 +320,69 @@ public class VisitsPanel extends JPanel {
         cal.setText(visit == null || visit.cal() == null ? "" : String.valueOf(visit.cal()));
         notes.setText(visit == null ? "" : visit.notes());
         notes.setCaretPosition(0);
-        photoData = visit == null ? "" : visit.photoData();
+        photoData.clear();
+        if (visit != null) photoData.addAll(visit.photos());
         updatePhotoPreview();
     }
 
     private void uploadPhoto() {
         if (busy) return;
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Attach a visit photo");
+        chooser.setDialogTitle("Attach up to 3 visit photos");
+        chooser.setMultiSelectionEnabled(true);
         chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("Photos (PNG, JPEG)", "png", "jpg", "jpeg"));
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
-        var file = chooser.getSelectedFile().toPath();
+        var files = chooser.getSelectedFiles();
+        if (files.length == 0 && chooser.getSelectedFile() != null) files = new java.io.File[]{chooser.getSelectedFile()};
+        if (files.length + photoData.size() > VisitRecord.MAX_PHOTOS) {
+            JOptionPane.showMessageDialog(this, "A visit can have up to 3 photos.", "Visit Photos", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        var selectedFiles = java.util.Arrays.stream(files).map(java.io.File::toPath).toList();
         background("Preparing photo...", () -> {
             try {
-                return VisitPhoto.fromFile(file);
+                List<String> prepared = new ArrayList<>();
+                for (var file : selectedFiles) prepared.add(VisitPhoto.fromFile(file));
+                return prepared;
             } catch (IOException e) {
                 throw new IllegalArgumentException(e.getMessage(), e);
             }
-        }, data -> {
-            photoData = data;
+        }, prepared -> {
+            photoData.addAll(prepared);
             updatePhotoPreview();
-            status.setText("Photo attached. Press Save to save it with this visit.");
+            status.setText(prepared.size() + " photo(s) attached. Press Save to save them with this visit.");
         });
     }
 
     private void updatePhotoPreview() {
-        photoPreview.setIcon(null);
-        photoPreview.setText(photoData.isEmpty() ? "No photo attached." : "");
-        if (photoData.isEmpty()) return;
-        try {
-            var image = VisitPhoto.preview(photoData);
-            double scale = Math.min(1.0, Math.min(360.0 / image.getWidth(), 220.0 / image.getHeight()));
-            photoPreview.setIcon(new ImageIcon(image.getScaledInstance(Math.max(1, (int) (image.getWidth() * scale)),
-                    Math.max(1, (int) (image.getHeight() * scale)), Image.SCALE_SMOOTH)));
-        } catch (IOException e) {
-            photoPreview.setText("Unable to preview photo. You can replace or remove it.");
-            showError(e.getMessage());
+        photoPreview.removeAll();
+        if (photoData.isEmpty()) {
+            photoPreview.add(new JLabel("No photos attached."));
         }
+        for (int i = 0; i < photoData.size(); i++) {
+            final int index = i;
+            JPanel item = new JPanel(new BorderLayout(4, 4));
+            JLabel preview = new JLabel();
+            try {
+                var image = VisitPhoto.preview(photoData.get(i));
+                double scale = Math.min(1.0, Math.min(160.0 / image.getWidth(), 140.0 / image.getHeight()));
+                preview.setIcon(new ImageIcon(image.getScaledInstance(Math.max(1, (int) (image.getWidth() * scale)),
+                        Math.max(1, (int) (image.getHeight() * scale)), Image.SCALE_SMOOTH)));
+            } catch (IOException e) {
+                preview.setText("Unable to preview");
+                showError(e.getMessage());
+            }
+            JButton remove = new JButton("Remove");
+            remove.addActionListener(e -> {
+                photoData.remove(index);
+                updatePhotoPreview();
+            });
+            item.add(preview, BorderLayout.CENTER);
+            item.add(remove, BorderLayout.SOUTH);
+            photoPreview.add(item);
+        }
+        photoPreview.revalidate();
+        photoPreview.repaint();
     }
 
     private void saveVisit() {
@@ -379,7 +399,7 @@ public class VisitsPanel extends JPanel {
                     VisitRecord.PH_VALUES.get(ph.getValue()), VisitRecord.CHLO_VALUES.get(chlo.getValue()),
                     VisitRecord.STB_VALUES.get(stb.getValue()),
                     VisitRecord.optionalWholeNumber(alk.getText(), "ALK"),
-                    VisitRecord.optionalWholeNumber(cal.getText(), "CAL"), notes.getText(), photoData,
+                    VisitRecord.optionalWholeNumber(cal.getText(), "CAL"), notes.getText(), List.copyOf(photoData),
                     salt.getValue() == 0 ? null : VisitRecord.SALT_VALUES.get(salt.getValue() - 1));
             int offset = existing == null ? 0 : visitOffset;
             background("Saving visit...", () -> {

@@ -73,12 +73,13 @@ public class VisitsDatabaseTest {
             String data = VisitPhoto.fromFile(photo);
             VisitsTest.check(data.length() <= VisitRecord.MAX_PHOTO_LENGTH, "Compressed photo fits server limit");
             VisitsTest.check(VisitPhoto.preview(data).getWidth() <= 640, "Photo can be previewed");
+            var photos = java.util.List.of(data, data, data);
             VisitRecord added = database.saveVisit(new VisitRecord(0, "c1", Instant.now(), "7.4", "3-6", "50",
-                    null, null, "photo", data));
+                    null, null, "photo", photos, null));
             VisitsTest.check(added.alk() == null && added.cal() == null, "Blank readings saved as NULL");
-            VisitsTest.check(added.photoData().equals(data), "Photo persisted");
+            VisitsTest.check(added.photos().equals(photos), "Three photos persisted");
             DatabaseManager reopened = new DatabaseManager(path);
-            VisitsTest.check(reopened.getVisits("c1").get(0).photoData().equals(data), "Photo survives reopen");
+            VisitsTest.check(reopened.getVisits("c1").get(0).photos().equals(photos), "Photos survive reopen");
             VisitRecord removed = reopened.saveVisit(new VisitRecord(added.id(), "c1", Instant.now(),
                     "7.4", "3-6", "50", 70, null, "removed", ""));
             VisitsTest.check(removed.photoData().isEmpty() && removed.alk() == 70 && removed.cal() == null, "Remove photo and fill only ALK");
